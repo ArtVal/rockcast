@@ -1,0 +1,45 @@
+# RockCast local radio catalog
+# Format: name | url | tags | bitrate | codec | country
+# Lines starting with # are comments. Empty lines are ignored.
+
+SomaFM — Metal Detector | https://ice6.somafm.com/metal-128-mp3 | metal,heavy metal | 128 | mp3 | USA
+Rock Antenne — Heavy Metal | https://stream.rockantenne.de/heavy-metal/stream/mp3 | metal,heavy metal | 128 | mp3 | Germany
+Radio Caprice — Heavy Metal | http://79.111.14.76:8002/heavymetal | metal,heavy metal | 128 | aac | Russia
+Radio Caprice — Nu Metal | http://79.111.14.76:8002/numetal | nu metal,metal | 128 | aac | Russia
+Radio Caprice — Industrial | http://79.111.14.76:8002/industrial | industrial,metal | 128 | aac | Russia
+GotRadio — Metal Madness | http://pureplay.cdnstream1.com/6016_128.mp3 | metal | 128 | mp3 | USA
+GotRadio — Metal Frontier | http://pureplay.cdnstream1.com/6022_128.mp3 | metal | 128 | mp3 | USA
+Metal Rock Radio | https://kathy.torontocast.com:2800/stream | metal,hard rock | 128 | mp3 | Canada
+1.FM — High Voltage | http://strm112.1.fm/highvoltage_mobile_mp3 | hard rock,metal | 128 | mp3 | Switzerland
+181.FM — Hair Band | https://listen.181fm.com/181-hairband_128k.mp3 | hair metal,hard rock | 128 | mp3 | USA
+Rock Antenne | https://stream.rockantenne.de/rockantenne/stream/mp3 | rock,hard rock | 128 | mp3 | Germany
+Rock Antenne — Classic Perlen | https://stream.rockantenne.de/classic-perlen/stream/mp3 | classic rock | 128 | mp3 | Germany
+Rock Antenne — Soft Rock | https://stream.rockantenne.de/soft-rock/stream/mp3 | soft rock,rock | 128 | mp3 | Germany
+Rock Antenne — 80er Rock | https://stream.rockantenne.de/80er-rock/stream/mp3 | 80s,rock | 128 | mp3 | Germany
+Rock Antenne — Modern Rock | https://stream.rockantenne.de/modern-rock/stream/mp3 | modern rock,rock | 128 | mp3 | Germany
+Rock Antenne — Deutschrock | https://stream.rockantenne.de/deutschrock/stream/mp3 | deutschrock,rock | 128 | mp3 | Germany
+Rock Antenne — Symphonic | https://stream.rockantenne.de/symphonic-rock/stream/mp3 | symphonic rock | 128 | mp3 | Germany
+hit Radio FFH — Rock | https://mp3.ffh.de/ffhchannels/hqrock.mp3 | rock | 128 | mp3 | Germany
+GotRadio — Hard Rock | http://pureplay.cdnstream1.com/6015_128.mp3 | hard rock | 128 | mp3 | USA
+GotRadio — Classic Rock | http://pureplay.cdnstream1.com/6014_128.mp3 | classic rock | 128 | mp3 | USA
+1.FM — Classic Rock | http://strm112.1.fm/crock_mobile_mp3 | classic rock | 128 | mp3 | Switzerland
+181.FM — The Rock! | https://listen.181fm.com/181-rock_128k.mp3 | rock | 128 | mp3 | USA
+181.FM — Hard Rock | https://listen.181fm.com/181-hardrock_128k.mp3 | hard rock | 128 | mp3 | USA
+181.FM — Rock 40 | https://listen.181fm.com/181-rock40_128k.mp3 | rock | 128 | mp3 | USA
+181.FM — The Highway | https://listen.181fm.com/181-highway_128k.mp3 | classic rock | 128 | mp3 | USA
+181.FM — Power | https://listen.181fm.com/181-power_128k.mp3 | rock,power rock | 128 | mp3 | USA
+181.FM — Classic Buzz | https://listen.181fm.com/181-classicbuzz_128k.mp3 | classic rock,alternative | 128 | mp3 | USA
+Rock Antenne — Alternative | https://stream.rockantenne.de/alternative/stream/mp3 | alternative,rock | 128 | mp3 | Germany
+GotRadio — Alternative | http://pureplay.cdnstream1.com/6017_128.mp3 | alternative,rock | 128 | mp3 | USA
+GotRadio — Punk Rock | http://pureplay.cdnstream1.com/6021_128.mp3 | punk,rock | 128 | mp3 | USA
+Punk Rock Demonstration | https://listen.punkrockdemo.com/stream | punk,rock | 128 | mp3 | USA
+SomaFM — Indie Pop Rocks! | https://ice6.somafm.com/indiepop-128-mp3 | indie,rock | 128 | mp3 | USA
+SomaFM — PopTron | https://ice6.somafm.com/poptron-128-mp3 | indie,electropop,rock | 128 | mp3 | USA
+SomaFM — Cover Song Army | https://ice6.somafm.com/covers-128-mp3 | covers,rock | 128 | mp3 | USA
+SomaFM — Left Coast 70s | https://ice6.somafm.com/seventies-128-mp3 | 70s,classic rock | 128 | mp3 | USA
+SomaFM — Underground 80s | https://ice6.somafm.com/u80s-128-mp3 | 80s,new wave,rock | 128 | mp3 | USA
+SomaFM — Boot Liquor | https://ice6.somafm.com/bootliquor-128-mp3 | americana,rock | 128 | mp3 | USA
+Radio Paradise — Rock Mix | https://stream.radioparadise.com/rock-128 | rock | 128 | aac | USA
+Radio Record — Rock | https://radiorecord.hostingradio.ru/rock96.aacp | rock | 96 | aac | Russia
+Radio X UK | https://media-ssl.musicradio.com/RadioXUK | alternative,rock | 128 | aac | UK
+Radio X UK (MP3) | https://media-ice.musicradio.com/RadioXUKMP3 | alternative,rock | 128 | mp3 | UK

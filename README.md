@@ -1,0 +1,193 @@
+# RockCast
+
+Desktop internet radio player for Windows. Play rock / metal streams on **PC speakers** or on **Google Cast** devices (Chromecast, Cast-enabled speakers such as JBL) using a native CASTV2 client — no Chrome browser required.
+
+![RockCast](window_shot.png)
+
+## Features
+
+- **Local playback** — decode and play HTTP(S) radio streams on your PC (cpal + symphonia)
+- **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
+- **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
+- **Station catalog** — bundled `stations.txt` plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
+- **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata
+- **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
+- **Bilingual UI** — Russian and English
+- **Persistent settings** — volume, last station, device, language, spectrum toggle
+
+## Requirements
+
+- Windows 10 / 11 (primary target)
+- [Rust](https://rustup.rs/) toolchain (edition 2024 / recent stable)
+- Same Wi‑Fi / LAN as your Cast device for casting
+- Optional: Amnezia or other VPN — Cast discovery still works via subnet scan if LAN unicast is allowed
+
+## Quick start
+
+```bat
+run.bat
+```
+
+Or manually:
+
+```bash
+cargo run --release
+```
+
+Debug build:
+
+```bash
+cargo run
+```
+
+Logging (default level `info`):
+
+```bash
+set RUST_LOG=info
+cargo run --release
+```
+
+Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
+
+## Using the app
+
+1. **Wait for stations** — the local catalog loads immediately; Radio Browser enrichment may follow in the background.
+2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
+3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
+4. **Select a station** — click a row in the list.
+5. **Play / Stop** — start or stop playback.
+6. **Volume** — slider; Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
+7. **Spectrum** — enable for the equalizer-style visualizer (extra network use when casting).
+8. **Language** — switch Russian / English from the UI; the choice is saved.
+
+### Cast notes
+
+- Discovery runs **mDNS** (`_googlecast._tcp`) on the real LAN NIC and, in parallel, a **unicast scan** of `x.x.x.1–254` for TCP **8009**, then reads `http://<ip>:8008/setup/eureka_info`.
+- Split-tunnel VPN exclusions often fix unicast but **not** multicast; the subnet scan is what finds devices like JBL when mDNS returns nothing.
+- Playback on Cast uses CASTV2: connect → launch Default Media Receiver → `LOAD` the live stream URL.
+
+### Local playback notes
+
+- Uses the selected Windows output device (or the system default).
+- Supports common stream codecs handled by symphonia (MP3, AAC, Ogg/Vorbis, FLAC, etc., depending on the station).
+- Track titles come from ICY metadata when available.
+
+## Station catalog
+
+### Format (`stations.txt`)
+
+```text
+# name | url | tags | bitrate | codec | country
+SomaFM — Metal Detector | https://ice6.somafm.com/metal-128-mp3 | metal,heavy metal | 128 | mp3 | USA
+```
+
+- Lines starting with `#` are comments.
+- At least `name` and `url` are required (`http://` or `https://`).
+- Playlist URLs (`.m3u`, `.pls`, …) from Radio Browser are skipped.
+
+### Where the file is loaded from
+
+Search order:
+
+1. `ROCKCAST_STATIONS` environment variable (full path)
+2. `stations.txt` next to the executable
+3. `stations.txt` in the current working directory
+4. `%LOCALAPPDATA%\RockCast\stations.txt` (created from the embedded catalog if missing)
+
+### Radio Browser
+
+After the local list appears, RockCast may query Radio Browser for additional metal/rock stations and merge them (deduped by URL, capped for UI size).
+
+## Settings
+
+Stored at:
+
+```text
+%LOCALAPPDATA%\RockCast\settings.json
+```
+
+Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `language`.
+
+## Project layout
+
+```text
+rockcast/
+├── Cargo.toml
+├── stations.txt          # bundled rock/metal catalog
+├── run.bat               # release launcher
+├── proto/                # Cast channel protobuf reference
+├── examples/
+│   └── cast_probe.rs     # CLI discovery probe
+└── src/
+    ├── main.rs           # GUI entry
+    ├── lib.rs
+    ├── app.rs            # egui UI
+    ├── i18n.rs           # EN / RU strings
+    ├── stations.rs       # catalog + Radio Browser
+    ├── local.rs          # PC playback
+    ├── icy.rs            # ICY metadata watcher
+    ├── spectrum.rs       # FFT visualizer tap
+    ├── output.rs         # local + Cast device list
+    ├── settings.rs
+    └── cast/
+        ├── discovery.rs  # mDNS + subnet scan
+        ├── client.rs     # CASTV2 play / stop / volume
+        ├── channel.rs    # TLS framing + auth
+        └── proto.rs      # hand-rolled CastMessage codec
+```
+
+## Development
+
+### Build
+
+```bash
+cargo build --release
+```
+
+Binary: `target/release/rockcast.exe`.
+
+### Tests
+
+```bash
+cargo test --lib
+```
+
+Discovery tests include VPN interface name filters and a live LAN probe (skipped automatically if `192.168.31.109:8009` is not open on your network — adjust or ignore as needed).
+
+### Cast discovery probe
+
+```bash
+cargo run --example cast_probe
+```
+
+Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
+
+### Architecture (short)
+
+| Path | Role |
+|------|------|
+| UI thread (egui) | Renders UI; starts background work for scan / play / stop |
+| `LocalPlayer` | HTTP stream → decode → ring buffer → cpal output + optional FFT |
+| `CastService` | CASTV2 session, heartbeat, volume, `LOAD` / `STOP` |
+| Discovery | LAN NIC whitelist (skip Amnezia/Hyper-V/…) + mDNS + `/24` TCP probe |
+
+## Troubleshooting
+
+| Symptom | What to try |
+|---------|-------------|
+| No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
+| Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
+| Empty station list | Check `stations.txt` path / `ROCKCAST_STATIONS`; inspect logs for Radio Browser errors |
+| No track title | Many stations do not send ICY metadata |
+| Wrong PC audio device | Pick another entry under **Device** after **Find** |
+| Spectrum silent on Cast | Enable spectrum; Cast mode uses a separate stream tap after the receiver starts |
+
+## License
+
+No license file is included in the repository yet. Add one if you distribute binaries or source publicly.
+
+## Acknowledgments
+
+- [Radio Browser](https://www.radio-browser.info/) — community station directory
+- [SomaFM](https://somafm.com/), Rock Antenne, and other listed stations — streams referenced in the default catalog
+- Google Cast / CASTV2 protocol community documentation

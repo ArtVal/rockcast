@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE / editors
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.vscode/
+*.code-workspace
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs and local dumps
+*.log
+*.tmp
+*.temp
+
+# Local / generated
+/target/eureka*.json
+/target/eureka_raw.txt
