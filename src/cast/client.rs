@@ -79,6 +79,10 @@ impl LiveSession {
 
 pub struct CastService {
     current: Mutex<Option<(String, LiveSession)>>,
+    /// Serializes play/stop so a hung LOAD cannot interleave with the next op.
+    op_lock: Mutex<()>,
+    /// Set to cancel an in-flight `receive_find` (new play / stop / shutdown).
+    cancel: AtomicBool,
 }
 
 impl Default for CastService {
@@ -91,6 +95,8 @@ impl CastService {
     pub fn new() -> Self {
         Self {
             current: Mutex::new(None),
+            op_lock: Mutex::new(()),
+            cancel: AtomicBool::new(false),
         }
     }
 
@@ -111,7 +117,16 @@ impl CastService {
         title: &str,
         on_status: impl Fn(&str),
     ) -> Result<(), CastError> {
-        on_status(&format!("Подключение к «{}»…", device.discovered.name));
+        // Abort any previous play waiting on LOAD, then take the op lock.
+        self.cancel.store(true, Ordering::SeqCst);
+        let _op = self.op_lock.lock();
+        self.cancel.store(false, Ordering::SeqCst);
+
+        on_status(&format!("Connecting to «{}»…", device.discovered.name));
+        log::info!(
+            "CastService::play device='{}' url={url}",
+            device.discovered.name
+        );
 
         {
             let mut guard = self.current.lock();
@@ -127,7 +142,7 @@ impl CastService {
 
         let channel = self.take_or_connect(device)?;
 
-        on_status(&format!("Запуск стрима: {title}"));
+        on_status(&format!("Starting stream: {title}"));
 
         channel.send_json(
             RECEIVER_ID,
@@ -150,19 +165,24 @@ impl CastService {
         let mut last_err = None;
         let mut media_session_id = None;
         for ct in &content_types {
-            match Self::load_media(&channel, &app, url, ct, title) {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(CastError::Channel(ChannelError::Cancelled));
+            }
+            match Self::load_media(&channel, &app, url, ct, title, &self.cancel) {
                 Ok(mid) => {
                     media_session_id = mid;
                     last_err = None;
                     break;
                 }
                 Err(e) => {
-                    on_status(&format!("Повтор с {ct}…"));
+                    log::warn!("CastService::load_media({ct}) failed: {e}");
+                    on_status(&format!("Retry with {ct}..."));
                     last_err = Some(e);
                 }
             }
         }
         if let Some(e) = last_err {
+            // Channel is abandoned; next play reconnects.
             return Err(e);
         }
 
@@ -179,11 +199,15 @@ impl CastService {
             },
         ));
 
-        on_status(&format!("Играет на «{}»", device.discovered.name));
+        on_status(&format!("Playing on «{}»", device.discovered.name));
+        log::info!("CastService::play Ok on '{}'", device.discovered.name);
         Ok(())
     }
 
     pub fn stop(&self) -> Result<(), CastError> {
+        log::info!("CastService::stop");
+        self.cancel.store(true, Ordering::SeqCst);
+        let _op = self.op_lock.lock();
         let mut guard = self.current.lock();
         if let Some((_id, mut sess)) = guard.take() {
             sess.stop_heartbeat();
@@ -267,6 +291,7 @@ impl CastService {
         url: &str,
         content_type: &str,
         title: &str,
+        cancel: &AtomicBool,
     ) -> Result<Option<i64>, CastError> {
         let req = channel.next_request_id();
         channel.send_json(
@@ -292,7 +317,7 @@ impl CastService {
         )?;
 
         channel
-            .receive_find(|msg| {
+            .receive_find(cancel, Duration::from_secs(15), |msg| {
                 if msg.namespace != NS_MEDIA {
                     return Ok(None);
                 }
@@ -328,7 +353,7 @@ impl CastService {
                         let rid =
                             v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                         if rid == req || rid == 0 {
-                            Err(ChannelError::Msg(format!("Cast отклонил LOAD: {typ}")))
+                            Err(ChannelError::Msg(format!("Cast rejected LOAD: {typ}")))
                         } else {
                             Ok(None)
                         }
@@ -356,7 +381,7 @@ impl CastService {
         )?;
 
         channel
-            .receive_find(|msg| {
+            .receive_find(&self.cancel, Duration::from_secs(12), |msg| {
                 if msg.namespace != NS_RECEIVER {
                     return Ok(None);
                 }
@@ -399,7 +424,7 @@ impl CastService {
             &json!({ "type": "GET_STATUS", "requestId": req }),
         )?;
 
-        let status = channel.receive_find(|msg| {
+        let status = channel.receive_find(&self.cancel, Duration::from_secs(8), |msg| {
             if msg.namespace != NS_RECEIVER {
                 return Ok(None);
             }

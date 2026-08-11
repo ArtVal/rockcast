@@ -193,7 +193,7 @@ fn resolve_ipv4(host: &str, port: u16) -> Option<std::net::SocketAddr> {
 
 /// HTTPS GET over IPv4 only (no hyper/reqwest — IPv6 is broken here and corrupts the response body).
 fn https_get_ipv4(host: &str, path_and_query: &str) -> Result<Vec<u8>, String> {
-    let addr = resolve_ipv4(host, 443).ok_or_else(|| format!("нет IPv4 для {host}"))?;
+    let addr = resolve_ipv4(host, 443).ok_or_else(|| format!("no IPv4 for {host}"))?;
     log::debug!("Radio Browser TCP {host} → {addr}");
 
     let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(8))
@@ -230,12 +230,12 @@ fn https_get_ipv4(host: &str, path_and_query: &str) -> Result<Vec<u8>, String> {
     let mut raw = Vec::new();
     tls.read_to_end(&mut raw).map_err(|e| format!("read: {e}"))?;
     if raw.is_empty() {
-        return Err("пустой ответ".into());
+        return Err("empty response".into());
     }
 
     let sep = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| {
         let head = String::from_utf8_lossy(&raw[..raw.len().min(120)]);
-        format!("нет заголовков HTTP: {head:?}")
+        format!("missing HTTP headers: {head:?}")
     })?;
     let header_bytes = &raw[..sep];
     let body = raw[sep + 4..].to_vec();
@@ -336,7 +336,7 @@ fn fetch_tag(host: &str, tag: &str, limit: u32) -> Result<Vec<Station>, String> 
     for attempt in 1..=3 {
         match fetch_tag_once(host, &path) {
             Ok(stations) if !stations.is_empty() => return Ok(stations),
-            Ok(_) => last_err = Some("пустой список станций".into()),
+            Ok(_) => last_err = Some("empty station list".into()),
             Err(e) => {
                 log::info!("Radio Browser {host} attempt {attempt}: {e}");
                 last_err = Some(e);
@@ -344,13 +344,13 @@ fn fetch_tag(host: &str, tag: &str, limit: u32) -> Result<Vec<Station>, String> 
         }
         std::thread::sleep(Duration::from_millis(250 * attempt as u64));
     }
-    Err(last_err.unwrap_or_else(|| "не удалось загрузить".into()))
+    Err(last_err.unwrap_or_else(|| "failed to load".into()))
 }
 
 fn fetch_tag_once(host: &str, path: &str) -> Result<Vec<Station>, String> {
     let bytes = https_get_ipv4(host, path)?;
     if bytes.is_empty() {
-        return Err("пустой ответ".into());
+        return Err("empty response".into());
     }
     let values: Vec<serde_json::Value> = serde_json::from_slice(&bytes).map_err(|e| {
         let head = String::from_utf8_lossy(&bytes[..bytes.len().min(80)]);

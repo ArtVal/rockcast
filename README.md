@@ -8,6 +8,7 @@ Desktop internet radio player for Windows. Play rock / metal streams on **PC spe
 
 - **Local playback** — decode and play HTTP(S) radio streams on your PC (cpal + symphonia)
 - **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
+- **Via PC relay** — optional: PC fetches the station (e.g. through VPN) and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
 - **Station catalog** — bundled `stations.txt` plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
 - **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata
@@ -54,17 +55,19 @@ Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
 1. **Wait for stations** — the local catalog loads immediately; Radio Browser enrichment may follow in the background.
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
-4. **Select a station** — click a row in the list.
-5. **Play / Stop** — start or stop playback.
-6. **Volume** — slider; Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
-7. **Spectrum** — enable for the equalizer-style visualizer (extra network use when casting).
-8. **Language** — switch Russian / English from the UI; the choice is saved.
+4. **Via PC** (Cast only) — enable if the station needs VPN on the PC; RockCast relays audio to the speaker over Wi‑Fi.
+5. **Select a station** — click a row in the list.
+6. **Play / Stop** — start or stop playback.
+7. **Volume** — slider; Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
+8. **Spectrum** — enable for the equalizer-style visualizer (extra network use when casting).
+9. **Language** — switch Russian / English from the UI; the choice is saved.
 
 ### Cast notes
 
 - Discovery runs **mDNS** (`_googlecast._tcp`) on the real LAN NIC and, in parallel, a **unicast scan** of `x.x.x.1–254` for TCP **8009**, then reads `http://<ip>:8008/setup/eureka_info`.
 - Split-tunnel VPN exclusions often fix unicast but **not** multicast; the subnet scan is what finds devices like JBL when mDNS returns nothing.
 - Playback on Cast uses CASTV2: connect → launch Default Media Receiver → `LOAD` the live stream URL.
+- With **Via PC**, `LOAD` points at `http://<PC-LAN-IP>:<port>/stream` while the PC downloads the station (through VPN if needed). Allow inbound LAN in Windows Firewall if prompted.
 
 ### Local playback notes
 
@@ -106,7 +109,7 @@ Stored at:
 %LOCALAPPDATA%\RockCast\settings.json
 ```
 
-Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `language`.
+Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`.
 
 ## Project layout
 
@@ -115,6 +118,7 @@ rockcast/
 ├── Cargo.toml
 ├── stations.txt          # bundled rock/metal catalog
 ├── run.bat               # release launcher
+├── docs/                 # architecture & agent-oriented code docs
 ├── proto/                # Cast channel protobuf reference
 ├── examples/
 │   └── cast_probe.rs     # CLI discovery probe
@@ -127,6 +131,7 @@ rockcast/
     ├── local.rs          # PC playback
     ├── icy.rs            # ICY metadata watcher
     ├── spectrum.rs       # FFT visualizer tap
+    ├── relay.rs          # LAN HTTP relay PC → Cast
     ├── output.rs         # local + Cast device list
     ├── settings.rs
     └── cast/
@@ -135,6 +140,8 @@ rockcast/
         ├── channel.rs    # TLS framing + auth
         └── proto.rs      # hand-rolled CastMessage codec
 ```
+
+Code architecture, module map, playback/Cast flows, and notes for AI coding agents: **[docs/README.md](docs/README.md)**.
 
 ## Development
 
@@ -169,6 +176,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 | UI thread (egui) | Renders UI; starts background work for scan / play / stop |
 | `LocalPlayer` | HTTP stream → decode → ring buffer → cpal output + optional FFT |
 | `CastService` | CASTV2 session, heartbeat, volume, `LOAD` / `STOP` |
+| `StreamRelay` | Optional LAN HTTP proxy: PC fetches station, Cast LOADs local URL |
 | Discovery | LAN NIC whitelist (skip Amnezia/Hyper-V/…) + mDNS + `/24` TCP probe |
 
 ## Troubleshooting
@@ -177,6 +185,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 |---------|-------------|
 | No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
 | Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
+| Station needs VPN, silent on JBL | Enable **Via PC**; allow Windows Firewall inbound for RockCast; PC and JBL on same Wi‑Fi |
 | Empty station list | Check `stations.txt` path / `ROCKCAST_STATIONS`; inspect logs for Radio Browser errors |
 | No track title | Many stations do not send ICY metadata |
 | Wrong PC audio device | Pick another entry under **Device** after **Find** |

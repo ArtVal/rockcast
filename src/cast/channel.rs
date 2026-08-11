@@ -3,8 +3,11 @@
 use std::{
     io::{Read, Write},
     net::TcpStream,
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
@@ -36,10 +39,12 @@ pub enum ChannelError {
     Tls(String),
     #[error("protobuf: {0}")]
     Proto(#[from] ProtoError),
-    #[error("слишком большое сообщение ({0} байт)")]
+    #[error("message too large ({0} bytes)")]
     Oversized(u32),
-    #[error("таймаут ожидания ответа Cast")]
+    #[error("timed out waiting for Cast response")]
     Timeout,
+    #[error("Cast operation cancelled")]
+    Cancelled,
     #[error("{0}")]
     Msg(String),
 }
@@ -95,7 +100,8 @@ impl CastChannel {
         );
         self.send(&challenge)?;
         // Wait for the auth reply; anything else goes into the inbox.
-        let _ = self.receive_find(|msg| {
+        let never = AtomicBool::new(false);
+        let _ = self.receive_find(&never, Duration::from_secs(8), |msg| {
             if msg.namespace == NS_DEVICEAUTH {
                 Ok(Some(()))
             } else {
@@ -149,45 +155,78 @@ impl CastChannel {
 
     /// Reads messages until `f` returns `Some`. Others go into the inbox
     /// (except heartbeat PING — we reply with PONG immediately).
-    pub fn receive_find<F, T>(&self, mut f: F) -> Result<T, ChannelError>
+    ///
+    /// `cancel` aborts promptly (checked every ~read timeout). Wall-clock
+    /// `overall` bounds the wait so a hung LOAD cannot block forever.
+    pub fn receive_find<F, T>(
+        &self,
+        cancel: &AtomicBool,
+        overall: Duration,
+        mut f: F,
+    ) -> Result<T, ChannelError>
     where
         F: FnMut(&CastMessage) -> Result<Option<T>, ChannelError>,
     {
-        self.set_read_timeout(Duration::from_secs(12));
-        let result = self.receive_find_inner(&mut f);
+        // Short reads so cancel/overall are noticed quickly even while the
+        // receiver only sends heartbeats.
+        self.set_read_timeout(Duration::from_millis(500));
+        let result = self.receive_find_inner(cancel, overall, &mut f);
         self.set_read_timeout(Duration::from_millis(250));
         result
     }
 
-    fn receive_find_inner<F, T>(&self, f: &mut F) -> Result<T, ChannelError>
+    fn receive_find_inner<F, T>(
+        &self,
+        cancel: &AtomicBool,
+        overall: Duration,
+        f: &mut F,
+    ) -> Result<T, ChannelError>
     where
         F: FnMut(&CastMessage) -> Result<Option<T>, ChannelError>,
     {
-        {
-            let mut inbox = self.inbox.lock();
-            let mut i = 0;
-            while i < inbox.len() {
-                match f(&inbox[i])? {
-                    Some(v) => {
-                        inbox.remove(i);
-                        return Ok(v);
+        let deadline = Instant::now() + overall;
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(ChannelError::Cancelled);
+            }
+            if Instant::now() >= deadline {
+                return Err(ChannelError::Timeout);
+            }
+
+            // Re-scan inbox every iteration — heartbeat may have queued media.
+            {
+                let mut inbox = self.inbox.lock();
+                let mut i = 0;
+                while i < inbox.len() {
+                    match f(&inbox[i])? {
+                        Some(v) => {
+                            inbox.remove(i);
+                            return Ok(v);
+                        }
+                        None => i += 1,
                     }
-                    None => i += 1,
                 }
             }
-        }
 
-        for _ in 0..64 {
-            let msg = self.read_one()?;
-            if self.handle_heartbeat(&msg)? {
-                continue;
+            match self.read_one() {
+                Ok(msg) => {
+                    if self.handle_heartbeat(&msg)? {
+                        continue;
+                    }
+                    if let Some(v) = f(&msg)? {
+                        return Ok(v);
+                    }
+                    self.inbox.lock().push(msg);
+                }
+                Err(ChannelError::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-            if let Some(v) = f(&msg)? {
-                return Ok(v);
-            }
-            self.inbox.lock().push(msg);
         }
-        Err(ChannelError::Timeout)
     }
 
     pub fn pump_heartbeats(&self) -> Result<(), ChannelError> {

@@ -4,13 +4,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProtoError {
-    #[error("неполный protobuf")]
+    #[error("incomplete protobuf")]
     Truncated,
-    #[error("некорректный varint")]
+    #[error("invalid varint")]
     BadVarint,
-    #[error("некорректный UTF-8 в поле protobuf")]
+    #[error("invalid UTF-8 in protobuf field")]
     Utf8,
-    #[error("ожидался payload STRING или BINARY")]
+    #[error("expected STRING or BINARY payload")]
     MissingPayload,
 }
 

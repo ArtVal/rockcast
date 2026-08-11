@@ -286,7 +286,7 @@ fn analyze_stream(
         .tracks()
         .iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "нет аудиодорожки".to_string())?
+        .ok_or_else(|| "no audio track".to_string())?
         .clone();
 
     let track_id = track.id;

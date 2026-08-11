@@ -3,7 +3,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -14,7 +14,6 @@ use eframe::egui::{
     self, Align, Color32, CornerRadius, Frame, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui,
     Vec2,
 };
-use parking_lot::Mutex;
 
 use crate::{
     cast::CastService,
@@ -22,6 +21,7 @@ use crate::{
     icy::IcyWatcher,
     local::LocalPlayer,
     output::{OutputDevice, scan_all},
+    relay::StreamRelay,
     settings::AppSettings,
     spectrum::{BANDS, SpectrumAnalyzer},
     stations::{Station, enrich_stations, load_catalog},
@@ -35,7 +35,6 @@ const ACCENT: Color32 = Color32::from_rgb(0xc4, 0x5c, 0x26);
 const MUTED: Color32 = Color32::from_rgb(0x9a, 0x8b, 0x78);
 const BAR_DIM: Color32 = Color32::from_rgb(0x5a, 0x40, 0x30);
 const ROW_H: f32 = 28.0;
-const BOTTOM_RESERVE: f32 = 235.0;
 /// Slider 100% → 50% on the speaker (half-scale).
 const VOLUME_CAST_SCALE: f32 = 0.5;
 
@@ -56,7 +55,12 @@ enum UiMsg {
         finished: bool,
     },
     Devices(Vec<OutputDevice>, String),
-    PlayOk { url: String, generation: u64 },
+    PlayOk {
+        url: String,
+        /// HTTP URL for spectrum/ICY tap (relay LAN URL when Via PC).
+        tap_url: String,
+        generation: u64,
+    },
     StartTap { url: String, generation: u64 },
     StopOk,
     Error { message: String, generation: Option<u64> },
@@ -64,7 +68,7 @@ enum UiMsg {
 }
 
 pub struct RockCastApp {
-    cast: Arc<Mutex<CastService>>,
+    cast: Arc<CastService>,
     local: Arc<LocalPlayer>,
     stations: Vec<Station>,
     devices: Vec<OutputDevice>,
@@ -85,11 +89,14 @@ pub struct RockCastApp {
     play_generation: Arc<AtomicU64>,
     playing_url: Option<String>,
     eq_enabled: bool,
+    /// Relay station through PC LAN HTTP for Cast (VPN-friendly).
+    cast_relay: bool,
     eq_levels: [f32; BANDS],
     spectrum: SpectrumAnalyzer,
     ui_rx: mpsc::Receiver<UiMsg>,
     ui_tx: mpsc::Sender<UiMsg>,
     icy: IcyWatcher,
+    relay: Arc<StreamRelay>,
     settings: AppSettings,
     /// (is_local, level 0..1)
     vol_tx: mpsc::Sender<(bool, f32)>,
@@ -127,12 +134,14 @@ impl RockCastApp {
         let settings = AppSettings::load();
         let volume = settings.volume.clamp(0, 100);
         let eq_enabled = settings.eq_enabled;
+        let cast_relay = settings.cast_relay;
         let lang = settings.language;
         let t = lang.t();
 
         let (ui_tx, ui_rx) = mpsc::channel();
-        let cast = Arc::new(Mutex::new(CastService::new()));
+        let cast = Arc::new(CastService::new());
         let local = Arc::new(LocalPlayer::new());
+        let relay = Arc::new(StreamRelay::new());
 
         let (vol_tx, vol_rx) = mpsc::channel::<(bool, f32)>();
         let cast_vol = Arc::clone(&cast);
@@ -147,7 +156,7 @@ impl RockCastApp {
                 if is_local {
                     local_vol.set_volume(level);
                 } else {
-                    let _ = cast_vol.lock().set_volume_current(level);
+                    let _ = cast_vol.set_volume_current(level);
                 }
             }
         });
@@ -172,11 +181,13 @@ impl RockCastApp {
             play_generation: Arc::new(AtomicU64::new(0)),
             playing_url: None,
             eq_enabled,
+            cast_relay,
             eq_levels: [0.08; BANDS],
             spectrum: SpectrumAnalyzer::new(),
             ui_rx,
             ui_tx,
             icy: IcyWatcher::new(),
+            relay,
             settings,
             vol_tx,
             last_settings_save: Instant::now(),
@@ -216,9 +227,18 @@ impl RockCastApp {
                 let blob =
                     format!("{} {}", c.discovered.name, c.discovered.model).to_lowercase();
                 if blob.contains("jbl") || blob.contains("9.1") || blob.contains("bar") {
-                    pick = i;
-                    break;
+                    self.selected_device = Some(i);
+                    return;
                 }
+                if pick == 0 && !d.is_local() {
+                    pick = i;
+                }
+            }
+        }
+        // Prefer any Cast over the first local when nothing was saved.
+        if pick == 0 {
+            if let Some(i) = self.devices.iter().position(|d| !d.is_local()) {
+                pick = i;
             }
         }
         self.selected_device = Some(pick);
@@ -227,13 +247,21 @@ impl RockCastApp {
     fn mark_settings_dirty(&mut self) {
         self.settings.volume = self.volume;
         self.settings.eq_enabled = self.eq_enabled;
+        self.settings.cast_relay = self.cast_relay;
         self.settings.language = self.lang;
-        self.settings.station_url = self
+        if let Some(url) = self
             .selected_station
-            .and_then(|i| self.stations.get(i).map(|s| s.url.clone()));
-        self.settings.device_id = self
+            .and_then(|i| self.stations.get(i).map(|s| s.url.clone()))
+        {
+            self.settings.station_url = Some(url);
+        }
+        // Don't clear saved device while the list is still empty / loading.
+        if let Some(id) = self
             .selected_device
-            .and_then(|i| self.devices.get(i).map(|d| d.id().to_string()));
+            .and_then(|i| self.devices.get(i).map(|d| d.id().to_string()))
+        {
+            self.settings.device_id = Some(id);
+        }
         self.settings_dirty = true;
     }
 
@@ -267,8 +295,13 @@ impl RockCastApp {
         if self.shutting_down {
             return;
         }
+        let generation = self.play_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        log::info!(
+            "shutdown_playback: bump generation→{generation} playing={} local={}",
+            self.playing,
+            self.playing_local
+        );
         self.shutting_down = true;
-        let _ = self.play_generation.fetch_add(1, Ordering::SeqCst);
         self.icy.stop_async();
         self.spectrum.stop_async();
         self.playing = false;
@@ -276,9 +309,28 @@ impl RockCastApp {
         self.playing_url = None;
         self.mark_settings_dirty();
         self.persist_settings_if_needed(true);
-        // Synchronous: otherwise the process dies before STOP is sent.
-        let _ = self.cast.lock().stop();
+        // Stop local first (non-blocking). Cast STOP is best-effort with a short wait
+        // so a hung Cast handshake cannot freeze window close.
+        log::info!("shutdown_playback: local.stop()");
         self.local.stop();
+        self.relay.stop();
+        let cast = Arc::clone(&self.cast);
+        let done = Arc::new(AtomicBool::new(false));
+        let done_flag = Arc::clone(&done);
+        thread::spawn(move || {
+            log::info!("shutdown_playback: cast.stop() begin");
+            let _ = cast.stop();
+            done_flag.store(true, Ordering::SeqCst);
+            log::info!("shutdown_playback: cast.stop() done");
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !done.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        if !done.load(Ordering::SeqCst) {
+            log::warn!("shutdown_playback: cast.stop() still pending after 2s — continuing");
+        }
+        log::info!("shutdown_playback: finished");
     }
 
     fn can_start_play(&self) -> bool {
@@ -310,27 +362,69 @@ impl RockCastApp {
                     self.status = i18n::fmt1(self.lang.t().stations_count, self.stations.len());
                 }
                 UiMsg::Devices(list, status) => {
+                    log::info!(
+                        "devices scanned: count={} status={status}",
+                        list.len()
+                    );
+                    for (i, d) in list.iter().enumerate() {
+                        let kind = if d.is_local() { "local" } else { "cast" };
+                        log::info!(
+                            "  device[{i}] kind={kind} id={} name='{}'",
+                            d.id(),
+                            d.name()
+                        );
+                    }
                     self.devices = list;
                     self.restore_device_selection();
                     self.loading_devices = false;
-                    self.status = status;
+                    let local_n = self.devices.iter().filter(|d| d.is_local()).count();
+                    let cast_n = self.devices.len().saturating_sub(local_n);
+                    let selected = self
+                        .selected_device
+                        .and_then(|i| self.devices.get(i))
+                        .map(|d| d.label(self.lang))
+                        .unwrap_or_else(|| self.lang.t().device_none.into());
+                    self.status = if cast_n == 0 {
+                        i18n::fmt1(self.lang.t().cast_none, local_n)
+                    } else {
+                        i18n::fmt3(self.lang.t().cast_found, local_n, cast_n, selected)
+                    };
+                    if status.contains("panic") || status.contains("Ошибка") {
+                        self.status = status;
+                    }
+                    if let Some(i) = self.selected_device {
+                        log::info!(
+                            "device selected after scan: idx={i} id={}",
+                            self.devices.get(i).map(|d| d.id()).unwrap_or("?")
+                        );
+                    }
                 }
-                UiMsg::PlayOk { url, generation } => {
-                    if generation != self.play_generation.load(Ordering::SeqCst) {
+                UiMsg::PlayOk {
+                    url,
+                    tap_url,
+                    generation,
+                } => {
+                    let cur = self.play_generation.load(Ordering::SeqCst);
+                    if generation != cur {
+                        log::info!(
+                            "PlayOk ignored: stale generation={generation} current={cur} url={url}"
+                        );
                         continue;
                     }
+                    log::info!(
+                        "PlayOk: generation={generation} local={} url={url} tap={tap_url}",
+                        self.playing_local
+                    );
                     self.playing_op = false;
                     self.playing = true;
                     self.playing_url = Some(url);
                     self.track = self.lang.t().track_meta_hint.into();
                     if self.playing_local {
                         // Titles and spectrum already come from LocalPlayer.
-                        if self.eq_enabled {
-                            // levels are read from local in tick_eq
-                        }
                     } else {
-                        // Let Chromecast claim the stream first, then one local tap.
-                        self.schedule_stream_tap(generation);
+                        // Relay tap shares the feeder (no second upstream). Direct Cast
+                        // still taps the station URL after a short delay.
+                        self.schedule_stream_tap(generation, tap_url);
                     }
                 }
                 UiMsg::StartTap { url, generation } => {
@@ -340,6 +434,7 @@ impl RockCastApp {
                     self.start_stream_tap(url, self.eq_enabled);
                 }
                 UiMsg::StopOk => {
+                    log::info!("StopOk received");
                     self.playing_op = false;
                     self.playing = false;
                     self.playing_local = false;
@@ -350,11 +445,18 @@ impl RockCastApp {
                     self.status = self.lang.t().stopped.into();
                 }
                 UiMsg::Error { message, generation } => {
+                    let cur = self.play_generation.load(Ordering::SeqCst);
                     if let Some(g) = generation
-                        && g != self.play_generation.load(Ordering::SeqCst)
+                        && g != cur
                     {
+                        log::info!(
+                            "Error ignored: stale generation={g} current={cur} msg={message}"
+                        );
                         continue;
                     }
+                    log::error!(
+                        "Error applied: generation={generation:?} current={cur} msg={message}"
+                    );
                     self.playing_op = false;
                     self.loading_stations = false;
                     self.loading_devices = false;
@@ -367,7 +469,6 @@ impl RockCastApp {
                     self.station_now = "—".into();
                     self.track = self.lang.t().track_hint.into();
                     self.status = message.clone();
-                    log::error!("{message}");
                 }
                 UiMsg::Track(t) => self.track = t,
             }
@@ -426,33 +527,53 @@ impl RockCastApp {
 
     fn play(&mut self) {
         if !self.can_start_play() {
+            log::warn!(
+                "play skipped: can_start_play=false loading_devices={} shutting_down={}",
+                self.loading_devices,
+                self.shutting_down
+            );
             return;
         }
         let Some(si) = self.selected_station else {
             self.status = self.lang.t().pick_station.into();
+            log::warn!("play skipped: no station selected");
             return;
         };
         let Some(di) = self.selected_device else {
             self.status = self.lang.t().pick_device.into();
+            log::warn!("play skipped: no device selected");
             return;
         };
         let station = self.stations[si].clone();
         let device = self.devices[di].clone();
         let is_local = device.is_local();
+        let output_kind = if is_local { "local" } else { "cast" };
+
+        log::info!(
+            "play request: station='{}' idx={si} url={} → device='{}' id={} kind={output_kind} relay={} vol={}",
+            station.name,
+            station.url,
+            device.name(),
+            device.id(),
+            self.cast_relay && !is_local,
+            self.volume
+        );
 
         // A new station immediately cancels waiting for the previous one's metadata.
         self.icy.stop_async();
         self.spectrum.stop_async();
         if !is_local {
+            log::info!("play: stopping local before cast");
             self.local.stop();
         }
         self.playing_url = None;
         let generation = self.play_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        log::info!("play: generation={generation}");
 
         self.playing_op = true;
         self.playing = false;
         self.playing_local = is_local;
-        self.status = format!("Play: {} → {}", station.name, device.name());
+        self.status = format!("Play: {} -> {}", station.name, device.name());
         self.station_now = station.name.clone();
         self.track = self.lang.t().connecting.into();
         self.mark_settings_dirty();
@@ -461,50 +582,144 @@ impl RockCastApp {
         let tx = self.ui_tx.clone();
         let cast = Arc::clone(&self.cast);
         let local = Arc::clone(&self.local);
+        let relay = Arc::clone(&self.relay);
         let play_generation = Arc::clone(&self.play_generation);
         let vol = self.volume;
+        let use_relay = self.cast_relay;
 
         thread::spawn(move || {
-            if play_generation.load(Ordering::SeqCst) != generation {
+            let cur = play_generation.load(Ordering::SeqCst);
+            if cur != generation {
+                log::info!(
+                    "play worker exit early: generation={generation} superseded by {cur}"
+                );
                 return;
             }
 
             match device {
                 OutputDevice::Cast(cast_dev) => {
+                    log::info!(
+                        "play worker[{generation}]: cast path device='{}' relay={use_relay}",
+                        cast_dev.discovered.name
+                    );
                     // Stop the local player if it was running.
                     local.stop();
-                    let play_result = {
-                        let svc = cast.lock();
-                        if play_generation.load(Ordering::SeqCst) != generation {
-                            return;
-                        }
-                        svc.play(
-                            &cast_dev,
-                            &station.url,
-                            station.content_type(),
-                            &station.name,
-                            |s| {
-                                if play_generation.load(Ordering::SeqCst) == generation {
-                                    let _ = tx.send(UiMsg::Status(s.to_string()));
+                    relay.stop();
+                    if play_generation.load(Ordering::SeqCst) != generation {
+                        log::info!(
+                            "play worker[{generation}]: superseded before cast.play"
+                        );
+                        return;
+                    }
+
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    {
+                        let cancel_w = Arc::clone(&cancel);
+                        let play_generation = Arc::clone(&play_generation);
+                        thread::spawn(move || {
+                            while !cancel_w.load(Ordering::SeqCst) {
+                                if play_generation.load(Ordering::SeqCst) != generation {
+                                    cancel_w.store(true, Ordering::SeqCst);
+                                    break;
                                 }
-                            },
+                                thread::sleep(Duration::from_millis(100));
+                            }
+                        });
+                    }
+
+                    let (load_url, load_ct) = if use_relay {
+                        match relay.start(
+                            &station.url,
+                            &cast_dev.discovered.host,
+                            station.content_type(),
+                            &cancel,
+                        ) {
+                            Ok(pair) => {
+                                cancel.store(true, Ordering::SeqCst);
+                                log::info!(
+                                    "play worker[{generation}]: relay url={} content-type={}",
+                                    pair.0,
+                                    pair.1
+                                );
+                                pair
+                            }
+                            Err(e) => {
+                                cancel.store(true, Ordering::SeqCst);
+                                log::error!(
+                                    "play worker[{generation}]: relay.start Err: {e}"
+                                );
+                                let _ = tx.send(UiMsg::Error {
+                                    message: e.to_string(),
+                                    generation: Some(generation),
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        cancel.store(true, Ordering::SeqCst);
+                        (
+                            station.url.clone(),
+                            station.content_type().to_string(),
                         )
                     };
+
                     if play_generation.load(Ordering::SeqCst) != generation {
+                        log::info!(
+                            "play worker[{generation}]: superseded after relay.start"
+                        );
+                        relay.stop();
+                        return;
+                    }
+
+                    let play_result = cast.play(
+                        &cast_dev,
+                        &load_url,
+                        &load_ct,
+                        &station.name,
+                        |s| {
+                            if play_generation.load(Ordering::SeqCst) == generation {
+                                let _ = tx.send(UiMsg::Status(s.to_string()));
+                            }
+                        },
+                    );
+                    if play_generation.load(Ordering::SeqCst) != generation {
+                        log::info!(
+                            "play worker[{generation}]: superseded after cast.play (stale result dropped)"
+                        );
+                        relay.stop();
                         return;
                     }
                     match play_result {
                         Ok(()) => {
-                            let _ = cast.lock().set_volume_current(ui_volume_to_cast(vol));
+                            log::info!("play worker[{generation}]: cast.play Ok");
+                            let _ = cast.set_volume_current(ui_volume_to_cast(vol));
                             if play_generation.load(Ordering::SeqCst) != generation {
+                                relay.stop();
                                 return;
                             }
+                            if use_relay {
+                                if let Some(u) = relay.public_url() {
+                                    let _ = tx.send(UiMsg::Status(format!(
+                                        "Playing via PC relay ({u})"
+                                    )));
+                                }
+                            }
+                            let tap_url = if use_relay {
+                                relay
+                                    .public_url()
+                                    .unwrap_or_else(|| station.url.clone())
+                            } else {
+                                station.url.clone()
+                            };
                             let _ = tx.send(UiMsg::PlayOk {
                                 url: station.url.clone(),
+                                tap_url,
                                 generation,
                             });
                         }
                         Err(e) => {
+                            log::error!("play worker[{generation}]: cast.play Err: {e}");
+                            relay.stop();
                             let _ = tx.send(UiMsg::Error {
                                 message: e.to_string(),
                                 generation: Some(generation),
@@ -513,7 +728,13 @@ impl RockCastApp {
                     }
                 }
                 OutputDevice::Local(local_dev) => {
-                    let _ = cast.lock().stop();
+                    log::info!(
+                        "play worker[{generation}]: local path device='{}' cpal={:?}",
+                        local_dev.name,
+                        local_dev.cpal_name
+                    );
+                    relay.stop();
+                    let _ = cast.stop();
 
                     let (title_tx, title_rx) = mpsc::channel();
                     let ui_tx = tx.clone();
@@ -524,6 +745,9 @@ impl RockCastApp {
                     });
 
                     if play_generation.load(Ordering::SeqCst) != generation {
+                        log::info!(
+                            "play worker[{generation}]: superseded before local.play"
+                        );
                         return;
                     }
                     let play_result = local.play(
@@ -537,18 +761,25 @@ impl RockCastApp {
                             }
                         },
                     );
-                    if play_generation.load(Ordering::SeqCst) != generation {
-                        local.stop();
+                    // Stale play must NOT call local.stop() — that kills the newer station.
+                    let cur = play_generation.load(Ordering::SeqCst);
+                    if cur != generation {
+                        log::info!(
+                            "play worker[{generation}]: superseded after local.play (current={cur}, result={play_result:?}) — not stopping"
+                        );
                         return;
                     }
                     match play_result {
                         Ok(()) => {
+                            log::info!("play worker[{generation}]: local.play Ok");
                             let _ = tx.send(UiMsg::PlayOk {
                                 url: station.url.clone(),
+                                tap_url: station.url.clone(),
                                 generation,
                             });
                         }
                         Err(e) => {
+                            log::error!("play worker[{generation}]: local.play Err: {e}");
                             let _ = tx.send(UiMsg::Error {
                                 message: e.to_string(),
                                 generation: Some(generation),
@@ -562,10 +793,16 @@ impl RockCastApp {
 
     fn stop(&mut self) {
         if self.shutting_down {
+            log::warn!("stop skipped: shutting_down");
             return;
         }
         // Cancel any in-flight Play.
-        let _ = self.play_generation.fetch_add(1, Ordering::SeqCst);
+        let generation = self.play_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        log::info!(
+            "stop request: generation→{generation} was_playing={} local={}",
+            self.playing,
+            self.playing_local
+        );
         self.playing_op = true;
         self.status = "Stop…".into();
         self.icy.stop_async();
@@ -577,13 +814,18 @@ impl RockCastApp {
         let tx = self.ui_tx.clone();
         let cast = Arc::clone(&self.cast);
         let local = Arc::clone(&self.local);
+        let relay = Arc::clone(&self.relay);
         thread::spawn(move || {
+            log::info!("stop worker: local.stop()");
             local.stop();
-            match cast.lock().stop() {
+            relay.stop();
+            match cast.stop() {
                 Ok(()) => {
+                    log::info!("stop worker: cast.stop Ok");
                     let _ = tx.send(UiMsg::StopOk);
                 }
                 Err(e) => {
+                    log::error!("stop worker: cast.stop Err: {e}");
                     let _ = tx.send(UiMsg::Error {
                         message: e.to_string(),
                         generation: None,
@@ -598,24 +840,25 @@ impl RockCastApp {
         self.persist_settings_if_needed(false);
     }
 
-    fn schedule_stream_tap(&mut self, generation: u64) {
+    fn schedule_stream_tap(&mut self, generation: u64, tap_url: String) {
         self.icy.stop_async();
         self.spectrum.stop_async();
 
-        let url = match self.playing_url.clone() {
-            Some(u) => u,
-            None => return,
-        };
         let play_generation = Arc::clone(&self.play_generation);
         let ui_tx = self.ui_tx.clone();
+        // Via PC: tap the relay URL (shared feeder) shortly after Cast connects.
+        // Direct Cast: wait longer so the speaker claims the station first.
+        let delay_ms = if self.cast_relay { 2_500 } else { 1_200 };
 
-        // Start tap from the UI thread via a message after a delay — don't block egui.
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis(1200));
+            thread::sleep(Duration::from_millis(delay_ms));
             if play_generation.load(Ordering::SeqCst) != generation {
                 return;
             }
-            let _ = ui_tx.send(UiMsg::StartTap { url, generation });
+            let _ = ui_tx.send(UiMsg::StartTap {
+                url: tap_url,
+                generation,
+            });
         });
     }
 
@@ -623,17 +866,25 @@ impl RockCastApp {
         self.icy.stop_async();
         self.spectrum.stop_async();
 
-        let (tx, rx) = mpsc::channel();
-        let ui_tx = self.ui_tx.clone();
-        thread::spawn(move || {
-            while let Ok(title) = rx.recv() {
-                let _ = ui_tx.send(UiMsg::Track(title));
-            }
-        });
+        // Relay already publishes ICY titles via StreamRelay::latest_title().
+        let from_relay = self.relay.public_url().as_ref() == Some(&url);
+
+        let title_tx = if from_relay {
+            None
+        } else {
+            let (tx, rx) = mpsc::channel();
+            let ui_tx = self.ui_tx.clone();
+            thread::spawn(move || {
+                while let Ok(title) = rx.recv() {
+                    let _ = ui_tx.send(UiMsg::Track(title));
+                }
+            });
+            Some(tx)
+        };
 
         if eq_enabled {
-            self.spectrum.start(url, Some(tx));
-        } else {
+            self.spectrum.start(url, title_tx);
+        } else if let Some(tx) = title_tx {
             self.icy.start(url, tx);
         }
     }
@@ -650,7 +901,14 @@ impl RockCastApp {
             self.icy.stop_async();
             return;
         }
-        let Some(url) = self.playing_url.clone() else {
+        let tap = if self.cast_relay {
+            self.relay
+                .public_url()
+                .or_else(|| self.playing_url.clone())
+        } else {
+            self.playing_url.clone()
+        };
+        let Some(url) = tap else {
             self.spectrum.stop_async();
             self.icy.stop_async();
             return;
@@ -666,6 +924,28 @@ impl RockCastApp {
         self.mark_settings_dirty();
         self.persist_settings_if_needed(true);
         self.sync_spectrum();
+    }
+
+    /// Toggle LAN relay for Cast. If Cast is already playing, restart so the new path applies.
+    fn set_cast_relay(&mut self, enabled: bool) {
+        if self.cast_relay == enabled {
+            return;
+        }
+        self.cast_relay = enabled;
+        log::info!("cast_relay -> {enabled}");
+        self.mark_settings_dirty();
+        self.persist_settings_if_needed(true);
+
+        let cast_active = (self.playing || self.playing_op) && !self.playing_local;
+        if cast_active {
+            log::info!("cast_relay changed during Cast playback — restarting with relay={enabled}");
+            self.status = if enabled {
+                self.lang.t().cast_relay_restart_on.into()
+            } else {
+                self.lang.t().cast_relay_restart_off.into()
+            };
+            self.play();
+        }
     }
 
     fn tick_eq(&mut self, dt: f32) {
@@ -744,6 +1024,11 @@ impl RockCastApp {
 
     fn draw_device_row(&mut self, ui: &mut Ui) {
         let t = self.lang.t();
+        let cast_selected = self
+            .selected_device
+            .and_then(|i| self.devices.get(i))
+            .is_some_and(|d| !d.is_local());
+
         ui.horizontal(|ui| {
             ui.set_height(32.0);
             ui.label(RichText::new(t.device).color(MUTED));
@@ -755,7 +1040,8 @@ impl RockCastApp {
                 .map(|d| d.label(self.lang))
                 .collect();
             let find_w = 88.0;
-            let combo_w = (ui.available_width() - find_w - 8.0).max(180.0);
+            // Combo fills remaining width after Find.
+            let combo_w = (ui.available_width() - find_w - 10.0).max(160.0);
 
             let selected_text = match self.selected_device.and_then(|i| labels.get(i)) {
                 Some(s) => s.clone(),
@@ -781,9 +1067,20 @@ impl RockCastApp {
                     }
                     for (i, label) in labels.iter().enumerate() {
                         let selected = self.selected_device == Some(i);
-                        if ui.selectable_label(selected, RichText::new(label).color(FG)).clicked()
+                        if ui
+                            .selectable_label(selected, RichText::new(label).color(FG))
+                            .clicked()
                         {
+                            let prev = self.selected_device;
                             self.selected_device = Some(i);
+                            if let Some(d) = self.devices.get(i) {
+                                let kind = if d.is_local() { "local" } else { "cast" };
+                                log::info!(
+                                    "output device chosen: idx={i} (was {prev:?}) kind={kind} id={} name='{}'",
+                                    d.id(),
+                                    d.name()
+                                );
+                            }
                             self.mark_settings_dirty();
                         }
                     }
@@ -800,6 +1097,34 @@ impl RockCastApp {
                 self.refresh_devices();
             }
         });
+
+        if cast_selected {
+            ui.add_space(6.0);
+            Frame::new()
+                .fill(PANEL_2)
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut relay = self.cast_relay;
+                        let toggle = ui
+                            .checkbox(
+                                &mut relay,
+                                RichText::new(t.cast_relay).color(FG).size(13.0),
+                            )
+                            .on_hover_text(t.cast_relay_hint);
+                        if toggle.changed() {
+                            self.set_cast_relay(relay);
+                        }
+                        ui.add_space(10.0);
+                        ui.label(
+                            RichText::new(t.cast_relay_note)
+                                .color(MUTED)
+                                .size(12.0),
+                        );
+                    });
+                });
+        }
     }
 
     fn draw_station_list(&mut self, ui: &mut Ui, list_h: f32) {
@@ -973,10 +1298,19 @@ impl RockCastApp {
         });
 
         if let Some(i) = clicked_station {
+            let prev = self.selected_station;
             self.selected_station = Some(i);
+            if let Some(s) = self.stations.get(i) {
+                log::info!(
+                    "station selected: idx={i} (was {prev:?}) name='{}' url={} auto_play={should_play}",
+                    s.name,
+                    s.url
+                );
+            }
             self.mark_settings_dirty();
         }
         if should_play {
+            log::info!("station double-click → play()");
             self.play();
         }
     }
@@ -1024,8 +1358,9 @@ impl RockCastApp {
             ui.label(RichText::new(self.lang.t().volume).color(MUTED));
             ui.add_space(8.0);
 
+            let btn_reserve = 88.0 + 6.0 + 72.0 + 16.0 + 40.0;
             let mut vol = f32::from(self.volume);
-            let slider_w = (ui.available_width() - 200.0).clamp(120.0, 420.0);
+            let slider_w = (ui.available_width() - btn_reserve).clamp(120.0, 520.0);
             let slider = egui::Slider::new(&mut vol, 0.0..=100.0)
                 .show_value(false)
                 .trailing_fill(true);
@@ -1034,6 +1369,7 @@ impl RockCastApp {
                 self.queue_volume();
                 self.mark_settings_dirty();
             }
+            ui.add_space(6.0);
             ui.label(
                 RichText::new(format!("{:>3}%", self.volume))
                     .color(FG)
@@ -1045,6 +1381,7 @@ impl RockCastApp {
                     .min_size(Vec2::new(72.0, 32.0))
                     .fill(PANEL_2);
                 if ui.add_enabled(!self.shutting_down, stop).clicked() {
+                    log::info!("UI Stop clicked");
                     self.stop();
                 }
                 ui.add_space(6.0);
@@ -1052,6 +1389,7 @@ impl RockCastApp {
                     .min_size(Vec2::new(88.0, 32.0))
                     .fill(ACCENT);
                 if ui.add_enabled(self.can_start_play(), play).clicked() {
+                    log::info!("UI Play clicked");
                     self.play();
                 }
             });
@@ -1065,7 +1403,8 @@ impl RockCastApp {
             .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.label(RichText::new(&self.status).color(FG).size(12.5));
+                let status = truncate(&self.status, 120);
+                ui.label(RichText::new(status).color(MUTED).size(12.0));
             });
     }
 }
@@ -1075,6 +1414,13 @@ impl eframe::App for RockCastApp {
         self.bootstrap();
         self.poll_messages();
         self.apply_volume_if_needed();
+        if self.playing && self.cast_relay && !self.playing_local {
+            if let Some(title) = self.relay.latest_title() {
+                if !title.is_empty() && self.track != title {
+                    self.track = title;
+                }
+            }
+        }
         self.tick_eq(ctx.input(|i| i.stable_dt).clamp(0.0, 0.05));
         let eq_busy = self.eq_enabled && self.playing
             || self.eq_levels.iter().any(|l| (*l - 0.08).abs() > 0.01);
@@ -1087,55 +1433,60 @@ impl eframe::App for RockCastApp {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
 
-        egui::TopBottomPanel::top("menu_bar")
-            .frame(Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(8, 2)))
+        egui::TopBottomPanel::bottom("bottom")
+            .frame(Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 10)))
             .show_separator_line(false)
             .show(ctx, |ui| {
-                egui::MenuBar::new().ui(ui, |ui| {
-                    let t = self.lang.t();
-                    ui.menu_button(t.menu_language, |ui| {
-                        for lang in [Lang::Ru, Lang::En] {
-                            let selected = self.lang == lang;
-                            if ui
-                                .selectable_label(selected, lang.native_name())
-                                .clicked()
-                            {
-                                if self.lang != lang {
-                                    self.set_language(ctx, lang);
-                                }
-                                ui.close();
-                            }
-                        }
-                    });
-                });
+                self.draw_now_playing(ui);
+                ui.add_space(8.0);
+                self.draw_controls(ui);
+                ui.add_space(6.0);
+                self.draw_status(ui);
             });
 
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 14)))
+            .frame(Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(16, 12)))
             .show(ctx, |ui| {
-                ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let t = self.lang.t();
+                        ui.menu_button(RichText::new(t.menu_language).color(MUTED).size(13.0), |ui| {
+                            for lang in [Lang::Ru, Lang::En] {
+                                let selected = self.lang == lang;
+                                if ui
+                                    .selectable_label(selected, lang.native_name())
+                                    .clicked()
+                                {
+                                    if self.lang != lang {
+                                        self.set_language(ctx, lang);
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                });
                 ui.label(
                     RichText::new(self.lang.t().subtitle)
                         .size(12.5)
                         .color(MUTED),
                 );
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 self.draw_device_row(ui);
-                ui.add_space(6.0);
+                ui.add_space(8.0);
 
-                let list_h = (ui.available_height() - BOTTOM_RESERVE).max(120.0);
+                let list_h = (ui.available_height() - 8.0).max(120.0);
                 self.draw_station_list(ui, list_h);
-                ui.add_space(6.0);
-                self.draw_now_playing(ui);
-                ui.add_space(6.0);
-                self.draw_controls(ui);
-                ui.add_space(6.0);
-                self.draw_status(ui);
             });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        log::info!("on_exit: shutting down");
         self.shutdown_playback();
+        // HTTP decode threads may still be blocked inside reqwest; don't let them
+        // keep the process alive after the window is gone.
+        std::process::exit(0);
     }
 }
 

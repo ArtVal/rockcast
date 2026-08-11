@@ -18,6 +18,9 @@ pub struct AppSettings {
     /// Parallel stream analysis for the visualizer (extra traffic).
     #[serde(default)]
     pub eq_enabled: bool,
+    /// PC fetches the station (VPN) and relays audio to Cast over LAN.
+    #[serde(default)]
+    pub cast_relay: bool,
     #[serde(default)]
     pub language: crate::i18n::Lang,
 }
@@ -54,4 +57,12 @@ fn settings_path() -> PathBuf {
         return Path::new(&base).join("RockCast").join("settings.json");
     }
     PathBuf::from("rockcast_settings.json")
+}
+
+/// `%LOCALAPPDATA%\RockCast\rockcast.log` (or `./rockcast.log`).
+pub fn log_path() -> PathBuf {
+    if let Ok(base) = std::env::var("LOCALAPPDATA") {
+        return Path::new(&base).join("RockCast").join("rockcast.log");
+    }
+    PathBuf::from("rockcast.log")
 }

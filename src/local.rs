@@ -29,6 +29,9 @@ use thiserror::Error;
 use crate::spectrum::{BANDS, FFT_SIZE, HOP};
 
 const RING_MAX: usize = 48000 * 2 * 4; // ~4 sec stereo @ 48k
+/// Give up if the station accepts TCP but never sends HTTP headers / audio.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(12);
+const READ_POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone)]
 pub struct LocalDeviceInfo {
@@ -46,9 +49,9 @@ impl LocalDeviceInfo {
 
 #[derive(Debug, Error)]
 pub enum LocalError {
-    #[error("аудио: {0}")]
+    #[error("audio: {0}")]
     Audio(String),
-    #[error("поток: {0}")]
+    #[error("stream: {0}")]
     Stream(String),
 }
 
@@ -116,7 +119,11 @@ fn bits_f32(b: u32) -> f32 {
 }
 
 pub struct LocalPlayer {
-    stop: Arc<AtomicBool>,
+    /// Stop flag for the *current* session only. Each `play` gets a fresh Arc so
+    /// cancelling an old hung decode cannot be undone by the next `play`.
+    session_stop: Mutex<Arc<AtomicBool>>,
+    /// Serialize play setup so two concurrent `play` calls cannot race on state.
+    play_lock: Mutex<()>,
     state: Mutex<PlayerState>,
     volume: Arc<AtomicU32>,
     levels: Arc<Mutex<[f32; BANDS]>>,
@@ -144,7 +151,8 @@ impl Default for LocalPlayer {
 impl LocalPlayer {
     pub fn new() -> Self {
         Self {
-            stop: Arc::new(AtomicBool::new(true)),
+            session_stop: Mutex::new(Arc::new(AtomicBool::new(true))),
+            play_lock: Mutex::new(()),
             state: Mutex::new(PlayerState {
                 join: None,
                 stream: None,
@@ -164,13 +172,27 @@ impl LocalPlayer {
     }
 
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let mut state = self.state.lock();
-        state.stream = None;
-        if let Some(j) = state.join.take() {
-            drop(state);
+        log::info!("LocalPlayer::stop");
+        self.session_stop.lock().store(true, Ordering::SeqCst);
+        let (stream, join) = {
+            let mut state = self.state.lock();
+            (state.stream.take(), state.join.take())
+        };
+        log::debug!(
+            "LocalPlayer::stop: had_stream={} had_join={}",
+            stream.is_some(),
+            join.is_some()
+        );
+        // Dropping cpal::Stream / joining a hung HTTP decode can block — never do
+        // that on the UI thread.
+        if stream.is_some() || join.is_some() {
             thread::spawn(move || {
-                let _ = j.join();
+                log::debug!("LocalPlayer::stop: dropping stream / joining decode");
+                drop(stream);
+                if let Some(j) = join {
+                    let _ = j.join();
+                    log::debug!("LocalPlayer::stop: decode join finished");
+                }
             });
         }
         *self.levels.lock() = [0.08; BANDS];
@@ -184,13 +206,21 @@ impl LocalPlayer {
         title_tx: Option<mpsc::Sender<String>>,
         on_status: impl Fn(&str),
     ) -> Result<(), LocalError> {
+        log::info!(
+            "LocalPlayer::play begin device='{}' cpal={:?} vol={volume:.2} url={url}",
+            device.name,
+            device.cpal_name
+        );
         self.stop();
-        self.set_volume(volume);
-        on_status(&format!("Локально: «{}»…", device.name));
+        log::debug!("LocalPlayer::play: waiting play_lock");
+        let _play_guard = self.play_lock.lock();
+        log::debug!("LocalPlayer::play: play_lock acquired");
 
-        // Same Arc: stop() sets true, play resets to false.
-        self.stop.store(false, Ordering::SeqCst);
-        let stop = Arc::clone(&self.stop);
+        self.set_volume(volume);
+        on_status(&format!("Local: «{}»...", device.name));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        *self.session_stop.lock() = Arc::clone(&stop);
         *self.levels.lock() = [0.08; BANDS];
 
         let ring = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(RING_MAX / 4)));
@@ -209,6 +239,7 @@ impl LocalPlayer {
         {
             let mut state = self.state.lock();
             state.join = Some(thread::spawn(move || {
+                log::info!("LocalPlayer decode thread started url={url}");
                 let ready = AtomicBool::new(false);
                 if let Err(e) = decode_into_ring(
                     &url,
@@ -221,16 +252,22 @@ impl LocalPlayer {
                     title_tx.as_ref(),
                 ) {
                     if !stop_dec.load(Ordering::SeqCst) {
+                        log::warn!("LocalPlayer decode ended with error: {e}");
                         *err_c.lock() = Some(e);
+                    } else {
+                        log::info!("LocalPlayer decode stopped ({e})");
                     }
+                } else {
+                    log::info!("LocalPlayer decode thread exited cleanly");
                 }
             }));
         }
 
         // Wait for probe without holding the state mutex — stop() can interrupt.
-        let deadline = Instant::now() + Duration::from_secs(12);
+        let deadline = Instant::now() + OPEN_TIMEOUT;
         while Instant::now() < deadline {
             if let Some(e) = err_slot.lock().clone() {
+                log::error!("LocalPlayer::play: decode error while waiting probe: {e}");
                 self.stop();
                 return Err(LocalError::Stream(e));
             }
@@ -238,23 +275,29 @@ impl LocalPlayer {
                 break;
             }
             if stop.load(Ordering::SeqCst) {
-                return Err(LocalError::Stream("остановлено".into()));
+                log::info!("LocalPlayer::play: cancelled while waiting probe");
+                return Err(LocalError::Stream("stopped".into()));
             }
             thread::sleep(Duration::from_millis(20));
         }
         let rate = src_rate.load(Ordering::SeqCst);
         if rate == 0 {
+            log::error!("LocalPlayer::play: probe timeout ({OPEN_TIMEOUT:?})");
             self.stop();
             return Err(LocalError::Stream(
-                "не удалось открыть аудиопоток".into(),
+                "failed to open audio stream".into(),
             ));
         }
         let channels = src_ch.load(Ordering::SeqCst).max(1) as usize;
+        log::info!("LocalPlayer::play: probe ok rate={rate} ch={channels}");
 
         let cpal_device = pick_cpal_device(device)?;
         let config = pick_output_config(&cpal_device, rate, channels)?;
         let out_rate = config.sample_rate.0;
         let out_ch = config.channels as usize;
+        log::info!(
+            "LocalPlayer::play: cpal out_rate={out_rate} out_ch={out_ch} (src {rate}/{channels})"
+        );
 
         let ring_cb = Arc::clone(&ring);
         let vol = Arc::clone(&self.volume);
@@ -300,6 +343,7 @@ impl LocalPlayer {
                     }
                 },
                 move |e| {
+                    log::error!("LocalPlayer cpal stream error: {e}");
                     *err_cb.lock() = Some(e.to_string());
                 },
                 None,
@@ -311,16 +355,25 @@ impl LocalPlayer {
             .map_err(|e| LocalError::Audio(e.to_string()))?;
 
         if stop.load(Ordering::SeqCst) {
-            return Err(LocalError::Stream("остановлено".into()));
+            log::info!("LocalPlayer::play: cancelled after stream.play");
+            drop(stream);
+            return Err(LocalError::Stream("stopped".into()));
         }
         self.state.lock().stream = Some(SendStream(stream));
 
-        on_status(&format!("Играет локально: «{}»", device.name));
+        on_status(&format!("Playing locally: «{}»", device.name));
         thread::sleep(Duration::from_millis(100));
+        if stop.load(Ordering::SeqCst) {
+            log::info!("LocalPlayer::play: cancelled during settle");
+            self.stop();
+            return Err(LocalError::Stream("stopped".into()));
+        }
         if let Some(e) = err_slot.lock().clone() {
+            log::error!("LocalPlayer::play: error after start: {e}");
             self.stop();
             return Err(LocalError::Stream(e));
         }
+        log::info!("LocalPlayer::play Ok on '{}'", device.name);
         Ok(())
     }
 }
@@ -343,11 +396,11 @@ fn pick_cpal_device(info: &LocalDeviceInfo) -> Result<cpal::Device, LocalError> 
             }
         }
         return Err(LocalError::Audio(format!(
-            "устройство «{want}» не найдено"
+            "device «{want}» not found"
         )));
     }
     host.default_output_device()
-        .ok_or_else(|| LocalError::Audio("нет устройства вывода по умолчанию".into()))
+        .ok_or_else(|| LocalError::Audio("no default output device".into()))
 }
 
 fn pick_output_config(
@@ -375,7 +428,7 @@ fn pick_output_config(
             best = Some(range);
         }
     }
-    let range = best.ok_or_else(|| LocalError::Audio("нет подходящего формата".into()))?;
+    let range = best.ok_or_else(|| LocalError::Audio("no suitable output format".into()))?;
     Ok(range.with_max_sample_rate().config())
 }
 
@@ -412,14 +465,25 @@ fn decode_into_ring(
         .connect_timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(url)
-        .headers(headers)
-        .send()
-        .map_err(|e| e.to_string())?;
+
+    // `.send()` can hang forever on a dead host (timeout(None) + no headers).
+    // Open in a side thread and abandon it on stop/timeout.
+    let resp = open_stream_response(client, url, headers, stop)?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
+    log::info!(
+        "LocalPlayer HTTP ok status={} content-type={} icy-metaint={}",
+        resp.status(),
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("?"),
+        resp.headers()
+            .get("icy-metaint")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-")
+    );
 
     let content_type = resp
         .headers()
@@ -434,8 +498,9 @@ fn decode_into_ring(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
 
+    let body = StopAwareBody::spawn(resp, Arc::clone(stop));
     let reader = IcyStripReader {
-        inner: resp,
+        inner: body,
         meta_int,
         until_meta: meta_int,
         stop: Arc::clone(stop),
@@ -461,13 +526,13 @@ fn decode_into_ring(
         .tracks()
         .iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "нет аудиодорожки".to_string())?
+        .ok_or_else(|| "no audio track".to_string())?
         .clone();
     let track_id = track.id;
     let sample_rate = track
         .codec_params
         .sample_rate
-        .ok_or_else(|| "нет sample rate".to_string())?;
+        .ok_or_else(|| "missing sample rate".to_string())?;
     let channels = track
         .codec_params
         .channels
@@ -478,6 +543,7 @@ fn decode_into_ring(
     src_rate.store(sample_rate, Ordering::SeqCst);
     src_ch.store(channels as u32, Ordering::SeqCst);
     ready.store(true, Ordering::SeqCst);
+    log::info!("LocalPlayer decode probe: sample_rate={sample_rate} channels={channels}");
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -571,6 +637,122 @@ fn decode_into_ring(
     }
 }
 
+fn open_stream_response(
+    client: reqwest::blocking::Client,
+    url: &str,
+    headers: reqwest::header::HeaderMap,
+    stop: &Arc<AtomicBool>,
+) -> Result<reqwest::blocking::Response, String> {
+    let url = url.to_string();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = client.get(url).headers(headers).send();
+        let _ = tx.send(result);
+    });
+
+    let deadline = Instant::now() + OPEN_TIMEOUT;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return Err("stopped".into());
+        }
+        let wait = deadline.saturating_duration_since(Instant::now()).min(READ_POLL);
+        if wait.is_zero() {
+            return Err("stream open timeout".into());
+        }
+        match rx.recv_timeout(wait) {
+            Ok(Ok(resp)) => {
+                log::debug!("open_stream_response: headers received");
+                return Ok(resp);
+            }
+            Ok(Err(e)) => return Err(e.to_string()),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("failed to open audio stream".into());
+            }
+        }
+    }
+}
+
+/// Reads the HTTP body on a side thread so `stop` can interrupt within ~READ_POLL.
+struct StopAwareBody {
+    rx: Mutex<mpsc::Receiver<io::Result<Vec<u8>>>>,
+    stop: Arc<AtomicBool>,
+    pending: Vec<u8>,
+    pending_at: usize,
+}
+
+impl StopAwareBody {
+    fn spawn(mut resp: reqwest::blocking::Response, stop: Arc<AtomicBool>) -> Self {
+        let (tx, rx) = mpsc::sync_channel(8);
+        let stop_prod = Arc::clone(&stop);
+        thread::spawn(move || {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                if stop_prod.load(Ordering::SeqCst) {
+                    break;
+                }
+                match resp.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = tx.send(Ok(Vec::new()));
+                        break;
+                    }
+                    Ok(n) => {
+                        if tx.send(Ok(buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            rx: Mutex::new(rx),
+            stop,
+            pending: Vec::new(),
+            pending_at: 0,
+        }
+    }
+}
+
+impl Read for StopAwareBody {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.stop.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
+            }
+            if self.pending_at < self.pending.len() {
+                let n = (self.pending.len() - self.pending_at).min(buf.len());
+                buf[..n].copy_from_slice(&self.pending[self.pending_at..self.pending_at + n]);
+                self.pending_at += n;
+                if self.pending_at >= self.pending.len() {
+                    self.pending.clear();
+                    self.pending_at = 0;
+                }
+                return Ok(n);
+            }
+            let chunk = {
+                let rx = self.rx.lock();
+                match rx.recv_timeout(READ_POLL) {
+                    Ok(Ok(chunk)) if chunk.is_empty() => return Ok(0),
+                    Ok(Ok(chunk)) => chunk,
+                    Ok(Err(e)) => return Err(e),
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+                }
+            };
+            self.pending = chunk;
+            self.pending_at = 0;
+        }
+    }
+}
+
 fn to_interleaved(
     decoded: &AudioBufferRef<'_>,
     sample_buf: &mut Option<SampleBuffer<f32>>,
@@ -636,7 +818,7 @@ fn magnitudes_to_bands(fft: &[Complex<f32>], sample_rate: f32) -> [f32; BANDS] {
 }
 
 struct IcyStripReader {
-    inner: reqwest::blocking::Response,
+    inner: StopAwareBody,
     meta_int: usize,
     until_meta: usize,
     stop: Arc<AtomicBool>,
@@ -677,7 +859,12 @@ impl IcyStripReader {
                     return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof"));
                 }
                 Ok(n) => got += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                    if self.stop.load(Ordering::SeqCst) {
+                        return Err(e);
+                    }
+                    continue;
+                }
                 Err(e) => return Err(e),
             }
         }

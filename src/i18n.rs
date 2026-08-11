@@ -64,6 +64,11 @@ pub struct Strings {
     pub cast_none: &'static str, // "Local: {}. No Chromecast found..."
     pub cast_found: &'static str, // "Found: {} local + {} Cast. Selected: {}"
     pub cast_err: &'static str, // "Local: {}. Cast search: {}"
+    pub cast_relay: &'static str,
+    pub cast_relay_hint: &'static str,
+    pub cast_relay_note: &'static str,
+    pub cast_relay_restart_on: &'static str,
+    pub cast_relay_restart_off: &'static str,
 }
 
 pub static RU: Strings = Strings {
@@ -104,6 +109,11 @@ pub static RU: Strings = Strings {
     cast_none: "Локальных: {}. Chromecast не найдены (проверьте Wi‑Fi / JBL).",
     cast_found: "Найдено: {} локальных + {} Cast. Выбрано: {}",
     cast_err: "Локальных: {}. Поиск Cast: {}",
+    cast_relay: "Через ПК",
+    cast_relay_hint: "ПК качает поток (в т.ч. через VPN) и отдаёт колонке по Wi‑Fi. При переключении во время Play стрим перезапускается.",
+    cast_relay_note: "ПК -> колонка по Wi‑Fi (если станции нужны через VPN)",
+    cast_relay_restart_on: "Включаю трансляцию через ПК…",
+    cast_relay_restart_off: "Прямой Cast без ретранслятора…",
 };
 
 pub static EN: Strings = Strings {
@@ -144,6 +154,11 @@ pub static EN: Strings = Strings {
     cast_none: "Local: {}. No Chromecast found (check Wi‑Fi / JBL).",
     cast_found: "Found: {} local + {} Cast. Selected: {}",
     cast_err: "Local: {}. Cast search: {}",
+    cast_relay: "Via PC",
+    cast_relay_hint: "PC fetches the stream (e.g. through VPN) and serves it to the speaker on Wi‑Fi. Toggling while playing restarts the stream.",
+    cast_relay_note: "PC -> speaker on Wi-Fi (when stations need VPN)",
+    cast_relay_restart_on: "Switching to Via PC relay…",
+    cast_relay_restart_off: "Switching to direct Cast…",
 };
 
 /// Simple `{}` placeholder replace (one or more, left-to-right).
