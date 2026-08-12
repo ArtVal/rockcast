@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use super::{
     channel::{
-        ChannelError, CastChannel, DEFAULT_MEDIA_RECEIVER, NS_CONNECTION, NS_MEDIA, NS_RECEIVER,
+        CastChannel, ChannelError, DEFAULT_MEDIA_RECEIVER, NS_CONNECTION, NS_MEDIA, NS_RECEIVER,
         RECEIVER_ID,
     },
     discovery::{DiscoveredDevice, DiscoveryError, discover},
@@ -98,6 +98,11 @@ impl CastService {
             op_lock: Mutex::new(()),
             cancel: AtomicBool::new(false),
         }
+    }
+
+    /// Interrupt an in-flight Cast wait without waiting for the operation lock.
+    pub fn cancel_pending(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
     }
 
     /// Scan for Cast devices on the local network.
@@ -329,8 +334,7 @@ impl CastService {
                 let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match typ {
                     "MEDIA_STATUS" => {
-                        let rid =
-                            v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                        let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                         let status = v
                             .get("status")
                             .and_then(|s| s.as_array())
@@ -350,8 +354,7 @@ impl CastService {
                         Ok(None)
                     }
                     "LOAD_FAILED" | "LOAD_CANCELLED" | "INVALID_REQUEST" | "ERROR" => {
-                        let rid =
-                            v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                        let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                         if rid == req || rid == 0 {
                             Err(ChannelError::Msg(format!("Cast rejected LOAD: {typ}")))
                         } else {
@@ -399,8 +402,7 @@ impl CastService {
                         Ok(None)
                     }
                     "LAUNCH_ERROR" => {
-                        let rid =
-                            v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                        let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                         if rid == req {
                             Err(ChannelError::Msg(format!(
                                 "LAUNCH_ERROR: {}",

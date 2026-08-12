@@ -24,8 +24,8 @@ use symphonia::core::{
 
 pub use crate::audio::BANDS;
 use crate::audio::{BandAnalyzer, apply_hint, parse_stream_title};
+use crate::net::{metadata_interval, stream_client, stream_headers};
 /// Less frequent FFT — enough for ~15–20 Hz UI, less CPU.
-
 pub struct SpectrumAnalyzer {
     stop: Arc<AtomicBool>,
     join: Option<thread::JoinHandle<()>>,
@@ -82,9 +82,7 @@ impl SpectrumAnalyzer {
     pub fn stop_async(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
-            thread::spawn(move || {
-                let _ = j.join();
-            });
+            drop(j);
         }
         *self.levels.lock() = [0.08; BANDS];
     }
@@ -113,13 +111,13 @@ impl IcyStripReader {
         if meta_len > 0 {
             let mut meta = vec![0u8; meta_len];
             self.read_exact_stop(&mut meta)?;
-            if let Some(tx) = &self.title_tx {
-                if let Some(title) = parse_stream_title(&meta) {
-                    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-                    if !title.is_empty() && title != self.last_title {
-                        self.last_title = title.clone();
-                        let _ = tx.send(title);
-                    }
+            if let Some(tx) = &self.title_tx
+                && let Some(title) = parse_stream_title(&meta)
+            {
+                let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !title.is_empty() && title != self.last_title {
+                    self.last_title = title.clone();
+                    let _ = tx.send(title);
                 }
             }
         }
@@ -135,10 +133,7 @@ impl IcyStripReader {
             }
             match self.inner.read(&mut buf[got..]) {
                 Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "eof",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof"));
                 }
                 Ok(n) => got += n,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -202,31 +197,15 @@ fn analyze_stream(
         return Err("stopped".into());
     }
 
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        "Icy-MetaData",
-        reqwest::header::HeaderValue::from_static("1"),
-    );
-    headers.insert(
-        "Accept",
-        reqwest::header::HeaderValue::from_static("*/*"),
-    );
-    headers.insert(
-        "Connection",
-        reqwest::header::HeaderValue::from_static("close"),
-    );
-
     // A short read-timeout via the overall request timeout won't work for a live stream.
     // connect_timeout + periodic stop checks in read; overall timeout guards against hangs.
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("RockCast/0.1")
-        .default_headers(headers)
-        .connect_timeout(Duration::from_secs(4))
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = stream_client(Duration::from_secs(4), Some(Duration::from_secs(45)))?;
 
-    let resp = client.get(url).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .get(url)
+        .headers(stream_headers(true))
+        .send()
+        .map_err(|e| e.to_string())?;
     if stop.load(Ordering::SeqCst) {
         return Err("stopped".into());
     }
@@ -241,23 +220,12 @@ fn analyze_stream(
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    let meta_int = resp
-        .headers()
-        .get("icy-metaint")
-        .or_else(|| resp.headers().get("Icy-MetaInt"))
-        .or_else(|| resp.headers().get("ice-metaint"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
+    let meta_int = metadata_interval(resp.headers());
 
     let source = IcyStripReader {
         inner: resp,
         meta_int,
-        until_meta: if meta_int == 0 {
-            usize::MAX
-        } else {
-            meta_int
-        },
+        until_meta: if meta_int == 0 { usize::MAX } else { meta_int },
         stop: Arc::clone(stop),
         title_tx: title_tx.cloned(),
         last_title: String::new(),

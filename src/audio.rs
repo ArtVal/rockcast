@@ -1,6 +1,6 @@
 //! Shared audio-stream helpers used by local playback and spectrum analysis.
 
-use rustfft::{num_complex::Complex, Fft, FftPlanner};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use symphonia::core::probe::Hint;
 
 pub const BANDS: usize = 24;
@@ -106,7 +106,7 @@ fn magnitudes_to_bands(fft: &[Complex<f32>], sample_rate: f32) -> [f32; BANDS] {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_stream_title, BandAnalyzer, FFT_SIZE};
+    use super::{BandAnalyzer, FFT_SIZE, parse_stream_title};
 
     #[test]
     fn parses_icy_stream_title_case_insensitively() {
@@ -119,9 +119,11 @@ mod tests {
     #[test]
     fn analyzer_waits_for_a_full_window() {
         let mut analyzer = BandAnalyzer::new();
-        assert!(analyzer
-            .push_mono(vec![0.0; FFT_SIZE - 1], 44_100.0)
-            .is_none());
+        assert!(
+            analyzer
+                .push_mono(vec![0.0; FFT_SIZE - 1], 44_100.0)
+                .is_none()
+        );
         assert!(analyzer.push_mono([0.0], 44_100.0).is_some());
     }
 }

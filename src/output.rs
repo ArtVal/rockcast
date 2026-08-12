@@ -65,23 +65,15 @@ pub fn scan_all(cast_timeout: Duration, lang: Lang) -> (Vec<OutputDevice>, Strin
                     .iter()
                     .position(|d| match d {
                         OutputDevice::Cast(c) => {
-                            let b = format!(
-                                "{} {}",
-                                c.discovered.name, c.discovered.model
-                            )
-                            .to_lowercase();
+                            let b = format!("{} {}", c.discovered.name, c.discovered.model)
+                                .to_lowercase();
                             b.contains("jbl") || b.contains("bar")
                         }
                         OutputDevice::Local(_) => false,
                     })
                     .or_else(|| devices.iter().position(|d| d.is_local()))
                     .unwrap_or(0);
-                i18n::fmt3(
-                    t.cast_found,
-                    local_n,
-                    cast_n,
-                    devices[pick].label(lang),
-                )
+                i18n::fmt3(t.cast_found, local_n, cast_n, devices[pick].label(lang))
             };
             (devices, status)
         }

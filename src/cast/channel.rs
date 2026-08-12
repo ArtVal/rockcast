@@ -19,8 +19,8 @@ use rustls::{
 };
 use thiserror::Error;
 
-use super::proto::{CastMessage, ProtoError, encode_auth_challenge};
 pub use super::proto::Payload;
+use super::proto::{CastMessage, ProtoError, encode_auth_challenge};
 
 pub const SENDER_ID: &str = "sender-0";
 pub const RECEIVER_ID: &str = "receiver-0";
@@ -143,9 +143,14 @@ impl CastChannel {
         namespace: &str,
         value: &serde_json::Value,
     ) -> Result<(), ChannelError> {
-        let payload = serde_json::to_string(value)
-            .map_err(|e| ChannelError::Msg(format!("json: {e}")))?;
-        self.send(&CastMessage::string(SENDER_ID, destination, namespace, payload))
+        let payload =
+            serde_json::to_string(value).map_err(|e| ChannelError::Msg(format!("json: {e}")))?;
+        self.send(&CastMessage::string(
+            SENDER_ID,
+            destination,
+            namespace,
+            payload,
+        ))
     }
 
     pub fn set_read_timeout(&self, timeout: Duration) {

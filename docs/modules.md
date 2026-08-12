@@ -6,7 +6,11 @@
 src/
   main.rs          Binary: rustls provider, file logging, eframe
   lib.rs           Crate root — re-exports modules
-  app.rs           egui app, UiMsg, play generation, wiring
+  app.rs           egui view state and UI event adaptation
+  playback.rs      PlaybackController, state machine, generation, Cast/local/relay orchestration
+  runtime.rs       Bounded blocking-job runtime and shared shutdown token
+  observers.rs     ICY/spectrum lifecycle and delayed stream tap
+  net.rs           Shared HTTP stream policy and ICY header helpers
   output.rs        OutputDevice = Local | Cast; scan_all()
   local.rs         LocalPlayer — HTTP decode + cpal
   stations.rs      stations.txt + Radio Browser enrich
@@ -26,9 +30,11 @@ src/
 ## Dependency direction (simplified)
 
 ```text
-main → app → output → local
+main → app → playback → output → local
                  └→ cast::{discovery, client}
-       app → stations, settings, i18n, icy, spectrum, relay
+       app → stations, settings, i18n, observers
+       playback → runtime, relay
+       observers → icy, spectrum
        cast::client → channel → proto
        local / relay → (reqwest, …)
        spectrum / icy → (reqwest, symphonia)   # Cast taps only
@@ -40,7 +46,10 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 
 | Type | Module | Role |
 |------|--------|------|
-| `RockCastApp` | `app` | UI state machine |
+| `RockCastApp` | `app` | egui view state and event adapter |
+| `PlaybackController` | `playback` | Playback state machine and orchestration |
+| `BackgroundRuntime` | `runtime` | Bounded app-level blocking jobs |
+| `StreamObservers` | `observers` | ICY/spectrum lifecycle |
 | `UiMsg` | `app` | Background → UI messages |
 | `OutputDevice` | `output` | `Local(LocalDeviceInfo)` \| `Cast(CastDeviceInfo)` |
 | `LocalPlayer` | `local` | PC playback engine |
@@ -60,7 +69,7 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 
 | Symbol | Where | Meaning |
 |--------|-------|---------|
-| `VOLUME_CAST_SCALE` | `app` | `0.5` — Cast volume scale |
+| `VOLUME_CAST_SCALE` | `playback` | `0.5` — Cast volume scale |
 | `OPEN_TIMEOUT` | `local` | HTTP open / probe wait (~12s) |
 | `RING_MAX` | `local` | PCM ring capacity |
 | `BANDS` / `FFT_SIZE` / `HOP` | `spectrum` | Visualizer FFT |

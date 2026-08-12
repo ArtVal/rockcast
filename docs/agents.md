@@ -11,6 +11,9 @@ Windows desktop **internet radio** app: egui UI, local WASAPI playback, native G
 | Task | Primary files | Avoid |
 |------|---------------|--------|
 | UI layout / controls | `src/app.rs` | Putting network I/O on the UI thread |
+| Playback state / orchestration | `src/playback.rs` | Moving Cast/local/relay control back into `app.rs` |
+| Background jobs / shutdown | `src/runtime.rs` | Unbounded app-level `thread::spawn` |
+| ICY / spectrum lifecycle | `src/observers.rs` | Owning observer threads from the UI |
 | i18n strings | `src/i18n.rs` | Hardcoding user-visible RU/EN in other modules |
 | PC audio bugs | `src/local.rs` | Holding UI while dropping `cpal::Stream` |
 | Cast play/stop/volume | `src/cast/client.rs` | Outer `Mutex` around whole `play()` |
@@ -25,12 +28,13 @@ Windows desktop **internet radio** app: egui UI, local WASAPI playback, native G
 ## Hard invariants (do not break)
 
 1. **UI never blocks** on HTTP, Cast LOAD, decode join, or cpal stream drop.
-2. **`play_generation`:** stale workers must not `local.stop()` or apply UI success for an old gen.
+2. **`PlaybackController` generation:** stale workers must not `local.stop()` or apply UI success/title for an old generation.
 3. **`CastService` is `Arc<CastService>`** with internal `op_lock` + `cancel` — do not reintroduce `Arc<Mutex<CastService>>` held across `play()`.
 4. **Local session stop flags are per-play `Arc<AtomicBool>`** — never reset a shared flag to `false` to “reuse” an old hung decode.
 5. **Error messages in `thiserror` / `Err(String)` are English.** UI copy stays in `i18n.rs`.
 6. **Release exit:** `shutdown_playback` then `std::process::exit(0)` so orphaned HTTP threads cannot hang the process.
 7. **Cast relay advertise IP** must be a real LAN NIC near the speaker — never a VPN/tunnel address.
+8. **App-level blocking jobs use `BackgroundRuntime`;** do not add fire-and-forget threads to `app.rs`.
 
 ## Known footguns (from production bugs)
 

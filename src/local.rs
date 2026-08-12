@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     io::{self, Read, Seek, SeekFrom},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc,
     },
@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use crate::{
     audio::{BandAnalyzer, apply_hint, parse_stream_title},
+    net::{metadata_interval, stream_client, stream_headers},
     spectrum::BANDS,
 };
 
@@ -59,9 +60,7 @@ pub enum LocalError {
 
 pub fn list_local_devices(lang: crate::i18n::Lang) -> Vec<LocalDeviceInfo> {
     let host = cpal::default_host();
-    let default_name = host
-        .default_output_device()
-        .and_then(|d| d.name().ok());
+    let default_name = host.default_output_device().and_then(|d| d.name().ok());
     let speakers = lang.t().pc_speakers;
 
     let mut out = Vec::new();
@@ -142,6 +141,30 @@ struct SendStream(cpal::Stream);
 
 // SAFETY: Stream lives only inside LocalPlayer; access is serialized via Mutex.
 unsafe impl Send for SendStream {}
+
+struct LocalCleanup {
+    stream: Option<SendStream>,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+fn cleanup_sender() -> &'static mpsc::Sender<LocalCleanup> {
+    static TX: OnceLock<mpsc::Sender<LocalCleanup>> = OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<LocalCleanup>();
+        thread::Builder::new()
+            .name("rockcast-local-reaper".into())
+            .spawn(move || {
+                while let Ok(cleanup) = rx.recv() {
+                    drop(cleanup.stream);
+                    if let Some(join) = cleanup.join {
+                        let _ = join.join();
+                    }
+                }
+            })
+            .expect("spawn local audio cleanup worker");
+        tx
+    })
+}
 unsafe impl Sync for SendStream {}
 
 impl Default for LocalPlayer {
@@ -188,14 +211,7 @@ impl LocalPlayer {
         // Dropping cpal::Stream / joining a hung HTTP decode can block — never do
         // that on the UI thread.
         if stream.is_some() || join.is_some() {
-            thread::spawn(move || {
-                log::debug!("LocalPlayer::stop: dropping stream / joining decode");
-                drop(stream);
-                if let Some(j) = join {
-                    let _ = j.join();
-                    log::debug!("LocalPlayer::stop: decode join finished");
-                }
-            });
+            let _ = cleanup_sender().send(LocalCleanup { stream, join });
         }
         *self.levels.lock() = [0.08; BANDS];
     }
@@ -245,12 +261,14 @@ impl LocalPlayer {
                 let ready = AtomicBool::new(false);
                 if let Err(e) = decode_into_ring(
                     &url,
-                    &ring_dec,
-                    &levels,
-                    &stop_dec,
-                    &src_rate_c,
-                    &src_ch_c,
-                    &ready,
+                    DecodeContext {
+                        ring: &ring_dec,
+                        levels: &levels,
+                        stop: &stop_dec,
+                        src_rate: &src_rate_c,
+                        src_ch: &src_ch_c,
+                        ready: &ready,
+                    },
                     title_tx.as_ref(),
                 ) {
                     if !stop_dec.load(Ordering::SeqCst) {
@@ -286,9 +304,7 @@ impl LocalPlayer {
         if rate == 0 {
             log::error!("LocalPlayer::play: probe timeout ({OPEN_TIMEOUT:?})");
             self.stop();
-            return Err(LocalError::Stream(
-                "failed to open audio stream".into(),
-            ));
+            return Err(LocalError::Stream("failed to open audio stream".into()));
         }
         let channels = src_ch.load(Ordering::SeqCst).max(1) as usize;
         log::info!("LocalPlayer::play: probe ok rate={rate} ch={channels}");
@@ -327,11 +343,11 @@ impl LocalPlayer {
                         }
                         let i0 = read_pos.floor() as usize;
                         let frac = (read_pos - i0 as f64) as f32;
-                        for c in 0..out_ch {
+                        for (c, sample) in frame.iter_mut().enumerate().take(out_ch) {
                             let src_c = c.min(channels - 1);
                             let s0 = ring[i0 * channels + src_c];
                             let s1 = ring[(i0 + 1) * channels + src_c];
-                            frame[c] = (s0 + (s1 - s0) * frac) * gain;
+                            *sample = (s0 + (s1 - s0) * frac) * gain;
                         }
                         read_pos += ratio;
                         let drop_frames = read_pos.floor() as usize;
@@ -397,9 +413,7 @@ fn pick_cpal_device(info: &LocalDeviceInfo) -> Result<cpal::Device, LocalError> 
                 return Ok(d);
             }
         }
-        return Err(LocalError::Audio(format!(
-            "device «{want}» not found"
-        )));
+        return Err(LocalError::Audio(format!("device «{want}» not found")));
     }
     host.default_output_device()
         .ok_or_else(|| LocalError::Audio("no default output device".into()))
@@ -434,39 +448,34 @@ fn pick_output_config(
     Ok(range.with_max_sample_rate().config())
 }
 
+struct DecodeContext<'a> {
+    ring: &'a Mutex<VecDeque<f32>>,
+    levels: &'a Mutex<[f32; BANDS]>,
+    stop: &'a Arc<AtomicBool>,
+    src_rate: &'a AtomicU32,
+    src_ch: &'a AtomicU32,
+    ready: &'a AtomicBool,
+}
+
 fn decode_into_ring(
     url: &str,
-    ring: &Mutex<VecDeque<f32>>,
-    levels: &Mutex<[f32; BANDS]>,
-    stop: &Arc<AtomicBool>,
-    src_rate: &AtomicU32,
-    src_ch: &AtomicU32,
-    ready: &AtomicBool,
+    context: DecodeContext<'_>,
     title_tx: Option<&mpsc::Sender<String>>,
 ) -> Result<(), String> {
+    let DecodeContext {
+        ring,
+        levels,
+        stop,
+        src_rate,
+        src_ch,
+        ready,
+    } = context;
     if stop.load(Ordering::SeqCst) {
         return Err("stopped".into());
     }
 
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        "Icy-MetaData",
-        reqwest::header::HeaderValue::from_static("1"),
-    );
-    headers.insert(
-        "Accept",
-        reqwest::header::HeaderValue::from_static("*/*"),
-    );
-    headers.insert(
-        "User-Agent",
-        reqwest::header::HeaderValue::from_static("RockCast/0.1"),
-    );
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(None)
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let headers = stream_headers(false);
+    let client = stream_client(Duration::from_secs(10), None)?;
 
     // `.send()` can hang forever on a dead host (timeout(None) + no headers).
     // Open in a side thread and abandon it on stop/timeout.
@@ -493,12 +502,7 @@ fn decode_into_ring(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("audio/mpeg")
         .to_string();
-    let meta_int = resp
-        .headers()
-        .get("icy-metaint")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
+    let meta_int = metadata_interval(resp.headers());
 
     let body = StopAwareBody::spawn(resp, Arc::clone(stop));
     let reader = IcyStripReader {
@@ -639,7 +643,9 @@ fn open_stream_response(
         if stop.load(Ordering::SeqCst) {
             return Err("stopped".into());
         }
-        let wait = deadline.saturating_duration_since(Instant::now()).min(READ_POLL);
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(READ_POLL);
         if wait.is_zero() {
             return Err("stream open timeout".into());
         }
@@ -768,13 +774,13 @@ impl IcyStripReader {
         if meta_len > 0 {
             let mut meta = vec![0u8; meta_len];
             self.read_exact_stop(&mut meta)?;
-            if let Some(tx) = &self.title_tx {
-                if let Some(title) = parse_stream_title(&meta) {
-                    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-                    if !title.is_empty() && title != self.last_title {
-                        self.last_title = title.clone();
-                        let _ = tx.send(title);
-                    }
+            if let Some(tx) = &self.title_tx
+                && let Some(title) = parse_stream_title(&meta)
+            {
+                let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !title.is_empty() && title != self.last_title {
+                    self.last_title = title.clone();
+                    let _ = tx.send(title);
                 }
             }
         }

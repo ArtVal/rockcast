@@ -11,9 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use reqwest::header::{HeaderMap, HeaderValue};
-
 use crate::audio::parse_stream_title;
+use crate::net::{metadata_interval, stream_client, stream_headers};
 
 pub struct IcyWatcher {
     stop: Arc<AtomicBool>,
@@ -62,9 +61,9 @@ impl IcyWatcher {
     pub fn stop_async(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
-            thread::spawn(move || {
-                let _ = j.join();
-            });
+            // The request has a finite timeout and observes `stop`; detaching
+            // avoids creating an additional joiner thread for every UI action.
+            drop(j);
         }
     }
 }
@@ -84,20 +83,13 @@ fn listen_once(url: &str, tx: &mpsc::Sender<String>, stop: &AtomicBool) -> Resul
         return Err("stopped".into());
     }
 
-    let mut headers = HeaderMap::new();
-    headers.insert("Icy-MetaData", HeaderValue::from_static("1"));
-    headers.insert("Accept", HeaderValue::from_static("*/*"));
-    headers.insert("Connection", HeaderValue::from_static("close"));
+    let client = stream_client(Duration::from_secs(4), Some(Duration::from_secs(20)))?;
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("RockCast/0.1")
-        .default_headers(headers)
-        .connect_timeout(Duration::from_secs(4))
-        .timeout(Duration::from_secs(20))
-        .build()
+    let mut resp = client
+        .get(url)
+        .headers(stream_headers(true))
+        .send()
         .map_err(|e| e.to_string())?;
-
-    let mut resp = client.get(url).send().map_err(|e| e.to_string())?;
     if stop.load(Ordering::SeqCst) {
         return Err("stopped".into());
     }
@@ -105,14 +97,7 @@ fn listen_once(url: &str, tx: &mpsc::Sender<String>, stop: &AtomicBool) -> Resul
         return Err(format!("HTTP {}", resp.status()));
     }
 
-    let meta_int = resp
-        .headers()
-        .get("icy-metaint")
-        .or_else(|| resp.headers().get("Icy-MetaInt"))
-        .or_else(|| resp.headers().get("ice-metaint"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
+    let meta_int = metadata_interval(resp.headers());
 
     if meta_int == 0 {
         if let Some(name) = resp

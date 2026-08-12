@@ -61,9 +61,9 @@ pub struct Strings {
     pub pc_speakers: &'static str,
     pub local_catalog: &'static str, // "local catalog · {} stations"
     pub catalog_plus_rb: &'static str, // "catalog + Radio Browser · {} stations"
-    pub cast_none: &'static str, // "Local: {}. No Chromecast found..."
-    pub cast_found: &'static str, // "Found: {} local + {} Cast. Selected: {}"
-    pub cast_err: &'static str, // "Local: {}. Cast search: {}"
+    pub cast_none: &'static str,     // "Local: {}. No Chromecast found..."
+    pub cast_found: &'static str,    // "Found: {} local + {} Cast. Selected: {}"
+    pub cast_err: &'static str,      // "Local: {}. Cast search: {}"
     pub cast_relay: &'static str,
     pub cast_relay_hint: &'static str,
     pub cast_relay_note: &'static str,

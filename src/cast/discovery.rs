@@ -118,14 +118,13 @@ fn merge_device(found: &mut HashMap<String, DiscoveredDevice>, dev: DiscoveredDe
         Some(old) => {
             // Prefer richer TXT/name from either source.
             let mut merged = old.clone();
-            if merged.name.is_empty()
+            if (merged.name.is_empty()
                 || (merged.name.starts_with('_') && !dev.name.is_empty())
                 || (dev.name.chars().count() > merged.name.chars().count()
-                    && !dev.name.contains("._googlecast"))
+                    && !dev.name.contains("._googlecast")))
+                && !dev.name.is_empty()
             {
-                if !dev.name.is_empty() {
-                    merged.name = dev.name;
-                }
+                merged.name = dev.name;
             }
             if merged.model.is_empty() && !dev.model.is_empty() {
                 merged.model = dev.model;
@@ -185,10 +184,10 @@ fn discover_mdns(
             }
             Ok(_) | Err(_) => {}
         }
-        if let Some(t) = last_new {
-            if t.elapsed() >= settle {
-                break;
-            }
+        if let Some(t) = last_new
+            && t.elapsed() >= settle
+        {
+            break;
         }
     }
 
@@ -311,7 +310,10 @@ fn fetch_eureka(ip: Ipv4Addr) -> Option<EurekaInfo> {
     let model = v
         .pointer("/device_info/manufacturer")
         .and_then(|x| x.as_str())
-        .or_else(|| v.pointer("/device_info/model_name").and_then(|x| x.as_str()))
+        .or_else(|| {
+            v.pointer("/device_info/model_name")
+                .and_then(|x| x.as_str())
+        })
         .unwrap_or("")
         .to_string();
     let id = v
@@ -480,7 +482,10 @@ fn is_vpn_or_virtual(name: &str) -> bool {
     if MARKERS.iter().any(|m| lower.contains(m)) {
         return true;
     }
-    lower.starts_with("tap") || lower.starts_with("tun") || lower == "wg" || lower.starts_with("wg-")
+    lower.starts_with("tap")
+        || lower.starts_with("tun")
+        || lower == "wg"
+        || lower.starts_with("wg-")
 }
 
 fn disable_virtual_interfaces(daemon: &ServiceDaemon) {
@@ -514,10 +519,7 @@ fn from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredDevice> {
                 .trim_matches('.')
                 .to_string()
         });
-    let model = props
-        .get_property_val_str("md")
-        .unwrap_or("")
-        .to_string();
+    let model = props.get_property_val_str("md").unwrap_or("").to_string();
     let id = props
         .get_property_val_str("id")
         .map(str::to_string)

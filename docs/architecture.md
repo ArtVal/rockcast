@@ -15,11 +15,11 @@ Release builds set `#![windows_subsystem = "windows"]` (no console). Logging alw
 ```text
 ┌──────────────────────────── UI thread (egui) ────────────────────────────┐
 │  RockCastApp::update                                                     │
-│    poll UiMsg · draw · queue play/stop/scan as thread::spawn             │
+│    poll events · draw · submit commands to PlaybackController/runtime     │
 └───────────────────┬───────────────────────────┬──────────────────────────┘
                     │ mpsc UiMsg                │ Arc clones
         ┌───────────▼──────────┐     ┌──────────▼──────────┐
-        │ play / stop workers  │     │ LocalPlayer         │
+        │ bounded runtime      │     │ LocalPlayer         │
         │ cast.play / stop     │     │  decode thread      │
         │ local.play           │     │  cpal callback      │
         └───────────┬──────────┘     │  HTTP body reader   │
@@ -34,8 +34,10 @@ Release builds set `#![windows_subsystem = "windows"]` (no console). Logging alw
 
 | Thread / context | Responsibilities | Must not |
 |------------------|------------------|----------|
-| UI (`eframe`) | Draw, handle clicks, `try_recv` messages, bump `play_generation` | Block on HTTP, Cast handshake, `cpal` stream drop |
-| Play worker | Call `CastService::play` or `LocalPlayer::play`, send `PlayOk` / `Error` | Call `local.stop()` after being superseded |
+| UI (`eframe`) | Draw, handle clicks, adapt controller events | Block on HTTP, Cast handshake, `cpal` stream drop |
+| `PlaybackController` | Own generation/state and submit Cast/local/relay operations | Depend on egui |
+| `BackgroundRuntime` | Execute a bounded number of blocking app jobs, propagate shutdown | Create a thread per UI action |
+| Play worker | Call `CastService::play` or `LocalPlayer::play`, send `PlaybackEvent` | Call `local.stop()` after being superseded |
 | Stop / shutdown worker | `local.stop()`, `cast.stop()` | Hold UI |
 | Local decode | HTTP + symphonia → ring + FFT levels | Touch egui |
 | cpal callback | Read ring, resample, apply volume | Lock UI or do I/O |
@@ -46,10 +48,9 @@ Release builds set `#![windows_subsystem = "windows"]` (no console). Logging alw
 
 | Object | Type | Notes |
 |--------|------|-------|
-| `RockCastApp.cast` | `Arc<CastService>` | Internally synchronized (`op_lock`, `current`) — **no** outer `Mutex` |
-| `RockCastApp.local` | `Arc<LocalPlayer>` | Session `stop` flag per play; `play_lock` serializes setup |
-| `RockCastApp.relay` | `Arc<StreamRelay>` | Optional LAN HTTP proxy for Cast when `cast_relay` is on |
-| `play_generation` | `Arc<AtomicU64>` | Bumped on every play/stop/shutdown; workers ignore stale gens |
+| `PlaybackController` | owns Cast/local/relay | No playback services are owned by egui state |
+| `play_generation` | `Arc<AtomicU64>` inside controller | Bumped on every play/stop/shutdown; workers ignore stale gens |
+| `StreamObservers` | owns ICY/spectrum | Starts/stops taps outside the view layer |
 | `ui_tx` / `ui_rx` | `mpsc` | Only UI polls `ui_rx` |
 | Settings | file + dirty flag | Debounced persist |
 

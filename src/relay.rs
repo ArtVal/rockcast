@@ -13,8 +13,8 @@ use std::{
     io::{Read, Write},
     net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -24,6 +24,7 @@ use parking_lot::{Condvar, Mutex};
 use thiserror::Error;
 
 use crate::audio::parse_stream_title;
+use crate::net::{metadata_interval, stream_client, stream_headers};
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const READ_POLL: Duration = Duration::from_millis(200);
@@ -193,12 +194,11 @@ impl StreamRelay {
                     Duration::from_millis(200),
                 );
             }
-            if let Some(h) = s.accept.take() {
-                let _ = h.join();
-            }
-            if let Some(h) = s.feeder.take() {
-                let _ = h.join();
-            }
+            // Never join network workers from the caller. A blocked upstream
+            // socket is allowed to drain/exit after observing `stop`; retaining
+            // the handles here previously froze UI play/stop and shutdown.
+            drop(s.accept.take());
+            drop(s.feeder.take());
         }
     }
 
@@ -459,35 +459,15 @@ fn write_all_retry(
 }
 
 fn run_feeder(url: &str, fanout: &Fanout, stop: &AtomicBool) -> Result<(), String> {
-    let mut headers = reqwest::header::HeaderMap::new();
-    // Request ICY so we can surface StreamTitle; audio clients get stripped bytes.
-    headers.insert(
-        "Icy-MetaData",
-        reqwest::header::HeaderValue::from_static("1"),
-    );
-    headers.insert("Accept", reqwest::header::HeaderValue::from_static("*/*"));
-    headers.insert(
-        "User-Agent",
-        reqwest::header::HeaderValue::from_static("RockCast/0.1"),
-    );
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(None)
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let headers = stream_headers(false);
+    let client = stream_client(Duration::from_secs(10), None)?;
 
     let resp = open_upstream(client, url, headers, stop)?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
 
-    let meta_int = resp
-        .headers()
-        .get("icy-metaint")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
+    let meta_int = metadata_interval(resp.headers());
     log::info!(
         "StreamRelay feeder HTTP ok content-type={} icy-metaint={}",
         resp.headers()
@@ -643,10 +623,8 @@ fn advertise_ipv4_near(cast_host: &str) -> Option<Ipv4Addr> {
         }
         let score = score_lan(&iface.name, ip, is_apipa(ip), iface.is_oper_up());
         let netmask = v4.netmask;
-        if in_same_subnet(ip, netmask, peer) {
-            if same_net.map(|(s, _)| score > s).unwrap_or(true) {
-                same_net = Some((score, ip));
-            }
+        if in_same_subnet(ip, netmask, peer) && same_net.map(|(s, _)| score > s).unwrap_or(true) {
+            same_net = Some((score, ip));
         }
         if best_lan.map(|(s, _)| score > s).unwrap_or(true) {
             best_lan = Some((score, ip));

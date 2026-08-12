@@ -73,10 +73,10 @@ fn stations_search_paths() -> Vec<std::path::PathBuf> {
     if let Ok(p) = std::env::var("ROCKCAST_STATIONS") {
         paths.push(std::path::PathBuf::from(p));
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("stations.txt"));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        paths.push(dir.join("stations.txt"));
     }
     if let Ok(cwd) = std::env::current_dir() {
         paths.push(cwd.join("stations.txt"));
@@ -89,7 +89,11 @@ fn stations_search_paths() -> Vec<std::path::PathBuf> {
 
 fn appdata_stations_path() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")?;
-    Some(std::path::PathBuf::from(base).join("RockCast").join("stations.txt"))
+    Some(
+        std::path::PathBuf::from(base)
+            .join("RockCast")
+            .join("stations.txt"),
+    )
 }
 
 /// Line format: `name | url | tags | bitrate | codec | country`
@@ -112,10 +116,7 @@ fn parse_stations_txt(raw: &str) -> Vec<Station> {
             continue;
         }
         let tags = parts.get(2).copied().unwrap_or("").to_string();
-        let bitrate = parts
-            .get(3)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(128);
+        let bitrate = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(128);
         let codec = parts.get(4).copied().unwrap_or("mp3").to_string();
         out.push(Station {
             name,
@@ -132,10 +133,7 @@ fn parse_stations_txt(raw: &str) -> Vec<Station> {
 pub fn load_catalog(lang: Lang) -> (Vec<Station>, String) {
     let ordered = order_stations(catalog_stations());
     let n = ordered.len();
-    (
-        ordered,
-        i18n::fmt1(lang.t().local_catalog, n),
-    )
+    (ordered, i18n::fmt1(lang.t().local_catalog, n))
 }
 
 /// Enrich the catalog via Radio Browser (may take several seconds).
@@ -151,10 +149,7 @@ pub fn enrich_stations(catalog: Vec<Station>, lang: Lang) -> (Vec<Station>, Stri
                 let merged = order_stations(dedupe(merged));
                 let n = merged.len();
                 let limited: Vec<_> = merged.into_iter().take(120).collect();
-                return (
-                    limited,
-                    i18n::fmt1(lang.t().catalog_plus_rb, n),
-                );
+                return (limited, i18n::fmt1(lang.t().catalog_plus_rb, n));
             }
             Ok(_) => log::info!("Radio Browser {host}: empty response"),
             Err(e) => log::info!("Radio Browser {host}: {e}"),
@@ -185,10 +180,7 @@ struct RbStation {
 
 fn resolve_ipv4(host: &str, port: u16) -> Option<std::net::SocketAddr> {
     use std::net::ToSocketAddrs;
-    (host, port)
-        .to_socket_addrs()
-        .ok()?
-        .find(|a| a.is_ipv4())
+    (host, port).to_socket_addrs().ok()?.find(|a| a.is_ipv4())
 }
 
 /// HTTPS GET over IPv4 only (no hyper/reqwest — IPv6 is broken here and corrupts the response body).
@@ -207,8 +199,7 @@ fn https_get_ipv4(host: &str, path_and_query: &str) -> Result<Vec<u8>, String> {
     let config = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    let server_name =
-        ServerName::try_from(host.to_string()).map_err(|e| format!("sni: {e}"))?;
+    let server_name = ServerName::try_from(host.to_string()).map_err(|e| format!("sni: {e}"))?;
     let conn = rustls::ClientConnection::new(Arc::new(config), server_name)
         .map_err(|e| format!("tls: {e}"))?;
     let mut tls = rustls::StreamOwned::new(conn, stream);
@@ -228,15 +219,19 @@ fn https_get_ipv4(host: &str, path_and_query: &str) -> Result<Vec<u8>, String> {
     tls.flush().map_err(|e| format!("flush: {e}"))?;
 
     let mut raw = Vec::new();
-    tls.read_to_end(&mut raw).map_err(|e| format!("read: {e}"))?;
+    tls.read_to_end(&mut raw)
+        .map_err(|e| format!("read: {e}"))?;
     if raw.is_empty() {
         return Err("empty response".into());
     }
 
-    let sep = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| {
-        let head = String::from_utf8_lossy(&raw[..raw.len().min(120)]);
-        format!("missing HTTP headers: {head:?}")
-    })?;
+    let sep = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| {
+            let head = String::from_utf8_lossy(&raw[..raw.len().min(120)]);
+            format!("missing HTTP headers: {head:?}")
+        })?;
     let header_bytes = &raw[..sep];
     let body = raw[sep + 4..].to_vec();
     let headers = String::from_utf8_lossy(header_bytes);
@@ -316,9 +311,7 @@ fn normalize(raw: RbStation) -> Option<Station> {
         .into_iter()
         .flatten()
         .map(|u| u.trim().to_string())
-        .find(|u| {
-            (u.starts_with("http://") || u.starts_with("https://")) && !is_playlist(u)
-        })?;
+        .find(|u| (u.starts_with("http://") || u.starts_with("https://")) && !is_playlist(u))?;
     Some(Station {
         name,
         url,
@@ -376,7 +369,15 @@ fn dedupe(stations: Vec<Station>) -> Vec<Station> {
 }
 
 fn order_stations(stations: Vec<Station>) -> Vec<Station> {
-    let metal_tags = ["metal", "hard rock", "punk", "thrash", "death", "doom", "industrial"];
+    let metal_tags = [
+        "metal",
+        "hard rock",
+        "punk",
+        "thrash",
+        "death",
+        "doom",
+        "industrial",
+    ];
     let mut metal = Vec::new();
     let mut others = Vec::new();
     for s in stations {
