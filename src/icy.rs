@@ -13,6 +13,8 @@ use std::{
 
 use reqwest::header::{HeaderMap, HeaderValue};
 
+use crate::audio::parse_stream_title;
+
 pub struct IcyWatcher {
     stop: Arc<AtomicBool>,
     join: Option<thread::JoinHandle<()>>,
@@ -176,14 +178,4 @@ fn read_interruptible(
         }
     }
     Ok(())
-}
-
-fn parse_stream_title(meta: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(meta);
-    let lower = text.to_ascii_lowercase();
-    let key = "streamtitle='";
-    let start = lower.find(key)? + key.len();
-    let rest = &text[start..];
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
 }

@@ -1,5 +1,6 @@
 //! RockCast library (GUI binary is `main.rs`).
 
+mod audio;
 pub mod app;
 pub mod cast;
 pub mod i18n;

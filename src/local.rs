@@ -14,7 +14,6 @@ use std::{
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
-use rustfft::{FftPlanner, num_complex::Complex};
 use symphonia::core::{
     audio::{AudioBufferRef, SampleBuffer},
     codecs::{CODEC_TYPE_NULL, DecoderOptions},
@@ -26,7 +25,10 @@ use symphonia::core::{
 };
 use thiserror::Error;
 
-use crate::spectrum::{BANDS, FFT_SIZE, HOP};
+use crate::{
+    audio::{BandAnalyzer, apply_hint, parse_stream_title},
+    spectrum::BANDS,
+};
 
 const RING_MAX: usize = 48000 * 2 * 4; // ~4 sec stereo @ 48k
 /// Give up if the station accepts TCP but never sends HTTP headers / audio.
@@ -550,12 +552,7 @@ fn decode_into_ring(
         .map_err(|e| e.to_string())?;
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
-    let mut pcm_mono = Vec::<f32>::with_capacity(FFT_SIZE * 2);
-    let mut fft_buf = vec![Complex::new(0.0, 0.0); FFT_SIZE];
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(FFT_SIZE);
-    let window = hann(FFT_SIZE);
-    let mut smooth = [0.08f32; BANDS];
+    let mut bands = BandAnalyzer::new();
     let wall_start = Instant::now();
     let mut samples_done: u64 = 0;
 
@@ -602,24 +599,11 @@ fn decode_into_ring(
             q.extend(interleaved.iter().copied());
         }
 
-        // Spectrum from mono.
-        for frame in interleaved.chunks(channels) {
-            let sum: f32 = frame.iter().sum();
-            pcm_mono.push(sum / channels as f32);
-        }
-        while pcm_mono.len() >= FFT_SIZE {
-            for i in 0..FFT_SIZE {
-                fft_buf[i].re = pcm_mono[i] * window[i];
-                fft_buf[i].im = 0.0;
-            }
-            pcm_mono.drain(..HOP);
-            fft.process(&mut fft_buf);
-            let bands = magnitudes_to_bands(&fft_buf, sample_rate as f32);
-            for (i, b) in bands.iter().enumerate() {
-                let rate = if *b > smooth[i] { 0.4 } else { 0.15 };
-                smooth[i] += (*b - smooth[i]) * rate;
-            }
-            *levels.lock() = smooth;
+        let mono = interleaved
+            .chunks(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32);
+        if let Some(values) = bands.push_mono(mono, sample_rate as f32) {
+            *levels.lock() = values;
         }
 
         let audio_secs = samples_done as f64 / f64::from(sample_rate);
@@ -767,56 +751,6 @@ fn to_interleaved(
     buf.samples().to_vec()
 }
 
-fn apply_hint(hint: &mut Hint, content_type: &str) {
-    if content_type.contains("mpeg") || content_type.contains("mp3") {
-        hint.with_extension("mp3");
-    } else if content_type.contains("aac") || content_type.contains("mp4") {
-        hint.with_extension("aac");
-    } else if content_type.contains("ogg") || content_type.contains("vorbis") {
-        hint.with_extension("ogg");
-    } else if content_type.contains("flac") {
-        hint.with_extension("flac");
-    } else {
-        hint.with_extension("mp3");
-    }
-}
-
-fn hann(n: usize) -> Vec<f32> {
-    (0..n)
-        .map(|i| {
-            let x = std::f32::consts::PI * 2.0 * i as f32 / (n as f32 - 1.0);
-            0.5 - 0.5 * x.cos()
-        })
-        .collect()
-}
-
-fn magnitudes_to_bands(fft: &[Complex<f32>], sample_rate: f32) -> [f32; BANDS] {
-    let half = FFT_SIZE / 2;
-    let f_min = 40.0f32;
-    let f_max = (sample_rate * 0.45).min(16_000.0);
-    let mut out = [0.0f32; BANDS];
-    for b in 0..BANDS {
-        let t0 = b as f32 / BANDS as f32;
-        let t1 = (b + 1) as f32 / BANDS as f32;
-        let lo = f_min * (f_max / f_min).powf(t0);
-        let hi = f_min * (f_max / f_min).powf(t1);
-        let i0 = ((lo / sample_rate) * FFT_SIZE as f32).floor() as usize;
-        let i1 = ((hi / sample_rate) * FFT_SIZE as f32).ceil() as usize;
-        let i0 = i0.min(half - 1);
-        let i1 = i1.clamp(i0 + 1, half);
-        let mut peak = 0.0f32;
-        for c in &fft[i0..i1] {
-            let m = (c.re * c.re + c.im * c.im).sqrt() / (FFT_SIZE as f32);
-            if m > peak {
-                peak = m;
-            }
-        }
-        let db = 20.0 * peak.max(1e-8).log10();
-        out[b] = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
-    }
-    out
-}
-
 struct IcyStripReader {
     inner: StopAwareBody,
     meta_int: usize,
@@ -913,14 +847,4 @@ impl MediaSource for IcyStripReader {
     fn byte_len(&self) -> Option<u64> {
         None
     }
-}
-
-fn parse_stream_title(meta: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(meta);
-    let lower = text.to_ascii_lowercase();
-    let key = "streamtitle='";
-    let start = lower.find(key)? + key.len();
-    let rest = &text[start..];
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
 }

@@ -13,8 +13,8 @@ use std::{
     io::{Read, Write},
     net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
-        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
     },
     thread,
     time::{Duration, Instant},
@@ -22,6 +22,8 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 use thiserror::Error;
+
+use crate::audio::parse_stream_title;
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const READ_POLL: Duration = Duration::from_millis(200);
@@ -376,16 +378,7 @@ fn handle_client(
         return Err(format!("bad request: {first}"));
     }
 
-    let headers = format!(
-        "HTTP/1.1 200 OK\r\n\
-         Content-Type: {content_type}\r\n\
-         Cache-Control: no-cache, no-store\r\n\
-         Pragma: no-cache\r\n\
-         Connection: close\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Accept-Ranges: none\r\n\
-         \r\n"
-    );
+    let headers = stream_response_headers(content_type);
     write_all_retry(&mut stream, headers.as_bytes(), stop)?;
     if is_head {
         return Ok(());
@@ -406,13 +399,45 @@ fn handle_client(
         }
         let n = fanout.read_at(&mut pos, &mut buf)?;
         if n == 0 {
+            write_all_retry(&mut stream, b"0\r\n\r\n", stop)?;
             return Ok(());
         }
-        write_all_retry(&mut stream, &buf[..n], stop)?;
+        write_chunk(&mut stream, &buf[..n], stop)?;
     }
 }
 
-fn write_all_retry(stream: &mut TcpStream, mut data: &[u8], stop: &AtomicBool) -> Result<(), String> {
+/// HTTP/1.1 framing for an indefinite audio stream.
+///
+/// Chromecast's Default Media Receiver does not reliably consume an HTTP/1.1
+/// close-delimited response as a live stream. Chunked transfer encoding makes
+/// every completed relay read immediately visible without inventing a length.
+fn stream_response_headers(content_type: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: {content_type}\r\n\
+         Cache-Control: no-cache, no-store\r\n\
+         Pragma: no-cache\r\n\
+         Connection: keep-alive\r\n\
+         Transfer-Encoding: chunked\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Accept-Ranges: none\r\n\
+         \r\n"
+    )
+}
+
+fn write_chunk(stream: &mut TcpStream, data: &[u8], stop: &AtomicBool) -> Result<(), String> {
+    debug_assert!(!data.is_empty());
+    let prefix = format!("{:X}\r\n", data.len());
+    write_all_retry(stream, prefix.as_bytes(), stop)?;
+    write_all_retry(stream, data, stop)?;
+    write_all_retry(stream, b"\r\n", stop)
+}
+
+fn write_all_retry(
+    stream: &mut TcpStream,
+    mut data: &[u8],
+    stop: &AtomicBool,
+) -> Result<(), String> {
     while !data.is_empty() {
         if stop.load(Ordering::SeqCst) {
             return Err("stopped".into());
@@ -440,10 +465,7 @@ fn run_feeder(url: &str, fanout: &Fanout, stop: &AtomicBool) -> Result<(), Strin
         "Icy-MetaData",
         reqwest::header::HeaderValue::from_static("1"),
     );
-    headers.insert(
-        "Accept",
-        reqwest::header::HeaderValue::from_static("*/*"),
-    );
+    headers.insert("Accept", reqwest::header::HeaderValue::from_static("*/*"));
     headers.insert(
         "User-Agent",
         reqwest::header::HeaderValue::from_static("RockCast/0.1"),
@@ -586,16 +608,6 @@ fn open_upstream(
             }
         }
     }
-}
-
-fn parse_stream_title(meta: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(meta);
-    let lower = text.to_ascii_lowercase();
-    let key = "streamtitle='";
-    let start = lower.find(key)? + key.len();
-    let rest = &text[start..];
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
 }
 
 fn normalize_content_type(ct: &str) -> String {
@@ -743,5 +755,23 @@ fn is_vpn_or_virtual(name: &str) -> bool {
     if MARKERS.iter().any(|m| lower.contains(m)) {
         return true;
     }
-    lower.starts_with("tap") || lower.starts_with("tun") || lower == "wg" || lower.starts_with("wg-")
+    lower.starts_with("tap")
+        || lower.starts_with("tun")
+        || lower == "wg"
+        || lower.starts_with("wg-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_response_headers;
+
+    #[test]
+    fn live_stream_response_uses_chunked_encoding() {
+        let headers = stream_response_headers("audio/mpeg");
+        assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(headers.contains("Content-Type: audio/mpeg\r\n"));
+        assert!(headers.contains("Transfer-Encoding: chunked\r\n"));
+        assert!(!headers.contains("Content-Length:"));
+        assert!(headers.ends_with("\r\n\r\n"));
+    }
 }
