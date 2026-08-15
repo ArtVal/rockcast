@@ -484,8 +484,8 @@ fn is_vpn_or_virtual(name: &str) -> bool {
     }
     lower.starts_with("tap")
         || lower.starts_with("tun")
-        || lower == "wg"
-        || lower.starts_with("wg-")
+        || lower.starts_with("wg")
+        || lower.starts_with("awg")
 }
 
 fn disable_virtual_interfaces(daemon: &ServiceDaemon) {
@@ -569,8 +569,12 @@ mod tests {
     fn vpn_names_filtered() {
         assert!(is_vpn_or_virtual("AmneziaVPN"));
         assert!(is_vpn_or_virtual("vEthernet (Default Switch)"));
+        assert!(is_vpn_or_virtual("tun0"));
+        assert!(is_vpn_or_virtual("wg0"));
+        assert!(is_vpn_or_virtual("amneziawg0"));
         assert!(!is_vpn_or_virtual("Беспроводная сеть"));
         assert!(!is_vpn_or_virtual("Wi-Fi"));
+        assert!(!is_vpn_or_virtual("wlp2s0"));
     }
 
     #[test]

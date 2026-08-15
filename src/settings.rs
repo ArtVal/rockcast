@@ -110,19 +110,35 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::rename(source, destination)
 }
 
-fn settings_path() -> PathBuf {
-    if let Ok(base) = std::env::var("LOCALAPPDATA") {
-        return Path::new(&base).join("RockCast").join("settings.json");
+/// Settings, log, and the editable `stations.txt` copy.
+///
+/// - Windows: `%LOCALAPPDATA%\RockCast`
+/// - Unix: `$XDG_CONFIG_HOME/rockcast`, else `~/.config/rockcast`
+pub fn app_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("RockCast"))
     }
-    PathBuf::from("rockcast_settings.json")
+    #[cfg(not(windows))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+            return Some(PathBuf::from(xdg).join("rockcast"));
+        }
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("rockcast"))
+    }
 }
 
-/// `%LOCALAPPDATA%\RockCast\rockcast.log` (or `./rockcast.log`).
+fn settings_path() -> PathBuf {
+    app_dir()
+        .map(|dir| dir.join("settings.json"))
+        .unwrap_or_else(|| PathBuf::from("rockcast_settings.json"))
+}
+
+/// App-dir `rockcast.log`, or `./rockcast.log` if no app dir is available.
 pub fn log_path() -> PathBuf {
-    if let Ok(base) = std::env::var("LOCALAPPDATA") {
-        return Path::new(&base).join("RockCast").join("rockcast.log");
-    }
-    PathBuf::from("rockcast.log")
+    app_dir()
+        .map(|dir| dir.join("rockcast.log"))
+        .unwrap_or_else(|| PathBuf::from("rockcast.log"))
 }
 
 #[cfg(test)]
@@ -145,5 +161,12 @@ mod tests {
         fs::write(&path, b"{").unwrap();
         assert!(AppSettings::load_from(&path).is_err());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_app_dir_ends_with_rockcast() {
+        let dir = app_dir().expect("HOME or XDG_CONFIG_HOME");
+        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("rockcast"));
     }
 }

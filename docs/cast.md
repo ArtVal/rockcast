@@ -65,7 +65,7 @@ Station (VPN on PC) ──HTTP──► RockCast feeder ──ring──► http
 - Accepted TCP sockets are forced **blocking** (Windows inherits non-blocking from the listener — that caused WSAEWOULDBLOCK / silent Cast IDLE).
 - One shared upstream feeder + ring; Cast LOAD starts immediately (no probe / warm wait). Spectrum taps the **relay URL** so it does not open a second station download that starves Cast over VPN.
 - ICY titles come from the feeder; UI polls `StreamRelay::latest_title()`.
-- Windows Firewall may prompt once for inbound LAN access — allow it or Cast cannot pull the relay.
+- Windows Firewall / firewalld may prompt once for inbound LAN access — allow it or Cast cannot pull the relay.
 
 ## Failure modes
 

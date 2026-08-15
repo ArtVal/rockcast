@@ -14,7 +14,7 @@ src/
   output.rs        OutputDevice = Local | Cast; scan_all()
   local.rs         LocalPlayer — HTTP decode + cpal
   stations.rs      stations.txt + Radio Browser enrich
-  settings.rs      %LOCALAPPDATA%\RockCast\settings.json (+ log_path)
+  settings.rs      app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
   i18n.rs          Lang::Ru | En string tables
   icy.rs           IcyWatcher — StreamTitle for Cast mode
   spectrum.rs      SpectrumAnalyzer — FFT tap for Cast (+ BANDS/FFT consts)
@@ -81,7 +81,7 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 | Crate | Use |
 |-------|-----|
 | `eframe` / `egui` | GUI |
-| `cpal` | WASAPI output |
+| `cpal` | Audio output (WASAPI on Windows, ALSA on Linux) |
 | `symphonia` | Stream decode |
 | `reqwest` (blocking) | HTTP(S) radio + taps |
 | `rustls` | Cast TLS + Radio Browser custom HTTPS |
@@ -97,8 +97,10 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 | `stations.txt` | Bundded catalog (`name \| url \| tags \| …`) |
 | `ROCKCAST_STATIONS` | Optional override path for catalog |
 | `proto/cast_channel.proto` | Reference schema (runtime uses hand-rolled codec) |
-| `%LOCALAPPDATA%\RockCast\settings.json` | User prefs |
-| `%LOCALAPPDATA%\RockCast\rockcast.log` | Session log |
+| `%LOCALAPPDATA%\RockCast\settings.json` | User prefs (Windows) |
+| `~/.config/rockcast/settings.json` | User prefs (Linux) |
+| `%LOCALAPPDATA%\RockCast\rockcast.log` | Session log (Windows) |
+| `~/.config/rockcast/rockcast.log` | Session log (Linux) |
 
 ## Tests and examples
 
