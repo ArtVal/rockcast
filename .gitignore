@@ -30,3 +30,5 @@ Desktop.ini
 # Local / generated
 /target/eureka*.json
 /target/eureka_raw.txt
+/graphify-out/
+/LocalLow/

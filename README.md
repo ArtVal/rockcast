@@ -15,6 +15,7 @@ Desktop internet radio player for Windows. Play rock / metal streams on **PC spe
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
 - **Persistent settings** — volume, last station, device, language, spectrum toggle
+- **Optional RockServer mode** — server-side semantic station search and five-second SpeechKit voice command; autonomous mode remains the default
 
 ## Requirements
 
@@ -110,6 +111,12 @@ Stored at:
 ```
 
 Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`.
+
+## RockServer and voice control
+
+RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
+
+The **Voice** button records up to five seconds from the default Windows microphone, sends PCM16 mono to `/api/v1/voice/stream`, and plays the station selected by the server. RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials.
 
 ## Project layout
 

@@ -33,6 +33,16 @@ pub struct AppSettings {
     pub cast_relay: bool,
     #[serde(default)]
     pub language: crate::i18n::Lang,
+    /// Enables RockServer search and voice control; false preserves autonomous behavior.
+    #[serde(default)]
+    pub rockserver_enabled: bool,
+    /// Local or LAN RockServer base URL, never a credential-bearing URL.
+    #[serde(default = "default_rockserver_url")]
+    pub rockserver_url: String,
+}
+
+fn default_rockserver_url() -> String {
+    "http://127.0.0.1:3000".to_owned()
 }
 
 fn default_volume() -> u8 {

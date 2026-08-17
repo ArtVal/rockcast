@@ -1,7 +1,12 @@
 //! RockCast GUI on egui.
 
 use std::{
-    sync::mpsc,
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -37,6 +42,7 @@ enum UiMsg {
         finished: bool,
     },
     Devices(Vec<OutputDevice>, String),
+    VoiceResult(Result<Vec<Station>, String>),
 }
 
 pub struct RockCastApp {
@@ -52,6 +58,10 @@ pub struct RockCastApp {
     volume: u8,
     loading_stations: bool,
     loading_devices: bool,
+    voice_busy: bool,
+    voice_recording: Option<Arc<AtomicBool>>,
+    voice_fallback: VecDeque<Station>,
+    pending_voice_play: bool,
     /// Cast play/stop running in the background — don't block UI, only update status.
     playing_op: bool,
     playing: bool,
@@ -71,6 +81,8 @@ pub struct RockCastApp {
     shutting_down: bool,
     bootstrapped: bool,
     lang: Lang,
+    rockserver_enabled: bool,
+    rockserver_url: String,
 }
 
 impl RockCastApp {
@@ -102,6 +114,8 @@ impl RockCastApp {
         let eq_enabled = settings.eq_enabled;
         let cast_relay = settings.cast_relay;
         let lang = settings.language;
+        let rockserver_enabled = settings.rockserver_enabled;
+        let rockserver_url = settings.rockserver_url.clone();
         let t = lang.t();
 
         let (ui_tx, ui_rx) = mpsc::channel();
@@ -119,6 +133,10 @@ impl RockCastApp {
             volume,
             loading_stations: false,
             loading_devices: false,
+            voice_busy: false,
+            voice_recording: None,
+            voice_fallback: VecDeque::new(),
+            pending_voice_play: false,
             playing_op: false,
             playing: false,
             playing_local: false,
@@ -135,6 +153,8 @@ impl RockCastApp {
             shutting_down: false,
             bootstrapped: false,
             lang,
+            rockserver_enabled,
+            rockserver_url,
         }
     }
 
@@ -161,26 +181,13 @@ impl RockCastApp {
             self.selected_device = Some(i);
             return;
         }
-        let mut pick = 0;
-        for (i, d) in self.devices.iter().enumerate() {
-            if let Some(c) = d.as_cast() {
-                let blob = format!("{} {}", c.discovered.name, c.discovered.model).to_lowercase();
-                if blob.contains("jbl") || blob.contains("9.1") || blob.contains("bar") {
-                    self.selected_device = Some(i);
-                    return;
-                }
-                if pick == 0 && !d.is_local() {
-                    pick = i;
-                }
-            }
-        }
-        // Prefer any Cast over the first local when nothing was saved.
-        if pick == 0
-            && let Some(i) = self.devices.iter().position(|d| !d.is_local())
-        {
-            pick = i;
-        }
-        self.selected_device = Some(pick);
+        // A fresh profile must never start audio on a network receiver
+        // unexpectedly. Local devices are ordered with the Windows default first.
+        self.selected_device = self
+            .devices
+            .iter()
+            .position(|device| device.is_local())
+            .or(Some(0));
     }
 
     fn mark_settings_dirty(&mut self) {
@@ -188,6 +195,8 @@ impl RockCastApp {
         self.settings.eq_enabled = self.eq_enabled;
         self.settings.cast_relay = self.cast_relay;
         self.settings.language = self.lang;
+        self.settings.rockserver_enabled = self.rockserver_enabled;
+        self.settings.rockserver_url = self.rockserver_url.trim().to_owned();
         if let Some(url) = self
             .selected_station
             .and_then(|i| self.stations.get(i).map(|s| s.url.clone()))
@@ -311,9 +320,33 @@ impl RockCastApp {
                     self.playing_local = false;
                     self.playing_url = None;
                     self.observers.stop();
+                    let failed_url = self
+                        .selected_station
+                        .and_then(|index| self.stations.get(index))
+                        .map(|station| station.url.clone());
+                    if let Some(failed_url) = failed_url {
+                        self.stations.retain(|station| station.url != failed_url);
+                        log::warn!("removing unavailable station: {failed_url}: {message}");
+                    }
+                    self.selected_station = None;
                     self.station_now = "—".into();
                     self.track = self.lang.t().track_hint.into();
-                    self.status = message;
+                    if let Some(next) = self.voice_fallback.pop_front() {
+                        log::info!(
+                            "voice fallback: trying next station name={:?} url={} remaining={}",
+                            next.name,
+                            next.url,
+                            self.voice_fallback.len()
+                        );
+                        self.status =
+                            format!("Станция недоступна; пробую следующую: {}", next.name);
+                        self.stations.retain(|station| station.url != next.url);
+                        self.stations.insert(0, next);
+                        self.selected_station = Some(0);
+                        self.play();
+                    } else {
+                        self.status = message;
+                    }
                 }
             }
         }
@@ -363,6 +396,40 @@ impl RockCastApp {
                             "device selected after scan: idx={i} id={}",
                             self.devices.get(i).map(|d| d.id()).unwrap_or("?")
                         );
+                    }
+                    if self.pending_voice_play && self.can_start_play() {
+                        self.pending_voice_play = false;
+                        log::info!("voice playback resumed after device scan");
+                        self.play();
+                    }
+                }
+                UiMsg::VoiceResult(result) => {
+                    self.voice_busy = false;
+                    self.voice_recording = None;
+                    match result {
+                        Ok(stations) => {
+                            log::info!("voice candidates received: count={}", stations.len());
+                            let first = stations[0].clone();
+                            self.voice_fallback = stations.iter().skip(1).cloned().collect();
+                            self.station_now = first.name.clone();
+                            self.stations = stations;
+                            self.source = format!("RockServer · голос · {}", self.stations.len());
+                            self.selected_station = Some(0);
+                            log::info!(
+                                "voice selected first station: name={:?} url={} fallbacks={}",
+                                self.stations[0].name,
+                                self.stations[0].url,
+                                self.voice_fallback.len()
+                            );
+                            self.status = "Голосовая команда распознана; запускаю станцию".into();
+                            if self.can_start_play() {
+                                self.play();
+                            } else {
+                                self.pending_voice_play = true;
+                                self.status = "Команда распознана; ожидаю аудиоустройство…".into();
+                            }
+                        }
+                        Err(error) => self.status = format!("Голосовое управление: {error}"),
                     }
                 }
             }
@@ -425,6 +492,37 @@ impl RockCastApp {
         });
     }
 
+    fn start_voice(&mut self) {
+        if !self.rockserver_enabled || self.voice_busy {
+            return;
+        }
+        self.voice_busy = true;
+        log::info!(
+            "voice button pressed: locale=ru-RU rockserver_url={}",
+            self.rockserver_url
+        );
+        self.status = "Слушаю, пока удерживается кнопка…".into();
+        let recording = Arc::new(AtomicBool::new(true));
+        self.voice_recording = Some(Arc::clone(&recording));
+        let tx = self.ui_tx.clone();
+        let url = self.rockserver_url.clone();
+        // Voice commands are currently Russian regardless of UI translation.
+        let locale = "ru-RU".to_owned();
+        let _ = self.playback.spawn_job(move |_| {
+            let _ = tx.send(UiMsg::VoiceResult(crate::voice::capture_and_recognize(
+                &url, &locale, recording,
+            )));
+        });
+    }
+
+    fn stop_voice_recording(&mut self) {
+        if let Some(recording) = self.voice_recording.take() {
+            log::info!("voice button released: committing captured audio");
+            recording.store(false, Ordering::Release);
+            self.status = "Распознаю команду…".into();
+        }
+    }
+
     fn play(&mut self) {
         if !self.can_start_play() {
             return;
@@ -466,6 +564,8 @@ impl RockCastApp {
         }
         self.playing_op = true;
         self.status = "Stop…".into();
+        self.pending_voice_play = false;
+        self.voice_fallback.clear();
         self.observers.stop();
         self.playing = false;
         self.playing_local = false;
@@ -961,6 +1061,46 @@ impl RockCastApp {
             );
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if self.rockserver_enabled {
+                    let time = ui.input(|input| input.time) as f32;
+                    let microphone_active = self.voice_recording.is_some();
+                    let voice_color = if microphone_active {
+                        let hue = (time * 0.35).fract();
+                        Color32::from(egui::ecolor::Hsva::new(hue, 0.92, 1.0, 1.0))
+                    } else {
+                        PANEL_2
+                    };
+                    let caption = if self.voice_recording.is_some() {
+                        "Слушаю…"
+                    } else if self.voice_busy {
+                        "Распознаю…"
+                    } else {
+                        "Голос"
+                    };
+                    let voice =
+                        egui::Button::new(RichText::new(caption).strong().color(Color32::WHITE))
+                            .min_size(Vec2::new(72.0, 32.0))
+                            .fill(voice_color)
+                            .stroke(Stroke::new(2.0, voice_color.gamma_multiply(0.65)));
+                    let response = ui.add(voice).on_hover_text(
+                        "Удерживайте кнопку и говорите; отпустите для распознавания",
+                    );
+                    let pressed_on_button = response.is_pointer_button_down_on();
+                    let primary_button_down = ui.input(|input| input.pointer.primary_down());
+                    if pressed_on_button && !self.voice_busy {
+                        self.start_voice();
+                    }
+                    // Once capture has started, track the physical mouse button globally.
+                    // Widget hover/active state can change during animation and must not
+                    // terminate a recording while the user still holds the button.
+                    if !primary_button_down && self.voice_recording.is_some() {
+                        self.stop_voice_recording();
+                    }
+                    if pressed_on_button || microphone_active {
+                        ui.ctx().request_repaint_after(Duration::from_millis(16));
+                    }
+                    ui.add_space(6.0);
+                }
                 let stop = egui::Button::new(RichText::new("Stop").color(FG))
                     .min_size(Vec2::new(72.0, 32.0))
                     .fill(PANEL_2);
@@ -1067,6 +1207,36 @@ impl eframe::App for RockCastApp {
                         .color(MUTED),
                 );
                 ui.add_space(10.0);
+                Self::panel(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut enabled = self.rockserver_enabled;
+                        if ui
+                            .checkbox(&mut enabled, "RockServer (поиск и голос)")
+                            .changed()
+                        {
+                            self.rockserver_enabled = enabled;
+                            self.mark_settings_dirty();
+                            self.refresh_stations();
+                        }
+                        if self.rockserver_enabled {
+                            ui.label(RichText::new("URL").color(MUTED));
+                            if ui
+                                .text_edit_singleline(&mut self.rockserver_url)
+                                .lost_focus()
+                            {
+                                self.mark_settings_dirty();
+                            }
+                        } else {
+                            ui.label(
+                                RichText::new(
+                                    "Автономный режим: локальный каталог и Radio Browser",
+                                )
+                                .color(MUTED),
+                            );
+                        }
+                    });
+                });
+                ui.add_space(8.0);
                 self.draw_device_row(ui);
                 ui.add_space(8.0);
 

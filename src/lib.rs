@@ -11,7 +11,11 @@ pub mod observers;
 pub mod output;
 pub mod playback;
 pub mod relay;
+/// Optional RockServer search integration.
+pub mod rockserver;
 pub mod runtime;
 pub mod settings;
 pub mod spectrum;
 pub mod stations;
+/// Microphone capture and RockServer voice transport.
+pub mod voice;

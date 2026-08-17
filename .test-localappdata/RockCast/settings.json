@@ -1,0 +1,10 @@
+{
+  "volume": 35,
+  "station_url": "https://cast1.torontocast.com:4660/stream",
+  "device_id": "local:Динамики (Realtek(R) Audio)",
+  "eq_enabled": false,
+  "cast_relay": false,
+  "language": "ru",
+  "rockserver_enabled": true,
+  "rockserver_url": "http://127.0.0.1:3000"
+}
