@@ -107,6 +107,7 @@ pub struct RockCastApp {
     rockserver_enabled: bool,
     rockserver_url: String,
     rockserver_bearer_token: String,
+    rockserver_setup_open: bool,
     telemetry: Telemetry,
     eq_repaint_next: Instant,
 }
@@ -187,6 +188,7 @@ impl RockCastApp {
             rockserver_enabled,
             rockserver_url,
             rockserver_bearer_token,
+            rockserver_setup_open: false,
             telemetry: Telemetry::new(),
             eq_repaint_next: Instant::now(),
         }
@@ -612,7 +614,8 @@ impl RockCastApp {
             return;
         }
         if self.rockserver_bearer_token.trim().is_empty() {
-            self.status = "Укажите токен RockServer в настройках.".into();
+            self.rockserver_setup_open = true;
+            self.status = self.lang.t().rockserver_token_required.into();
             return;
         }
         self.voice_busy = true;
@@ -874,6 +877,99 @@ impl RockCastApp {
             .show(ui, add);
     }
 
+    fn draw_rockserver_panel(&mut self, ui: &mut Ui) {
+        let t = self.lang.t();
+        let token_saved = !self.rockserver_bearer_token.trim().is_empty();
+        Self::panel(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    let mut enabled = self.rockserver_enabled;
+                    if ui.checkbox(&mut enabled, t.rockserver).changed() {
+                        self.rockserver_enabled = enabled;
+                        self.mark_settings_dirty();
+                        self.refresh_stations();
+                        if enabled && !token_saved {
+                            self.rockserver_setup_open = true;
+                        }
+                        if !enabled {
+                            self.rockserver_setup_open = false;
+                        }
+                    }
+                    if self.rockserver_enabled {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let label = if self.rockserver_setup_open {
+                                t.rockserver_hide
+                            } else {
+                                t.rockserver_configure
+                            };
+                            let btn = egui::Button::new(RichText::new(label).color(FG).size(12.0))
+                                .fill(PANEL_2)
+                                .min_size(Vec2::new(72.0, 22.0));
+                            if ui.add(btn).clicked() {
+                                self.rockserver_setup_open = !self.rockserver_setup_open;
+                            }
+                        });
+                    }
+                });
+
+                if !self.rockserver_enabled {
+                    ui.label(RichText::new(t.rockserver_autonomous).color(MUTED).size(12.0));
+                    return;
+                }
+
+                if !self.rockserver_setup_open {
+                    let status = if token_saved {
+                        RichText::new(t.rockserver_status_ok).color(Color32::from_rgb(0x7a, 0xc9, 0x6a))
+                    } else {
+                        RichText::new(t.rockserver_status_need_token).color(ACCENT)
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(status.size(12.0));
+                        let url_hint = self.rockserver_url.trim();
+                        if !url_hint.is_empty() {
+                            ui.label(
+                                RichText::new(format!("· {}", truncate(url_hint, 42)))
+                                    .color(MUTED)
+                                    .size(12.0),
+                            );
+                        }
+                    });
+                    return;
+                }
+
+                ui.add_space(4.0);
+                ui.label(RichText::new(t.rockserver_url).color(MUTED));
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.rockserver_url)
+                            .desired_width(ui.available_width()),
+                    )
+                    .lost_focus()
+                {
+                    self.mark_settings_dirty();
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new(t.rockserver_token).color(MUTED));
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.rockserver_bearer_token)
+                            .password(true)
+                            .desired_width(ui.available_width()),
+                    )
+                    .lost_focus()
+                {
+                    self.mark_settings_dirty();
+                }
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(t.rockserver_token_hint)
+                        .color(MUTED)
+                        .size(11.0),
+                );
+            });
+        });
+    }
+
     fn draw_device_row(&mut self, ui: &mut Ui) {
         let t = self.lang.t();
         let cast_selected = self
@@ -957,7 +1053,7 @@ impl RockCastApp {
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
                         let mut relay = self.cast_relay;
                         let toggle = ui
                             .checkbox(&mut relay, RichText::new(t.cast_relay).color(FG).size(13.0))
@@ -965,7 +1061,6 @@ impl RockCastApp {
                         if toggle.changed() {
                             self.set_cast_relay(relay);
                         }
-                        ui.add_space(10.0);
                         ui.label(RichText::new(t.cast_relay_note).color(MUTED).size(12.0));
                     });
                 });
@@ -1496,94 +1591,42 @@ impl eframe::App for RockCastApp {
                     .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("main_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                let t = self.lang.t();
-                                ui.menu_button(
-                                    RichText::new(t.menu_language).color(MUTED).size(13.0),
-                                    |ui| {
-                                        for lang in [Lang::Ru, Lang::En] {
-                                            let selected = self.lang == lang;
-                                            if ui
-                                                .selectable_label(selected, lang.native_name())
-                                                .clicked()
-                                            {
-                                                if self.lang != lang {
-                                                    self.set_language(ctx, lang);
-                                                }
-                                                ui.close();
-                                            }
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let t = self.lang.t();
+                        ui.menu_button(
+                            RichText::new(t.menu_language).color(MUTED).size(13.0),
+                            |ui| {
+                                for lang in [Lang::Ru, Lang::En] {
+                                    let selected = self.lang == lang;
+                                    if ui
+                                        .selectable_label(selected, lang.native_name())
+                                        .clicked()
+                                    {
+                                        if self.lang != lang {
+                                            self.set_language(ctx, lang);
                                         }
-                                    },
-                                );
-                            });
-                        });
-                        ui.label(
-                            RichText::new(self.lang.t().subtitle)
-                                .size(12.5)
-                                .color(MUTED),
+                                        ui.close();
+                                    }
+                                }
+                            },
                         );
-                        ui.add_space(8.0);
-                        Self::panel(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let mut enabled = self.rockserver_enabled;
-                                if ui
-                                    .checkbox(&mut enabled, "RockServer (поиск и голос)")
-                                    .changed()
-                                {
-                                    self.rockserver_enabled = enabled;
-                                    self.mark_settings_dirty();
-                                    self.refresh_stations();
-                                }
-                                if self.rockserver_enabled {
-                                    ui.label(RichText::new("URL").color(MUTED));
-                                    if ui
-                                        .text_edit_singleline(&mut self.rockserver_url)
-                                        .lost_focus()
-                                    {
-                                        self.mark_settings_dirty();
-                                    }
-                                    ui.label(RichText::new("Токен").color(MUTED));
-                                    if ui
-                                        .add(
-                                            egui::TextEdit::singleline(
-                                                &mut self.rockserver_bearer_token,
-                                            )
-                                            .password(true),
-                                        )
-                                        .lost_focus()
-                                    {
-                                        self.mark_settings_dirty();
-                                    }
-                                    ui.label(
-                                        RichText::new(
-                                            "Токен сохраняется только в локальных настройках RockCast.",
-                                        )
-                                        .color(MUTED)
-                                        .size(11.0),
-                                    );
-                                } else {
-                                    ui.label(
-                                        RichText::new(
-                                            "Автономный режим: локальный каталог и Radio Browser",
-                                        )
-                                        .color(MUTED),
-                                    );
-                                }
-                            });
-                        });
-                        ui.add_space(6.0);
-                        self.draw_device_row(ui);
-                        ui.add_space(6.0);
-
-                        let list_h = (ui.available_height() - 2.0).max(120.0);
-                        self.draw_station_list(ui, list_h);
                     });
+                });
+                ui.label(
+                    RichText::new(self.lang.t().subtitle)
+                        .size(12.5)
+                        .color(MUTED),
+                );
+                ui.add_space(8.0);
+                self.draw_rockserver_panel(ui);
+                ui.add_space(6.0);
+                self.draw_device_row(ui);
+                ui.add_space(6.0);
+
+                let list_h = ui.available_height().max(120.0);
+                self.draw_station_list(ui, list_h);
             });
     }
 
