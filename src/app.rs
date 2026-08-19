@@ -23,6 +23,7 @@ use crate::{
     settings::AppSettings,
     spectrum::BANDS,
     stations::{Station, enrich_stations, load_catalog},
+    telemetry::{PlaybackSnapshot, Telemetry},
 };
 
 const BG: Color32 = Color32::from_rgb(0x1a, 0x14, 0x10);
@@ -38,6 +39,10 @@ const NAME_COL_MIN: f32 = 120.0;
 const NAME_COL_MAX: f32 = 360.0;
 const TAGS_COL_MIN: f32 = 110.0;
 const META_COL_MIN: f32 = 88.0;
+/// EQ bar animation target rate (~20 FPS).
+const EQ_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
+/// Background polling while playback/loading is active.
+const UI_SLOW_REPAINT_INTERVAL: Duration = Duration::from_millis(120);
 /// Slider 100% → 50% on the speaker (half-scale).
 enum UiMsg {
     Stations {
@@ -102,6 +107,8 @@ pub struct RockCastApp {
     rockserver_enabled: bool,
     rockserver_url: String,
     rockserver_bearer_token: String,
+    telemetry: Telemetry,
+    eq_repaint_next: Instant,
 }
 
 impl RockCastApp {
@@ -180,6 +187,8 @@ impl RockCastApp {
             rockserver_enabled,
             rockserver_url,
             rockserver_bearer_token,
+            telemetry: Telemetry::new(),
+            eq_repaint_next: Instant::now(),
         }
     }
 
@@ -725,6 +734,7 @@ impl RockCastApp {
             return;
         }
         self.eq_enabled = enabled;
+        self.eq_repaint_next = Instant::now();
         self.mark_settings_dirty();
         self.persist_settings_if_needed(true);
         self.sync_spectrum();
@@ -752,7 +762,7 @@ impl RockCastApp {
         }
     }
 
-    fn tick_eq(&mut self, dt: f32) {
+    fn tick_eq(&mut self, dt: f32) -> bool {
         let targets = if self.eq_enabled && self.playing {
             if self.playing_local {
                 self.playback.local_levels()
@@ -762,20 +772,41 @@ impl RockCastApp {
         } else {
             [0.08; BANDS]
         };
+        let mut animating = false;
         for ((level, peak), target) in self
             .eq_levels
             .iter_mut()
             .zip(self.eq_peaks.iter_mut())
             .zip(targets)
         {
+            if (*level - target).abs() > 0.008 {
+                animating = true;
+            }
             *level += (target - *level) * (dt * 14.0).min(1.0);
             if self.eq_enabled && self.playing {
+                let prev_peak = *peak;
                 *peak = peak.max(*level);
                 *peak = (*peak - dt * 0.32).max(*level);
+                if (prev_peak - *peak).abs() > 0.005 {
+                    animating = true;
+                }
             } else {
+                let prev_peak = *peak;
                 *peak += (0.08 - *peak) * (dt * 10.0).min(1.0);
+                if (prev_peak - *peak).abs() > 0.005 || (*level - 0.08).abs() > 0.008 {
+                    animating = true;
+                }
             }
         }
+        animating
+    }
+
+    fn eq_ui_needs_frames(&self) -> bool {
+        if self.eq_enabled && self.playing {
+            return true;
+        }
+        self.eq_levels.iter().any(|l| (*l - 0.08).abs() > 0.015)
+            || self.eq_peaks.iter().any(|p| (*p - 0.08).abs() > 0.015)
     }
 
     fn draw_eq(&self, ui: &mut Ui, size: Vec2) {
@@ -1408,22 +1439,39 @@ impl eframe::App for RockCastApp {
         {
             self.track = title;
         }
-        self.tick_eq(ctx.input(|i| i.stable_dt).clamp(0.0, 0.05));
-        let eq_busy = self.eq_enabled && self.playing
-            || self.eq_levels.iter().any(|l| (*l - 0.08).abs() > 0.01);
-        let needs_fast_repaint = eq_busy || self.voice_recording.is_some();
+        let now = Instant::now();
+        let eq_ui_active = self.eq_ui_needs_frames();
+        let eq_repaint_due = eq_ui_active && now >= self.eq_repaint_next;
+        if eq_repaint_due {
+            self.eq_repaint_next = now + EQ_REPAINT_INTERVAL;
+            self.tick_eq(EQ_REPAINT_INTERVAL.as_secs_f32());
+        }
+        self.telemetry.on_frame();
+        let needs_fast_repaint = self.voice_recording.is_some() || eq_repaint_due;
         let needs_slow_repaint = self.playing
             || self.playing_op
             || self.loading_stations
             || self.loading_devices
             || self.settings_dirty
             || self.voice_busy;
-        if needs_fast_repaint {
+        self.telemetry.maybe_log(PlaybackSnapshot {
+            playing: self.playing,
+            eq_enabled: self.eq_enabled,
+            cast_relay: self.cast_relay,
+            playing_local: self.playing_local,
+            fast_repaint: needs_fast_repaint,
+        });
+        if self.voice_recording.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
+        } else if eq_ui_active {
+            let delay = self
+                .eq_repaint_next
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(5));
+            ctx.request_repaint_after(delay);
         } else if needs_slow_repaint {
-            // Keep polling background playback/device work, but avoid a full 60 FPS
-            // UI loop when there is no active animation on screen.
-            ctx.request_repaint_after(Duration::from_millis(120));
+            // Keep polling background playback/device work without a full-speed UI loop.
+            ctx.request_repaint_after(UI_SLOW_REPAINT_INTERVAL);
         }
 
         egui::TopBottomPanel::bottom("bottom")

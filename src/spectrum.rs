@@ -26,7 +26,7 @@ use symphonia::core::{
 };
 
 pub use crate::audio::BANDS;
-use crate::audio::{BandAnalyzer, apply_hint, parse_stream_title};
+use crate::audio::{BandAnalyzer, LevelPublisher, apply_hint, parse_stream_title};
 use crate::net::{metadata_interval, stream_client, stream_headers};
 /// Streaming FFT levels consumed by the UI at display refresh rate.
 pub struct SpectrumAnalyzer {
@@ -272,6 +272,7 @@ fn analyze_stream(
 
     let mut bands = BandAnalyzer::new();
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut level_publish = LevelPublisher::new();
 
     let wall_start = Instant::now();
     let mut samples_done: u64 = 0;
@@ -304,7 +305,7 @@ fn analyze_stream(
         let frames = push_mono(&decoded, &mut sample_buf, &mut mono);
         samples_done += frames as u64;
         if let Some(values) = bands.push_mono(mono, sample_rate) {
-            *levels.lock() = values;
+            level_publish.publish_limited(values, |values| *levels.lock() = values);
         }
 
         // Don't outpace realtime — otherwise 100% CPU on a buffered stream.
@@ -368,30 +369,44 @@ fn analyze_pcm_stream(
     let mut bands = BandAnalyzer::new();
     let mut buf = vec![0u8; 16 * 1024];
     let mut pending = Vec::new();
+    let mut mono = Vec::with_capacity(8192);
+    let mut level_publish = LevelPublisher::new();
     while !stop.load(Ordering::SeqCst) {
-        let n = match resp.read(&mut buf) {
-            Ok(0) => return Err("eof".into()),
-            Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e.to_string()),
+        let n = {
+            let _read = crate::profile::scoped("pcm_read");
+            match resp.read(&mut buf) {
+                Ok(0) => return Err("eof".into()),
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.to_string()),
+            }
         };
-        pending.extend_from_slice(&buf[..n]);
+        {
+            let _pending = crate::profile::scoped("pcm_pending");
+            pending.extend_from_slice(&buf[..n]);
+        }
         let complete = pending.len() / 2 * 2;
         if complete == 0 {
             continue;
         }
-        let mut mono = Vec::with_capacity(complete / (2 * channels.max(1)));
-        for frame in pending[..complete].chunks_exact(2 * channels) {
-            let mut sum = 0.0f32;
-            for sample in frame.chunks_exact(2).take(channels) {
-                let value = i16::from_le_bytes([sample[0], sample[1]]);
-                sum += f32::from(value) / f32::from(i16::MAX);
+        {
+            let _mono = crate::profile::scoped("pcm_mono");
+            mono.clear();
+            for frame in pending[..complete].chunks_exact(2 * channels) {
+                let mut sum = 0.0f32;
+                for sample in frame.chunks_exact(2).take(channels) {
+                    let value = i16::from_le_bytes([sample[0], sample[1]]);
+                    sum += f32::from(value) / f32::from(i16::MAX);
+                }
+                mono.push(sum / channels as f32);
             }
-            mono.push(sum / channels as f32);
+            pending.drain(..complete);
         }
-        pending.drain(..complete);
-        if let Some(values) = bands.push_mono(mono, sample_rate) {
-            *levels.lock() = values;
+        if let Some(values) = {
+            let _fft = crate::profile::scoped("pcm_fft");
+            bands.push_mono(std::mem::take(&mut mono), sample_rate)
+        } {
+            level_publish.publish_limited(values, |values| *levels.lock() = values);
         }
     }
     Err("stopped".into())
@@ -408,6 +423,7 @@ fn analyze_opus_stream(
     let mut pcm = vec![0i16; 5760 * 2];
     let mut bands = BandAnalyzer::new();
     let mut mono = Vec::with_capacity(5760);
+    let mut level_publish = LevelPublisher::new();
     while !stop.load(Ordering::SeqCst) {
         let packet = match reader.read_packet(stop)? {
             Some(packet) => packet,
@@ -430,7 +446,7 @@ fn analyze_opus_stream(
             mono.push((l + r) * 0.5);
         }
         if let Some(values) = bands.push_mono(std::mem::take(&mut mono), 48_000.0) {
-            *levels.lock() = values;
+            level_publish.publish_limited(values, |values| *levels.lock() = values);
         }
     }
     Err("stopped".into())

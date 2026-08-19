@@ -735,6 +735,7 @@ fn run_feeder_opus_wav(
     let mut decoder = OpusDecoder::new(sample_rate, ropus_channels(channels)?)
         .map_err(|e| format!("opus decoder: {e}"))?;
     let mut pcm = vec![0i16; 5760 * usize::from(channels)];
+    let mut pcm_bytes = Vec::with_capacity(pcm.len() * 2);
     while !stop.load(Ordering::SeqCst) {
         let packet = match reader.read_packet(stop)? {
             Some(packet) => packet,
@@ -751,11 +752,11 @@ fn run_feeder_opus_wav(
             continue;
         }
         let frames = samples * usize::from(channels);
-        let bytes = pcm[..frames]
-            .iter()
-            .flat_map(|sample| sample.to_le_bytes())
-            .collect::<Vec<u8>>();
-        fanout.push(&bytes);
+        pcm_bytes.clear();
+        for sample in &pcm[..frames] {
+            pcm_bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        fanout.push(&pcm_bytes);
     }
     Err("stopped".into())
 }

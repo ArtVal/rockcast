@@ -66,11 +66,17 @@ impl StreamObservers {
 
     pub fn start(&mut self, url: String, eq_enabled: bool, relay_url: Option<&str>) {
         self.stop();
-        let title_tx = (relay_url != Some(url.as_str())).then(|| self.title_tx.clone());
+        let relay_tap = url.ends_with("/tap");
         if eq_enabled {
+            let title_tx = (!relay_tap && relay_url != Some(url.as_str()))
+                .then(|| self.title_tx.clone());
             self.spectrum.start(url, title_tx);
-        } else if let Some(tx) = title_tx {
-            self.icy.start(url, tx);
+        } else if !relay_tap {
+            // Relay /tap has no ICY metadata — title comes from StreamRelay upstream.
+            let title_tx = (relay_url != Some(url.as_str())).then(|| self.title_tx.clone());
+            if let Some(tx) = title_tx {
+                self.icy.start(url, tx);
+            }
         }
     }
 

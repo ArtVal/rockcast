@@ -79,6 +79,7 @@ impl Drop for IcyWatcher {
 }
 
 fn listen_once(url: &str, tx: &mpsc::Sender<String>, stop: &AtomicBool) -> Result<(), String> {
+    crate::profile::bump("icy_connect");
     if stop.load(Ordering::SeqCst) {
         return Err("stopped".into());
     }

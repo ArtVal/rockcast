@@ -25,7 +25,7 @@ use symphonia::core::{
 use thiserror::Error;
 
 use crate::{
-    audio::{BandAnalyzer, apply_hint, parse_stream_title},
+    audio::{BandAnalyzer, LevelPublisher, apply_hint, parse_stream_title},
     net::{metadata_interval, stream_client, stream_headers},
     spectrum::BANDS,
 };
@@ -607,6 +607,7 @@ fn decode_into_ring(
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
     let mut bands = spectrum_enabled.then(BandAnalyzer::new);
+    let mut level_publish = spectrum_enabled.then(LevelPublisher::new);
     let wall_start = Instant::now();
     let mut samples_done: u64 = 0;
 
@@ -657,8 +658,10 @@ fn decode_into_ring(
             let mono = interleaved
                 .chunks(channels)
                 .map(|frame| frame.iter().sum::<f32>() / channels as f32);
-            if let Some(values) = bands.push_mono(mono, sample_rate as f32) {
-                *levels.lock() = values;
+            if let Some(values) = bands.push_mono(mono, sample_rate as f32)
+                && let Some(publisher) = level_publish.as_mut()
+            {
+                publisher.publish_limited(values, |values| *levels.lock() = values);
             }
         }
 
