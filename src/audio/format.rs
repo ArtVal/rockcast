@@ -207,4 +207,13 @@ mod tests {
             StreamFormat::AacAdts
         );
     }
+
+    #[test]
+    fn somafm_like_sync_with_audio_aac_content_type() {
+        let peek = [0xFF, 0xF9, 0x5C, 0x80];
+        assert_eq!(
+            infer_stream_format("https://ice4.somafm.com/metal-128-aac", "audio/aac", &peek),
+            StreamFormat::AacAdts
+        );
+    }
 }

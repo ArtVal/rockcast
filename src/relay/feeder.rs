@@ -18,12 +18,11 @@ use crate::{
     net::{metadata_interval, stream_client, stream_headers},
 };
 
-use super::fanout::{Fanout, RING_MAX};
+use super::fanout::Fanout;
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const READ_POLL: Duration = Duration::from_millis(200);
 const BUF: usize = 16 * 1024;
-const FANOUT_HIGH_WATER: usize = RING_MAX - 512 * 1024;
 
 pub fn run_feeder_passthrough(url: &str, fanout: &Fanout, stop: &AtomicBool) -> Result<(), String> {
     let headers = stream_headers(false);
@@ -127,19 +126,12 @@ pub fn run_feeder_transcode(
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut spectrum = SpectrumTap::new(fanout.levels());
-    let fan_push = Arc::clone(&fanout);
-    let stop_push = Arc::clone(&stop);
     run_live_decode_relay_pcm(
         url,
         &stop,
         &mut spectrum,
-        move |chunk| {
-            while fan_push.buffered_bytes() > FANOUT_HIGH_WATER && !stop_push.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(2));
-            }
-            fan_push.push(chunk);
-        },
-        move |rate, ch| fanout.set_pcm_format(rate, ch),
+        |chunk| fanout.push(chunk),
+        |rate, ch| fanout.set_pcm_format(rate, ch),
     )
 }
 

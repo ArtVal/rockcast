@@ -1,5 +1,6 @@
 //! Unified live internet-radio decode: one path for local speakers and relay.
 
+mod adts;
 mod local;
 mod open;
 mod relay;

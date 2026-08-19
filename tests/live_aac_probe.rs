@@ -1,18 +1,14 @@
 //! Live probe for AAC+ decode quality (manual: `cargo test live_aac -- --ignored --nocapture`).
 
 use std::{
-    io::Read,
     sync::{
         Arc,
-        atomic::AtomicBool,
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use rockcast::audio::decode::icy::IcyStreamReader;
-use rockcast::audio::decode::aac::AdtsPcmDecoder;
-use rockcast::audio::format::{infer_stream_format, read_format_peek, PrefixedReader};
-use rockcast::net::{metadata_interval, stream_client, stream_headers};
+use rockcast::audio::decode::run_live_decode_f32;
 
 fn stats(samples: &[f32]) -> (f64, f64, usize) {
     let mut sum_sq = 0.0f64;
@@ -36,64 +32,51 @@ fn stats(samples: &[f32]) -> (f64, f64, usize) {
 fn live_aac_fdk_decode_is_sane() {
     let url = "https://stream.rockantenne.de/heavy-metal/stream/aacp";
     let stop = Arc::new(AtomicBool::new(false));
-    let client = stream_client(Duration::from_secs(15), None).expect("client");
-    let resp = client
-        .get(url)
-        .headers(stream_headers(false))
-        .send()
-        .expect("http");
-    assert!(resp.status().is_success(), "HTTP {}", resp.status());
+    let src_rate = Arc::new(AtomicU32::new(0));
+    let src_ch = Arc::new(AtomicU32::new(2));
+    let ring: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ring_push = Arc::clone(&ring);
+    let stop_push = Arc::clone(&stop);
 
-    let ct = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/aac")
-        .to_string();
-    let meta_int = metadata_interval(resp.headers());
-    eprintln!("icy-metaint={meta_int}");
-    let mut reader: Box<dyn Read> = Box::new(IcyStreamReader::new(
-        resp,
-        meta_int,
-        Arc::clone(&stop),
-        None,
-    ));
-    let peek = read_format_peek(&mut reader, 8192, &stop).expect("peek");
-    let format = infer_stream_format(url, &ct, &peek);
-    assert_eq!(format, rockcast::audio::format::StreamFormat::AacAdts);
+    let src_rate_wait = Arc::clone(&src_rate);
+    let src_ch_wait = Arc::clone(&src_ch);
+    let decode = std::thread::spawn({
+        let url = url.to_string();
+        move || {
+            run_live_decode_f32(
+                &url,
+                &stop_push,
+                None,
+                None,
+                src_rate,
+                src_ch,
+                move |pcm| {
+                    ring_push.lock().unwrap().extend_from_slice(pcm);
+                },
+            )
+        }
+    });
 
-    let mut prefixed = PrefixedReader::new(peek, reader);
-    let mut decoder = AdtsPcmDecoder::new();
-    let mut all = Vec::new();
-    let mut errors = 0usize;
-    let mut buf = vec![0u8; 16 * 1024];
     let deadline = Instant::now() + Duration::from_secs(8);
-
     while Instant::now() < deadline {
-        let n = prefixed.read(&mut buf).expect("read");
-        if n == 0 {
+        let rate = src_rate_wait.load(Ordering::SeqCst);
+        let ch = src_ch_wait.load(Ordering::SeqCst).max(1) as usize;
+        if rate > 0 && ring.lock().unwrap().len() > rate as usize * ch * 2 {
             break;
         }
-        match decoder.push_f32(&buf[..n]) {
-            Ok(frames) => {
-                for frame in frames {
-                    all.extend(frame);
-                }
-            }
-            Err(_) => errors += 1,
-        }
-        if all.len() > 22050 * 2 * 3 {
-            break;
-        }
+        std::thread::sleep(Duration::from_millis(20));
     }
+    stop.store(true, Ordering::SeqCst);
+    let _ = decode.join();
 
-    assert!(all.len() > 22050, "too few samples: {}", all.len());
+    let all = ring.lock().unwrap().clone();
+    assert!(all.len() > 22_050, "too few samples: {}", all.len());
     let (rms, peak, bad) = stats(&all);
     eprintln!(
-        "fdk AAC: samples={} rate={:?} ch={:?} rms={rms:.4} peak={peak:.4} bad={bad} errors={errors}",
+        "libfdk AAC: samples={} rate={} ch={} rms={rms:.4} peak={peak:.4} bad={bad}",
         all.len(),
-        decoder.sample_rate(),
-        decoder.channels()
+        src_rate_wait.load(Ordering::SeqCst),
+        src_ch_wait.load(Ordering::SeqCst),
     );
     assert!(bad == 0, "non-finite samples");
     assert!(peak < 1.5, "peak too high — likely garbage decode");
@@ -103,12 +86,7 @@ fn live_aac_fdk_decode_is_sane() {
 #[test]
 #[ignore = "uses live rockantenne aacp stream"]
 fn live_aac_resample_output_is_sane() {
-    use std::sync::{
-        atomic::{AtomicU32, Ordering},
-        Mutex,
-    };
-
-    use rockcast::audio::decode::run_live_decode_f32;
+    use std::sync::Mutex;
 
     let url = "https://stream.rockantenne.de/heavy-metal/stream/aacp";
     let stop = Arc::new(AtomicBool::new(false));
@@ -191,4 +169,61 @@ fn live_aac_resample_output_is_sane() {
     );
     assert!(bad == 0);
     assert!(peak < 1.5 && rms > 0.001 && rms < 0.5);
+}
+
+#[test]
+#[ignore = "uses live somafm aac stream"]
+fn live_somafm_aac_decode_is_sane() {
+    let url = "https://ice4.somafm.com/metal-128-aac";
+    let stop = Arc::new(AtomicBool::new(false));
+    let src_rate = Arc::new(AtomicU32::new(0));
+    let src_ch = Arc::new(AtomicU32::new(2));
+    let ring: Arc<std::sync::Mutex<Vec<f32>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ring_push = Arc::clone(&ring);
+    let stop_push = Arc::clone(&stop);
+
+    let src_rate_wait = Arc::clone(&src_rate);
+    let src_ch_wait = Arc::clone(&src_ch);
+    let decode = std::thread::spawn({
+        let url = url.to_string();
+        move || {
+            run_live_decode_f32(
+                &url,
+                &stop_push,
+                None,
+                None,
+                src_rate,
+                src_ch,
+                move |pcm| {
+                    ring_push.lock().unwrap().extend_from_slice(pcm);
+                },
+            )
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        let rate = src_rate_wait.load(Ordering::SeqCst);
+        let ch = src_ch_wait.load(Ordering::SeqCst).max(1) as usize;
+        if rate > 0 && ring.lock().unwrap().len() > rate as usize * ch * 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::SeqCst);
+    let decode_err = decode.join().unwrap();
+    assert!(decode_err.is_err(), "expected stopped, got {decode_err:?}");
+
+    let all = ring.lock().unwrap().clone();
+    assert!(all.len() > 22_050, "too few samples: {}", all.len());
+    let (rms, peak, bad) = stats(&all);
+    eprintln!(
+        "SomaFM AAC: samples={} rate={} ch={} rms={rms:.4} peak={peak:.4} bad={bad}",
+        all.len(),
+        src_rate_wait.load(Ordering::SeqCst),
+        src_ch_wait.load(Ordering::SeqCst),
+    );
+    assert!(bad == 0, "non-finite samples");
+    assert!(peak < 1.5, "peak too high — likely garbage decode");
+    assert!(rms > 0.001 && rms < 0.5, "rms {rms} out of music-like range");
 }

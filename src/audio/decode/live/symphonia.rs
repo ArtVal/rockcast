@@ -19,9 +19,13 @@ use symphonia::core::{
     probe::Hint,
 };
 
-use crate::audio::{
-    format::apply_hint,
-    spectrum::SpectrumTap,
+use crate::{
+    audio::{
+        decode::{codecs, probe},
+        format::{apply_format_hint, infer_stream_format, StreamFormat},
+        spectrum::SpectrumTap,
+    },
+    playback_diag,
 };
 
 use super::relay::{relay_emit_pcm, RelayEmitCtx};
@@ -53,6 +57,10 @@ pub(super) fn decode_symphonia_f32(
     src_rate: Arc<std::sync::atomic::AtomicU32>,
     src_ch: Arc<std::sync::atomic::AtomicU32>,
 ) -> Result<(), String> {
+    let stream_format = infer_stream_format(url, content_type, &peek);
+    let mut hint = Hint::new();
+    apply_format_hint(&mut hint, stream_format);
+
     let mss = MediaSourceStream::new(
         Box::new(PrefixedMediaSource {
             peek,
@@ -61,10 +69,8 @@ pub(super) fn decode_symphonia_f32(
         }),
         Default::default(),
     );
-    let mut hint = Hint::new();
-    apply_hint(&mut hint, url, content_type, &[]);
 
-    let probed = symphonia::default::get_probe()
+    let probed = select_probe(stream_format)
         .format(
             &hint,
             mss,
@@ -81,17 +87,8 @@ pub(super) fn decode_symphonia_f32(
         .ok_or_else(|| "no audio track".to_string())?
         .clone();
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(2)
-        .max(1);
-    src_rate.store(sample_rate, Ordering::SeqCst);
-    src_ch.store(channels as u32, Ordering::SeqCst);
 
-    let mut decoder = symphonia::default::get_codecs()
+    let mut decoder = codecs::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| e.to_string())?;
 
@@ -108,9 +105,17 @@ pub(super) fn decode_symphonia_f32(
             Err(e) => return Err(e.to_string()),
         };
         let interleaved = copy_interleaved(&decoded, &mut sample_buf);
+        let spec = *decoded.spec();
+        let sample_rate = spec.rate;
+        let channels = spec.channels.count().max(1);
+        if src_rate.load(Ordering::SeqCst) == 0 {
+            src_rate.store(sample_rate, Ordering::SeqCst);
+            src_ch.store(channels as u32, Ordering::SeqCst);
+        }
         if let Some(state) = spectrum_state.as_mut() {
             state.push_pcm(interleaved, channels, sample_rate);
         }
+        playback_diag::decode_pcm(interleaved.len());
         push_pcm(interleaved);
     }
     Err("stopped".into())
@@ -130,6 +135,10 @@ pub(super) fn decode_symphonia_relay(
     smoother: &mut crate::audio::decode::pcm::PcmSmoother,
     format_set: &mut bool,
 ) -> Result<(), String> {
+    let stream_format = infer_stream_format(url, content_type, &peek);
+    let mut hint = Hint::new();
+    apply_format_hint(&mut hint, stream_format);
+
     let mss = MediaSourceStream::new(
         Box::new(PrefixedMediaSource {
             peek,
@@ -138,10 +147,8 @@ pub(super) fn decode_symphonia_relay(
         }),
         Default::default(),
     );
-    let mut hint = Hint::new();
-    apply_hint(&mut hint, url, content_type, &[]);
 
-    let probed = symphonia::default::get_probe()
+    let probed = select_probe(stream_format)
         .format(
             &hint,
             mss,
@@ -158,15 +165,8 @@ pub(super) fn decode_symphonia_relay(
         .ok_or_else(|| "no audio track".to_string())?
         .clone();
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(2)
-        .max(1) as u16;
 
-    let mut decoder = symphonia::default::get_codecs()
+    let mut decoder = codecs::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| e.to_string())?;
 
@@ -183,6 +183,13 @@ pub(super) fn decode_symphonia_relay(
             Err(e) => return Err(e.to_string()),
         };
         let interleaved = copy_interleaved(&decoded, &mut sample_buf);
+        if interleaved.is_empty() {
+            continue;
+        }
+        let spec = *decoded.spec();
+        let sample_rate = spec.rate;
+        let channels = spec.channels.count().max(1) as u16;
+        playback_diag::decode_pcm(interleaved.len());
         relay_emit_pcm(
             interleaved,
             sample_rate,
@@ -199,6 +206,13 @@ pub(super) fn decode_symphonia_relay(
         );
     }
     Ok(())
+}
+
+fn select_probe(format: StreamFormat) -> &'static symphonia::core::probe::Probe {
+    match format {
+        StreamFormat::AacAdts => probe::adts_only(),
+        _ => symphonia::default::get_probe(),
+    }
 }
 
 fn next_packet(

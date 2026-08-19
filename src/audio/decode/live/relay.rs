@@ -1,30 +1,22 @@
 //! Relay transcode: decode once, push smoothed 16-bit PCM for Cast feeder.
 
-use std::{
-    io::Read,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Instant,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
 
-use crate::{
-    audio::{
-        decode::{
-            aac::AdtsPcmDecoder,
-            opus::LiveOggOpusReader,
-            pcm::{CastPcmResampler, PcmSmoother, cast_pcm_rate},
-        },
-        format::{infer_stream_format, PrefixedReader, StreamFormat},
-        spectrum::SpectrumTap,
+use crate::audio::{
+    decode::{
+        opus::LiveOggOpusReader,
+        pcm::{CastPcmResampler, PcmSmoother, cast_pcm_rate},
     },
-    playback_diag,
+    format::{infer_stream_format, PrefixedReader, StreamFormat},
+    spectrum::SpectrumTap,
 };
 
-use super::{open::open_icy_reader, symphonia::decode_symphonia_relay};
+use super::{open::open_icy_reader, adts::decode_fdk_adts_relay, symphonia::decode_symphonia_relay};
 
 pub(super) struct RelayEmitCtx<'a> {
     pub format_set: &'a mut bool,
@@ -88,42 +80,6 @@ pub fn run_live_decode_relay_pcm(
     let mut pcm_bytes = Vec::with_capacity(8192);
 
     match format {
-        StreamFormat::AacAdts => {
-            let mut decoder = AdtsPcmDecoder::new();
-            let mut prefixed = PrefixedReader::new(peek, reader);
-            let mut buf = vec![0u8; 16 * 1024];
-            let mut last_read = Instant::now();
-            while !stop.load(Ordering::SeqCst) {
-                let n = prefixed.read(&mut buf).map_err(|e| e.to_string())?;
-                playback_diag::http_read(last_read.elapsed(), n);
-                last_read = Instant::now();
-                if n == 0 {
-                    return Err("eof".into());
-                }
-                let frames = decoder.push_f32(&buf[..n]).map_err(|e| e.to_string())?;
-                if frames.is_empty() {
-                    continue;
-                }
-                let rate = decoder.sample_rate().unwrap_or(44_100);
-                let ch = decoder.channels().unwrap_or(2).max(1);
-                for frame in &frames {
-                    relay_emit_pcm(
-                        frame,
-                        rate,
-                        ch,
-                        RelayEmitCtx {
-                            format_set: &mut format_set,
-                            resampler: &mut resampler,
-                            smoother: &mut smoother,
-                            pcm_bytes: &mut pcm_bytes,
-                        },
-                        spectrum,
-                        &mut on_format,
-                        &mut push,
-                    );
-                }
-            }
-        }
         StreamFormat::OpusOgg => {
             let mut reader = LiveOggOpusReader::new(PrefixedReader::new(peek, reader));
             let mut decoder = OpusDecoder::new(48_000, OpusChannels::Stereo)
@@ -157,6 +113,20 @@ pub fn run_live_decode_relay_pcm(
                     &mut push,
                 );
             }
+        }
+        StreamFormat::AacAdts => {
+            decode_fdk_adts_relay(
+                peek,
+                reader,
+                stop,
+                spectrum,
+                &mut pcm_bytes,
+                &mut push,
+                &mut on_format,
+                &mut resampler,
+                &mut smoother,
+                &mut format_set,
+            )?;
         }
         _ => {
             decode_symphonia_relay(

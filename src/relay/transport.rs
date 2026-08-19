@@ -3,6 +3,7 @@ pub enum TranscodeKind {
     Opus,
     AacAdts,
     Mp3,
+    Symphonia,
 }
 
 #[derive(Clone)]
@@ -45,6 +46,20 @@ pub fn choose_transport(preferred_content_type: &str, upstream_url: &str) -> Rel
     {
         RelayTransport::WavPcm {
             kind: TranscodeKind::Mp3,
+            sample_rate: 48_000,
+            channels: 2,
+        }
+    } else if ct.contains("ogg")
+        || ct.contains("vorbis")
+        || ct.contains("flac")
+        || ct.contains("wav")
+        || ct.contains("wave")
+        || url.ends_with(".flac")
+        || url.contains(".flac?")
+        || url.contains("flac")
+    {
+        RelayTransport::WavPcm {
+            kind: TranscodeKind::Symphonia,
             sample_rate: 48_000,
             channels: 2,
         }

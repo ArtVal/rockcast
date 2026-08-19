@@ -305,6 +305,23 @@ mod tests {
     }
 
     #[test]
+    fn flac_stream_uses_wav_transport() {
+        match choose_transport("audio/ogg", "http://x/bdpstrock_FLAC") {
+            RelayTransport::WavPcm {
+                kind: TranscodeKind::Symphonia,
+                sample_rate,
+                channels,
+            } => {
+                assert_eq!(sample_rate, 48_000);
+                assert_eq!(channels, 2);
+            }
+            RelayTransport::WavPcm { .. } | RelayTransport::Passthrough { .. } => {
+                panic!("expected symphonia wav transcode")
+            }
+        }
+    }
+
+    #[test]
     fn wav_header_looks_valid() {
         let header = wav_live_header(48_000, 2);
         assert_eq!(&header[0..4], b"RIFF");

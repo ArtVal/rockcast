@@ -1,31 +1,21 @@
 //! Local f32 decode path (speakers + optional spectrum tap).
 
-use std::{
-    io::Read,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU32, Ordering},
-        mpsc,
-    },
-    time::Instant,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
+    mpsc,
 };
 
 use parking_lot::Mutex;
 use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
 
-use crate::{
-    audio::{
-        decode::{
-            aac::AdtsPcmDecoder,
-            opus::LiveOggOpusReader,
-        },
-        format::{infer_stream_format, PrefixedReader, StreamFormat},
-        spectrum::BANDS,
-    },
-    playback_diag,
+use crate::audio::{
+    decode::opus::LiveOggOpusReader,
+    format::{infer_stream_format, PrefixedReader, StreamFormat},
+    spectrum::BANDS,
 };
 
-use super::{open::open_icy_reader, symphonia::{decode_symphonia_f32, SpectrumState}};
+use super::{open::open_icy_reader, adts::{decode_fdk_adts_f32}, symphonia::{decode_symphonia_f32, SpectrumState}};
 
 /// Local playback: decode once, push interleaved f32, optional spectrum on same PCM.
 pub fn run_live_decode_f32(
@@ -53,35 +43,11 @@ pub fn run_live_decode_f32(
         if let Some(state) = spectrum_state.as_mut() {
             state.push_pcm(pcm, ch as usize, rate);
         }
-        playback_diag::decode_pcm(pcm.len());
         push_pcm(pcm);
         Ok(())
     };
 
     match format {
-        StreamFormat::AacAdts => {
-            let mut decoder = AdtsPcmDecoder::new();
-            let mut prefixed = PrefixedReader::new(peek, reader);
-            let mut buf = vec![0u8; 16 * 1024];
-            let mut last_read = Instant::now();
-            while !stop.load(Ordering::SeqCst) {
-                let n = prefixed.read(&mut buf).map_err(|e| e.to_string())?;
-                playback_diag::http_read(last_read.elapsed(), n);
-                last_read = Instant::now();
-                if n == 0 {
-                    return Err("eof".into());
-                }
-                let frames = decoder.push_f32(&buf[..n]).map_err(|e| e.to_string())?;
-                if frames.is_empty() {
-                    continue;
-                }
-                let rate = decoder.sample_rate().unwrap_or(44_100);
-                let ch = decoder.channels().unwrap_or(2).max(1);
-                for frame in &frames {
-                    push_frame(frame, rate, ch)?;
-                }
-            }
-        }
         StreamFormat::OpusOgg => {
             src_rate.store(48_000, Ordering::SeqCst);
             src_ch.store(2, Ordering::SeqCst);
@@ -104,6 +70,17 @@ pub fn run_live_decode_f32(
                     .collect();
                 push_frame(&pcm_f32, 48_000, 2)?;
             }
+        }
+        StreamFormat::AacAdts => {
+            decode_fdk_adts_f32(
+                peek,
+                reader,
+                stop,
+                &mut push_pcm,
+                spectrum_state,
+                src_rate,
+                src_ch,
+            )?;
         }
         _ => {
             decode_symphonia_f32(
