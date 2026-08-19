@@ -10,20 +10,22 @@ Desktop **internet radio** app (Windows + Linux): egui UI, local cpal playback (
 
 | Task | Primary files | Avoid |
 |------|---------------|--------|
-| UI layout / controls | `src/app.rs` | Putting network I/O on the UI thread |
-| Playback state / orchestration | `src/playback.rs` | Moving Cast/local/relay control back into `app.rs` |
+| UI layout / controls | `src/app/ui/*.rs`, `src/app/theme.rs` | Putting network I/O on the UI thread |
+| UI actions (play/stop/scan) | `src/app/actions/` | Moving orchestration out of `playback/` |
+| Playback state / orchestration | `src/playback/` | Moving Cast/local/relay control back into `app/` |
 | Background jobs / shutdown | `src/runtime.rs` | Unbounded app-level `thread::spawn` |
-| ICY / spectrum lifecycle | `src/observers.rs` | Owning observer threads from the UI |
+| ICY / spectrum lifecycle | `src/observers/` | Owning observer threads from the UI |
 | i18n strings | `src/i18n.rs` | Hardcoding user-visible RU/EN in other modules |
-| PC audio bugs | `src/local.rs` | Holding UI while dropping `cpal::Stream` |
-| Cast play/stop/volume | `src/cast/client.rs` | Outer `Mutex` around whole `play()` |
-| Cast TLS/framing | `src/cast/channel.rs` | Blocking reads without cancel/timeout |
-| Cast discovery / VPN | `src/cast/discovery.rs` | Assuming mDNS alone is enough |
+| PC audio bugs | `src/local/` | Holding UI while dropping `cpal::Stream` |
+| Cast play/stop/volume | `src/cast/client/` | Outer `Mutex` around whole `play()` |
+| Cast TLS/framing | `src/cast/channel/` | Blocking reads without cancel/timeout |
+| Cast discovery / VPN | `src/cast/discovery/` | Assuming mDNS alone is enough |
 | Protobuf wire format | `src/cast/proto.rs` | Treating `proto/*.proto` as codegen input |
-| Station list | `src/stations.rs`, `stations.txt` | Blocking UI on Radio Browser |
+| Station list | `src/stations/`, `stations.txt` | Blocking UI on Radio Browser |
 | Settings / log path | `src/settings.rs`, `src/main.rs` | |
-| Cast LAN relay (VPN→JBL) | `src/relay.rs`, `src/app.rs` | Advertising a VPN interface IP to Cast |
-| Spectrum / ICY for Cast | `src/spectrum.rs`, `src/icy.rs` | |
+| Cast LAN relay (VPN→JBL) | `src/relay/`, `src/app/actions/playback.rs` | Advertising a VPN interface IP to Cast |
+| Spectrum / ICY for Cast | `src/observers/{icy,spectrum}.rs` | |
+| Voice / RockServer | `src/voice/`, `src/rockserver.rs` | Blocking UI on WebSocket / mic I/O |
 
 ## Hard invariants (do not break)
 
@@ -34,7 +36,7 @@ Desktop **internet radio** app (Windows + Linux): egui UI, local cpal playback (
 5. **Error messages in `thiserror` / `Err(String)` are English.** UI copy stays in `i18n.rs`.
 6. **Release exit:** `shutdown_playback` then `std::process::exit(0)` so orphaned HTTP threads cannot hang the process.
 7. **Cast relay advertise IP** must be a real LAN NIC near the speaker — never a VPN/tunnel address.
-8. **App-level blocking jobs use `BackgroundRuntime`;** do not add fire-and-forget threads to `app.rs`.
+8. **App-level blocking jobs use `BackgroundRuntime`;** do not add fire-and-forget threads to `app/`.
 
 ## Known footguns (from production bugs)
 

@@ -98,6 +98,6 @@ Exit → shutdown_playback (local.stop + timed cast.stop) → process::exit(0)
 | Mode | Titles | Spectrum |
 |------|--------|----------|
 | Local | ICY inside `LocalPlayer` decode (`title_tx`) | FFT in decode thread → `LocalPlayer::levels` |
-| Cast | `IcyWatcher` HTTP tap after PlayOk | `SpectrumAnalyzer` separate HTTP tap |
+| Cast | `observers::IcyWatcher` HTTP tap after PlayOk | `observers::SpectrumAnalyzer` separate HTTP tap |
 
 Both taps are stopped on station change / stop / error.

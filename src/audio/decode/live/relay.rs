@@ -1,0 +1,180 @@
+//! Relay transcode: decode once, push smoothed 16-bit PCM for Cast feeder.
+
+use std::{
+    io::Read,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
+
+use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
+
+use crate::{
+    audio::{
+        decode::{
+            aac::AdtsPcmDecoder,
+            opus::LiveOggOpusReader,
+            pcm::{CastPcmResampler, PcmSmoother, cast_pcm_rate},
+        },
+        format::{infer_stream_format, PrefixedReader, StreamFormat},
+        spectrum::SpectrumTap,
+    },
+    playback_diag,
+};
+
+use super::{open::open_icy_reader, symphonia::decode_symphonia_relay};
+
+pub(super) struct RelayEmitCtx<'a> {
+    pub format_set: &'a mut bool,
+    pub resampler: &'a mut CastPcmResampler,
+    pub smoother: &'a mut PcmSmoother,
+    pub pcm_bytes: &'a mut Vec<u8>,
+}
+
+pub(super) fn relay_emit_pcm(
+    pcm: &[f32],
+    rate: u32,
+    ch: u16,
+    ctx: RelayEmitCtx<'_>,
+    spectrum: &mut SpectrumTap,
+    on_format: &mut impl FnMut(u32, u16),
+    push: &mut impl FnMut(&[u8]),
+) {
+    if !*ctx.format_set {
+        ctx.resampler.set_format(rate, ch, cast_pcm_rate());
+        ctx.smoother.set_format(cast_pcm_rate(), ch);
+        on_format(cast_pcm_rate(), ch);
+        *ctx.format_set = true;
+    }
+    let out_rate = cast_pcm_rate();
+    let tap = spectrum as *mut SpectrumTap;
+    let ch_usize = ch as usize;
+    ctx.resampler.push(pcm, |resampled| {
+        ctx.pcm_bytes.clear();
+        ctx.pcm_bytes.reserve(resampled.len() * 2);
+        for sample in resampled {
+            let v = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+            ctx.pcm_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        ctx.smoother.push(ctx.pcm_bytes, |chunk| {
+            // SAFETY: single decode thread; spectrum on fixed 20 ms relay frames.
+            unsafe {
+                (*tap).push_i16_le(chunk, ch_usize, out_rate);
+            }
+            push(chunk);
+        });
+    });
+}
+
+/// Relay transcode: decode once, push smoothed 16-bit PCM; spectrum at 48 kHz.
+pub fn run_live_decode_relay_pcm(
+    url: &str,
+    stop: &Arc<AtomicBool>,
+    spectrum: &mut SpectrumTap,
+    mut push: impl FnMut(&[u8]) + Send,
+    mut on_format: impl FnMut(u32, u16) + Send,
+) -> Result<(), String> {
+    if stop.load(Ordering::SeqCst) {
+        return Err("stopped".into());
+    }
+
+    let (content_type, reader, peek) = open_icy_reader(url, stop, None, true)?;
+    let format = infer_stream_format(url, &content_type, &peek);
+    let mut resampler = CastPcmResampler::new(2);
+    let mut smoother = PcmSmoother::new(cast_pcm_rate(), 2);
+    let mut format_set = false;
+    let mut pcm_bytes = Vec::with_capacity(8192);
+
+    match format {
+        StreamFormat::AacAdts => {
+            let mut decoder = AdtsPcmDecoder::new();
+            let mut prefixed = PrefixedReader::new(peek, reader);
+            let mut buf = vec![0u8; 16 * 1024];
+            let mut last_read = Instant::now();
+            while !stop.load(Ordering::SeqCst) {
+                let n = prefixed.read(&mut buf).map_err(|e| e.to_string())?;
+                playback_diag::http_read(last_read.elapsed(), n);
+                last_read = Instant::now();
+                if n == 0 {
+                    return Err("eof".into());
+                }
+                let frames = decoder.push_f32(&buf[..n]).map_err(|e| e.to_string())?;
+                if frames.is_empty() {
+                    continue;
+                }
+                let rate = decoder.sample_rate().unwrap_or(44_100);
+                let ch = decoder.channels().unwrap_or(2).max(1);
+                for frame in &frames {
+                    relay_emit_pcm(
+                        frame,
+                        rate,
+                        ch,
+                        RelayEmitCtx {
+                            format_set: &mut format_set,
+                            resampler: &mut resampler,
+                            smoother: &mut smoother,
+                            pcm_bytes: &mut pcm_bytes,
+                        },
+                        spectrum,
+                        &mut on_format,
+                        &mut push,
+                    );
+                }
+            }
+        }
+        StreamFormat::OpusOgg => {
+            let mut reader = LiveOggOpusReader::new(PrefixedReader::new(peek, reader));
+            let mut decoder = OpusDecoder::new(48_000, OpusChannels::Stereo)
+                .map_err(|e| format!("opus: {e}"))?;
+            let mut pcm = vec![0i16; 5760 * 2];
+            while !stop.load(Ordering::SeqCst) {
+                let packet = match reader.read_packet(stop)? {
+                    Some(p) => p,
+                    None => return Err("eof".into()),
+                };
+                let samples = decoder.decode(&packet, &mut pcm, DecodeMode::Normal).unwrap_or(0);
+                if samples == 0 {
+                    continue;
+                }
+                let pcm_f32: Vec<f32> = pcm[..samples * 2]
+                    .iter()
+                    .map(|s| f32::from(*s) / f32::from(i16::MAX))
+                    .collect();
+                relay_emit_pcm(
+                    &pcm_f32,
+                    48_000,
+                    2,
+                    RelayEmitCtx {
+                        format_set: &mut format_set,
+                        resampler: &mut resampler,
+                        smoother: &mut smoother,
+                        pcm_bytes: &mut pcm_bytes,
+                    },
+                    spectrum,
+                    &mut on_format,
+                    &mut push,
+                );
+            }
+        }
+        _ => {
+            decode_symphonia_relay(
+                url,
+                &content_type,
+                peek,
+                reader,
+                stop,
+                spectrum,
+                &mut pcm_bytes,
+                &mut push,
+                &mut on_format,
+                &mut resampler,
+                &mut smoother,
+                &mut format_set,
+            )?;
+        }
+    }
+    smoother.flush(|chunk| push(chunk));
+    Err("stopped".into())
+}

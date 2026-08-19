@@ -1,5 +1,8 @@
 //! Playback orchestration independent from egui.
 
+mod phase;
+mod volume;
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -11,60 +14,8 @@ use crate::{
     runtime::BackgroundRuntime, stations::Station,
 };
 
-const VOLUME_CAST_SCALE: f32 = 0.5;
-
-fn cast_volume(percent: u8) -> f32 {
-    (f32::from(percent) / 100.0 * VOLUME_CAST_SCALE).clamp(0.0, VOLUME_CAST_SCALE)
-}
-
-fn local_volume(percent: u8) -> f32 {
-    (f32::from(percent) / 100.0).clamp(0.0, 1.0)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackPhase {
-    Idle,
-    Opening { generation: u64, local: bool },
-    Playing { generation: u64, local: bool },
-    Stopping { generation: u64 },
-    Failed { generation: u64 },
-}
-
-impl PlaybackPhase {
-    pub fn generation(self) -> Option<u64> {
-        match self {
-            Self::Idle => None,
-            Self::Opening { generation, .. }
-            | Self::Playing { generation, .. }
-            | Self::Stopping { generation }
-            | Self::Failed { generation } => Some(generation),
-        }
-    }
-}
-
-pub enum PlaybackEvent {
-    Status {
-        text: String,
-        generation: u64,
-    },
-    Title {
-        title: String,
-        generation: u64,
-    },
-    PlayOk {
-        url: String,
-        tap_url: Option<String>,
-        generation: u64,
-        local: bool,
-    },
-    StopOk {
-        generation: u64,
-    },
-    Error {
-        message: String,
-        generation: u64,
-    },
-}
+pub use phase::{PlaybackEvent, PlaybackPhase};
+use volume::{cast_volume, local_volume};
 
 pub struct PlaybackController {
     cast: Arc<CastService>,
@@ -405,6 +356,7 @@ impl Default for PlaybackController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn phase_exposes_generation() {

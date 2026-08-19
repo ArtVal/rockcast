@@ -1,34 +1,33 @@
 //! High-level CASTV2: CONNECT → LAUNCH DMR → LOAD live stream.
 
+mod error;
+mod media;
+mod session;
+
 use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use parking_lot::Mutex;
 use serde_json::json;
-use thiserror::Error;
+
+pub use error::CastError;
+use media::{candidate_content_types, classify_media_status};
+use session::{parse_dmr, AppSession, LiveSession, LoadProgress};
 
 use super::{
     channel::{
         CastChannel, ChannelError, DEFAULT_MEDIA_RECEIVER, NS_CONNECTION, NS_MEDIA, NS_RECEIVER,
         RECEIVER_ID,
     },
-    discovery::{DiscoveredDevice, DiscoveryError, discover, discover_streaming},
+    discovery::{discover, discover_streaming, DiscoveredDevice},
     proto::Payload,
 };
-
-#[derive(Debug, Error)]
-pub enum CastError {
-    #[error(transparent)]
-    Discovery(#[from] DiscoveryError),
-    #[error(transparent)]
-    Channel(#[from] ChannelError),
-}
 
 #[derive(Clone)]
 pub struct CastDeviceInfo {
@@ -38,48 +37,6 @@ pub struct CastDeviceInfo {
 impl CastDeviceInfo {
     pub fn label(&self) -> String {
         self.discovered.label()
-    }
-}
-
-struct LiveSession {
-    channel: Arc<CastChannel>,
-    stop_hb: Arc<AtomicBool>,
-    hb: Option<thread::JoinHandle<()>>,
-    transport_id: String,
-    session_id: String,
-    media_session_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LoadProgress {
-    Pending,
-    Ready(Option<i64>),
-}
-
-impl LiveSession {
-    fn start_heartbeat(channel: Arc<CastChannel>) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_c = Arc::clone(&stop);
-        let ch = Arc::clone(&channel);
-        let hb = thread::spawn(move || {
-            let mut last_ping = Instant::now();
-            while !stop_c.load(Ordering::SeqCst) {
-                if last_ping.elapsed() > Duration::from_secs(5) {
-                    let _ = ch.ping();
-                    last_ping = Instant::now();
-                }
-                let _ = ch.pump_heartbeats();
-                thread::sleep(Duration::from_millis(250));
-            }
-        });
-        (stop, hb)
-    }
-
-    fn stop_heartbeat(&mut self) {
-        self.stop_hb.store(true, Ordering::SeqCst);
-        if let Some(h) = self.hb.take() {
-            let _ = h.join();
-        }
     }
 }
 
@@ -499,174 +456,5 @@ impl CastService {
         })?;
 
         Ok(parse_dmr(&status))
-    }
-}
-
-fn candidate_content_types(content_type: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let normalized = content_type.trim().to_ascii_lowercase();
-    let mut push = |value: &str| {
-        if !value.is_empty() && !out.iter().any(|existing| existing == value) {
-            out.push(value.to_string());
-        }
-    };
-
-    push(&normalized);
-    if normalized.contains("opus") {
-        push("audio/ogg; codecs=opus");
-        push("audio/ogg");
-        push("application/ogg");
-        push("audio/opus");
-    } else if normalized.contains("vorbis") || normalized == "audio/ogg" || normalized == "application/ogg" {
-        push("audio/ogg; codecs=vorbis");
-        push("audio/ogg");
-        push("application/ogg");
-    }
-    if normalized != "audio/mpeg" {
-        push("audio/mpeg");
-    }
-    out
-}
-
-fn classify_media_status(
-    v: &serde_json::Value,
-    req: u32,
-    url: &str,
-) -> Result<LoadProgress, ChannelError> {
-    let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-    let status = v
-        .get("status")
-        .and_then(|s| s.as_array())
-        .and_then(|a| a.first());
-    let Some(st) = status else {
-        return if rid == req {
-            Ok(LoadProgress::Ready(None))
-        } else {
-            Ok(LoadProgress::Pending)
-        };
-    };
-
-    let content_ok = st
-        .pointer("/media/contentId")
-        .and_then(|c| c.as_str())
-        .is_some_and(|c| c == url);
-    if rid != req && !content_ok {
-        return Ok(LoadProgress::Pending);
-    }
-
-    let state = st
-        .get("playerState")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
-    let idle_reason = st
-        .get("idleReason")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
-    let mid = st.get("mediaSessionId").and_then(|m| m.as_i64());
-    log::info!(
-        "Cast LOAD status: state={} idleReason={} content_ok={} requestId={}",
-        state,
-        idle_reason,
-        content_ok,
-        rid
-    );
-
-    match state {
-        "BUFFERING" | "PLAYING" | "PAUSED" => Ok(LoadProgress::Ready(mid)),
-        "IDLE" if matches!(idle_reason, "ERROR" | "CANCELLED" | "INTERRUPTED" | "FINISHED") => {
-            Err(ChannelError::Msg(format!(
-                "Cast LOAD stalled in IDLE ({idle_reason})"
-            )))
-        }
-        "IDLE" | "" => Ok(LoadProgress::Pending),
-        _ => Ok(LoadProgress::Pending),
-    }
-}
-
-#[derive(Clone)]
-struct AppSession {
-    transport_id: String,
-    session_id: String,
-}
-
-fn parse_dmr(v: &serde_json::Value) -> Option<AppSession> {
-    let apps = v.pointer("/status/applications")?.as_array()?;
-    for app in apps {
-        let app_id = app.get("appId")?.as_str()?;
-        if app_id == DEFAULT_MEDIA_RECEIVER {
-            return Some(AppSession {
-                transport_id: app.get("transportId")?.as_str()?.to_string(),
-                session_id: app.get("sessionId")?.as_str()?.to_string(),
-            });
-        }
-    }
-    for app in apps {
-        let namespaces = app
-            .get("namespaces")
-            .and_then(|n| n.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let has_media = namespaces.iter().any(|n| {
-            n.get("name")
-                .and_then(|x| x.as_str())
-                .is_some_and(|s| s == NS_MEDIA)
-                || n.as_str() == Some(NS_MEDIA)
-        });
-        if has_media {
-            return Some(AppSession {
-                transport_id: app.get("transportId")?.as_str()?.to_string(),
-                session_id: app.get("sessionId")?.as_str()?.to_string(),
-            });
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{LoadProgress, candidate_content_types, classify_media_status};
-    use serde_json::json;
-
-    #[test]
-    fn opus_candidates_include_ogg_variants() {
-        let values = candidate_content_types("audio/ogg; codecs=opus");
-        assert!(values.iter().any(|v| v == "audio/ogg; codecs=opus"));
-        assert!(values.iter().any(|v| v == "audio/ogg"));
-        assert!(values.iter().any(|v| v == "application/ogg"));
-        assert!(values.iter().any(|v| v == "audio/opus"));
-    }
-
-    #[test]
-    fn idle_status_is_not_treated_as_success() {
-        let payload = json!({
-            "type": "MEDIA_STATUS",
-            "requestId": 7,
-            "status": [{
-                "mediaSessionId": 2,
-                "playerState": "IDLE",
-                "media": { "contentId": "http://127.0.0.1/stream" }
-            }]
-        });
-        assert_eq!(
-            classify_media_status(&payload, 7, "http://127.0.0.1/stream").unwrap(),
-            LoadProgress::Pending
-        );
-    }
-
-    #[test]
-    fn buffering_status_is_treated_as_success() {
-        let payload = json!({
-            "type": "MEDIA_STATUS",
-            "requestId": 7,
-            "status": [{
-                "mediaSessionId": 2,
-                "playerState": "BUFFERING",
-                "media": { "contentId": "http://127.0.0.1/stream" }
-            }]
-        });
-        assert_eq!(
-            classify_media_status(&payload, 7, "http://127.0.0.1/stream").unwrap(),
-            LoadProgress::Ready(Some(2))
-        );
     }
 }

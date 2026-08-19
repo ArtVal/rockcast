@@ -4,7 +4,7 @@ use std::{
     io::Read,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
     },
     time::{Duration, Instant},
 };

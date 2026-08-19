@@ -18,10 +18,9 @@ use std::{
 };
 
 use rockcast::{
-    icy::IcyWatcher,
+    observers::{IcyWatcher, SpectrumAnalyzer},
     profile,
     relay::StreamRelay,
-    spectrum::SpectrumAnalyzer,
 };
 
 const AVTORADIO_OPUS_URL: &str = "http://play.global.audio/avtoradio.opus";

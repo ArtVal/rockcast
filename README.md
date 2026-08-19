@@ -162,19 +162,22 @@ rockcast/
 └── src/
     ├── main.rs           # GUI entry
     ├── lib.rs
-    ├── app.rs            # egui UI
+    ├── app/              # egui UI (theme, actions, ui panels)
+    ├── playback/         # PlaybackController + phase/volume
+    ├── local/            # PC playback (cpal + decode)
+    ├── observers/        # ICY + spectrum taps for Cast
+    ├── stations/         # catalog + Radio Browser
+    ├── relay/            # LAN HTTP relay PC → Cast
+    ├── voice/            # RockServer voice search
     ├── i18n.rs           # EN / RU strings
-    ├── stations.rs       # catalog + Radio Browser
-    ├── local.rs          # PC playback
-    ├── icy.rs            # ICY metadata watcher
-    ├── spectrum.rs       # FFT visualizer tap
-    ├── relay.rs          # LAN HTTP relay PC → Cast
     ├── output.rs         # local + Cast device list
     ├── settings.rs
     └── cast/
-        ├── discovery.rs  # mDNS + subnet scan
-        ├── client.rs     # CASTV2 play / stop / volume
-        ├── channel.rs    # TLS framing + auth
+        ├── discovery/    # mDNS + subnet scan
+        ├── client/       # CASTV2 play / stop / volume
+        ├── channel/      # TLS framing + auth
+        │   ├── recv.rs   # read loop / inbox
+        │   └── tls.rs    # connect
         └── proto.rs      # hand-rolled CastMessage codec
 ```
 

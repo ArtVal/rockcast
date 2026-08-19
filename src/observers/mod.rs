@@ -1,14 +1,15 @@
 //! Lifecycle for playback metadata and spectrum observers.
 
+mod icy;
+pub mod spectrum;
+
 use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
 
-use crate::{
-    icy::IcyWatcher,
-    spectrum::{BANDS, SpectrumAnalyzer},
-};
+pub use icy::IcyWatcher;
+pub use spectrum::{SpectrumAnalyzer, BANDS};
 
 pub struct StreamObservers {
     icy: IcyWatcher,

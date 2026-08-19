@@ -1,0 +1,273 @@
+//! Symphonia fallback decode and prefixed stream source.
+
+use std::{
+    io::{self, Read, Seek, SeekFrom},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use parking_lot::Mutex;
+use symphonia::core::{
+    audio::{AudioBufferRef, SampleBuffer},
+    codecs::{CODEC_TYPE_NULL, DecoderOptions},
+    errors::Error as SymError,
+    formats::FormatOptions,
+    io::{MediaSource, MediaSourceStream},
+    meta::MetadataOptions,
+    probe::Hint,
+};
+
+use crate::audio::{
+    format::apply_hint,
+    spectrum::SpectrumTap,
+};
+
+use super::relay::{relay_emit_pcm, RelayEmitCtx};
+
+pub(super) struct SpectrumState {
+    tap: SpectrumTap,
+}
+
+impl SpectrumState {
+    pub(super) fn new(levels: Arc<Mutex<[f32; crate::audio::spectrum::BANDS]>>) -> Self {
+        Self {
+            tap: SpectrumTap::new(levels),
+        }
+    }
+
+    pub(super) fn push_pcm(&mut self, pcm: &[f32], channels: usize, sample_rate: u32) {
+        self.tap.push_f32(pcm, channels, sample_rate);
+    }
+}
+
+pub(super) fn decode_symphonia_f32(
+    url: &str,
+    content_type: &str,
+    peek: Vec<u8>,
+    reader: Box<dyn Read + Send>,
+    stop: &Arc<AtomicBool>,
+    push_pcm: &mut impl FnMut(&[f32]),
+    mut spectrum_state: Option<SpectrumState>,
+    src_rate: Arc<std::sync::atomic::AtomicU32>,
+    src_ch: Arc<std::sync::atomic::AtomicU32>,
+) -> Result<(), String> {
+    let mss = MediaSourceStream::new(
+        Box::new(PrefixedMediaSource {
+            peek,
+            pos: 0,
+            inner: std::sync::Mutex::new(reader),
+        }),
+        Default::default(),
+    );
+    let mut hint = Hint::new();
+    apply_hint(&mut hint, url, content_type, &[]);
+
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "no audio track".to_string())?
+        .clone();
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(2)
+        .max(1);
+    src_rate.store(sample_rate, Ordering::SeqCst);
+    src_ch.store(channels as u32, Ordering::SeqCst);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| e.to_string())?;
+
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+
+    while !stop.load(Ordering::SeqCst) {
+        let packet = next_packet(format.as_mut(), stop)?;
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(SymError::DecodeError(_)) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        let interleaved = copy_interleaved(&decoded, &mut sample_buf);
+        if let Some(state) = spectrum_state.as_mut() {
+            state.push_pcm(interleaved, channels, sample_rate);
+        }
+        push_pcm(interleaved);
+    }
+    Err("stopped".into())
+}
+
+pub(super) fn decode_symphonia_relay(
+    url: &str,
+    content_type: &str,
+    peek: Vec<u8>,
+    reader: Box<dyn Read + Send>,
+    stop: &Arc<AtomicBool>,
+    spectrum: &mut SpectrumTap,
+    pcm_bytes: &mut Vec<u8>,
+    push: &mut impl FnMut(&[u8]),
+    on_format: &mut impl FnMut(u32, u16),
+    resampler: &mut crate::audio::decode::pcm::CastPcmResampler,
+    smoother: &mut crate::audio::decode::pcm::PcmSmoother,
+    format_set: &mut bool,
+) -> Result<(), String> {
+    let mss = MediaSourceStream::new(
+        Box::new(PrefixedMediaSource {
+            peek,
+            pos: 0,
+            inner: std::sync::Mutex::new(reader),
+        }),
+        Default::default(),
+    );
+    let mut hint = Hint::new();
+    apply_hint(&mut hint, url, content_type, &[]);
+
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "no audio track".to_string())?
+        .clone();
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(2)
+        .max(1) as u16;
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| e.to_string())?;
+
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+
+    while !stop.load(Ordering::SeqCst) {
+        let packet = next_packet(format.as_mut(), stop)?;
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(SymError::DecodeError(_)) => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        let interleaved = copy_interleaved(&decoded, &mut sample_buf);
+        relay_emit_pcm(
+            interleaved,
+            sample_rate,
+            channels,
+            RelayEmitCtx {
+                format_set,
+                resampler,
+                smoother,
+                pcm_bytes,
+            },
+            spectrum,
+            on_format,
+            push,
+        );
+    }
+    Ok(())
+}
+
+fn next_packet(
+    format: &mut dyn symphonia::core::formats::FormatReader,
+    stop: &Arc<AtomicBool>,
+) -> Result<symphonia::core::formats::Packet, String> {
+    loop {
+        match format.next_packet() {
+            Ok(p) => return Ok(p),
+            Err(SymError::ResetRequired) => return Err("reset".into()),
+            Err(SymError::IoError(e))
+                if e.kind() == io::ErrorKind::UnexpectedEof
+                    || e.kind() == io::ErrorKind::Interrupted =>
+            {
+                return Err("eof".into());
+            }
+            Err(_) if stop.load(Ordering::SeqCst) => return Err("stopped".into()),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+struct PrefixedMediaSource {
+    peek: Vec<u8>,
+    pos: usize,
+    inner: std::sync::Mutex<Box<dyn Read + Send>>,
+}
+
+impl Read for PrefixedMediaSource {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos < self.peek.len() {
+            let n = buf.len().min(self.peek.len() - self.pos);
+            buf[..n].copy_from_slice(&self.peek[self.pos..self.pos + n]);
+            self.pos += n;
+            return Ok(n);
+        }
+        self.inner.lock().unwrap().read(buf)
+    }
+}
+
+impl Seek for PrefixedMediaSource {
+    fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "stream is not seekable",
+        ))
+    }
+}
+
+impl MediaSource for PrefixedMediaSource {
+    fn is_seekable(&self) -> bool {
+        false
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        None
+    }
+}
+
+fn copy_interleaved<'a>(
+    decoded: &AudioBufferRef<'_>,
+    sample_buf: &'a mut Option<SampleBuffer<f32>>,
+) -> &'a [f32] {
+    let spec = *decoded.spec();
+    let frames = decoded.frames();
+    if sample_buf.as_ref().is_none_or(|b| b.capacity() < frames) {
+        *sample_buf = Some(SampleBuffer::<f32>::new(frames as u64, spec));
+    }
+    let buf = sample_buf.as_mut().unwrap();
+    buf.copy_interleaved_ref(decoded.clone());
+    buf.samples()
+}

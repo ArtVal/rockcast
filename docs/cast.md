@@ -3,8 +3,15 @@
 ## Stack
 
 ```text
-discovery.rs     find devices (mDNS + subnet)
-client.rs        play / stop / volume / heartbeat session
+discovery/       find devices (mDNS + subnet)
+  lan.rs         NIC scoring, VPN/tunnel filter
+  mdns.rs        _googlecast._tcp browse
+  subnet.rs      /24 TCP:8009 probe + eureka_info
+  eureka.rs      Parse setup/eureka_info JSON
+client/          play / stop / volume / heartbeat session
+  session.rs     CONNECT, LAUNCH, LOAD, heartbeat thread
+  media.rs       LOAD candidates, media status parsing
+  error.rs       ClientError
 channel.rs       TLS + 4-byte BE length + CastMessage frames
 proto.rs         hand-rolled protobuf (see also proto/cast_channel.proto)
 ```

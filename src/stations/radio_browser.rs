@@ -1,4 +1,4 @@
-//! Rock / metal radio stations: local catalog + Radio Browser API.
+//! Radio Browser API enrichment.
 
 use std::{
     collections::HashSet,
@@ -11,136 +11,15 @@ use std::{
 use rustls::pki_types::ServerName;
 use serde::Deserialize;
 
-#[derive(Debug, Clone)]
-pub struct Station {
-    pub name: String,
-    pub url: String,
-    pub tags: String,
-    pub bitrate: u32,
-    pub codec: String,
-}
-
-impl Station {
-    pub fn content_type(&self) -> &'static str {
-        let c = self.effective_codec();
-        if matches!(c.as_str(), "aac" | "aac+" | "he-aac" | "aacp") {
-            "audio/aac"
-        } else if c == "opus" {
-            "audio/ogg; codecs=opus"
-        } else if c == "vorbis" {
-            "audio/ogg; codecs=vorbis"
-        } else if c == "ogg" {
-            "audio/ogg"
-        } else if c == "flac" {
-            "audio/flac"
-        } else {
-            "audio/mpeg"
-        }
-    }
-
-    fn effective_codec(&self) -> String {
-        infer_codec(&self.codec, &self.url)
-    }
-}
-
 use crate::i18n::{self, Lang};
+
+use super::{catalog, Station};
 
 /// Fallback entry points if DNS/servers are unavailable.
 const FALLBACK_HOSTS: &[&str] = &["all.api.radio-browser.info"];
 
-/// Embedded catalog (if no file next to the exe).
-const EMBEDDED_STATIONS: &str = include_str!("../stations.txt");
-
-fn catalog_stations() -> Vec<Station> {
-    let raw = read_stations_file().unwrap_or_else(|| EMBEDDED_STATIONS.to_string());
-    parse_stations_txt(&raw)
-}
-
-fn read_stations_file() -> Option<String> {
-    for path in stations_search_paths() {
-        if let Ok(raw) = std::fs::read_to_string(&path) {
-            log::info!("stations.txt: {}", path.display());
-            return Some(raw);
-        }
-    }
-    // Create an editable copy in the app data directory.
-    if let Some(path) = appdata_stations_path() {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if std::fs::write(&path, EMBEDDED_STATIONS).is_ok() {
-            log::info!("stations.txt created: {}", path.display());
-            return Some(EMBEDDED_STATIONS.to_string());
-        }
-    }
-    None
-}
-
-fn stations_search_paths() -> Vec<std::path::PathBuf> {
-    let mut paths = Vec::new();
-    if let Ok(p) = std::env::var("ROCKCAST_STATIONS") {
-        paths.push(std::path::PathBuf::from(p));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        paths.push(dir.join("stations.txt"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        paths.push(cwd.join("stations.txt"));
-    }
-    if let Some(p) = appdata_stations_path() {
-        paths.push(p);
-    }
-    paths
-}
-
-fn appdata_stations_path() -> Option<std::path::PathBuf> {
-    crate::settings::app_dir().map(|dir| dir.join("stations.txt"))
-}
-
-/// Line format: `name | url | tags | bitrate | codec | country`
-fn parse_stations_txt(raw: &str) -> Vec<Station> {
-    let mut out = Vec::new();
-    for (lineno, line) in raw.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('|').map(str::trim).collect();
-        if parts.len() < 2 {
-            log::warn!("stations.txt:{lineno}: need at least name|url");
-            continue;
-        }
-        let name = parts[0].to_string();
-        let url = parts[1].to_string();
-        if name.is_empty() || !(url.starts_with("http://") || url.starts_with("https://")) {
-            log::warn!("stations.txt:{lineno}: skip (empty name or URL)");
-            continue;
-        }
-        let tags = parts.get(2).copied().unwrap_or("").to_string();
-        let bitrate = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(128);
-        let codec = parts.get(4).copied().unwrap_or("mp3").to_string();
-        out.push(Station {
-            name,
-            url,
-            tags,
-            bitrate,
-            codec,
-        });
-    }
-    out
-}
-
-/// Instant local list (no network).
-pub fn load_catalog(lang: Lang) -> (Vec<Station>, String) {
-    let ordered = order_stations(catalog_stations());
-    let n = ordered.len();
-    (ordered, i18n::fmt1(lang.t().local_catalog, n))
-}
-
 /// Enrich the catalog via Radio Browser (may take several seconds).
-pub fn enrich_stations(catalog: Vec<Station>, lang: Lang) -> (Vec<Station>, String) {
+pub fn enrich_stations(catalog_stations: Vec<Station>, lang: Lang) -> (Vec<Station>, String) {
     let hosts = discover_hosts();
     log::info!("Radio Browser hosts: {}", hosts.join(", "));
 
@@ -148,8 +27,8 @@ pub fn enrich_stations(catalog: Vec<Station>, lang: Lang) -> (Vec<Station>, Stri
         match fetch_tag(host, "metal", 40) {
             Ok(chunks) if !chunks.is_empty() => {
                 let mut merged = chunks;
-                merged.extend(catalog);
-                let merged = order_stations(dedupe(merged));
+                merged.extend(catalog_stations);
+                let merged = catalog::order_stations(catalog::dedupe(merged));
                 let n = merged.len();
                 let limited: Vec<_> = merged.into_iter().take(120).collect();
                 return (limited, i18n::fmt1(lang.t().catalog_plus_rb, n));
@@ -158,9 +37,9 @@ pub fn enrich_stations(catalog: Vec<Station>, lang: Lang) -> (Vec<Station>, Stri
             Err(e) => log::info!("Radio Browser {host}: {e}"),
         }
     }
-    let n = catalog.len();
+    let n = catalog_stations.len();
     (
-        order_stations(catalog),
+        catalog::order_stations(catalog_stations),
         i18n::fmt1(lang.t().local_catalog, n),
     )
 }
@@ -357,111 +236,4 @@ fn fetch_tag_once(host: &str, path: &str) -> Result<Vec<Station>, String> {
         .filter_map(|v| serde_json::from_value::<RbStation>(v).ok())
         .filter_map(normalize)
         .collect())
-}
-
-fn dedupe(stations: Vec<Station>) -> Vec<Station> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for s in stations {
-        let key = s.url.trim_end_matches('/').to_lowercase();
-        if seen.insert(key) {
-            out.push(s);
-        }
-    }
-    out
-}
-
-fn order_stations(stations: Vec<Station>) -> Vec<Station> {
-    let metal_tags = [
-        "metal",
-        "hard rock",
-        "punk",
-        "thrash",
-        "death",
-        "doom",
-        "industrial",
-    ];
-    let mut metal = Vec::new();
-    let mut others = Vec::new();
-    for s in stations {
-        let tags = s.tags.to_lowercase();
-        if metal_tags.iter().any(|t| tags.contains(t)) {
-            metal.push(s);
-        } else {
-            others.push(s);
-        }
-    }
-    let key = |s: &Station| (!s.url.starts_with("https://"), s.name.to_lowercase());
-    metal.sort_by_key(|s| key(s));
-    others.sort_by_key(|s| key(s));
-    metal.extend(others);
-    metal
-}
-
-fn infer_codec(codec: &str, url: &str) -> String {
-    let normalized = codec.trim().to_lowercase();
-    let lower_url = url.to_lowercase();
-    if lower_url.ends_with(".opus") || lower_url.contains(".opus?") {
-        return "opus".into();
-    }
-    if lower_url.ends_with(".ogg") || lower_url.contains(".ogg?") {
-        return if normalized.is_empty() {
-            "ogg".into()
-        } else {
-            normalized
-        };
-    }
-    if lower_url.contains("aacp")
-        || lower_url.ends_with(".aac")
-        || lower_url.contains(".aac?")
-        || lower_url.contains("/aac")
-    {
-        return "aac+".into();
-    }
-    if matches!(
-        normalized.as_str(),
-        "aac" | "aac+" | "he-aac" | "aacp" | "he-aac-v2"
-    ) {
-        return normalized;
-    }
-    normalized
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Station;
-
-    fn station(codec: &str) -> Station {
-        Station {
-            name: "test".into(),
-            url: "https://example.test/stream".into(),
-            tags: String::new(),
-            bitrate: 128,
-            codec: codec.into(),
-        }
-    }
-
-    #[test]
-    fn opus_station_uses_codec_specific_ogg_type() {
-        assert_eq!(station("opus").content_type(), "audio/ogg; codecs=opus");
-    }
-
-    #[test]
-    fn vorbis_station_uses_codec_specific_ogg_type() {
-        assert_eq!(station("vorbis").content_type(), "audio/ogg; codecs=vorbis");
-    }
-
-    #[test]
-    fn opus_url_overrides_generic_ogg_codec() {
-        let mut s = station("ogg");
-        s.url = "http://play.global.audio/avtoradio.opus".into();
-        assert_eq!(s.content_type(), "audio/ogg; codecs=opus");
-    }
-
-    #[test]
-    fn aac_url_overrides_missing_codec() {
-        let mut s = station("");
-        s.url = "http://example.test/live.aac".into();
-        assert_eq!(s.content_type(), "audio/aac");
-    }
 }

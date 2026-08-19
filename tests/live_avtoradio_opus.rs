@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rockcast::{relay::StreamRelay, spectrum::SpectrumAnalyzer};
+use rockcast::{observers::SpectrumAnalyzer, relay::StreamRelay};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 const AVTORADIO_OPUS_URL: &str = "http://play.global.audio/avtoradio.opus";

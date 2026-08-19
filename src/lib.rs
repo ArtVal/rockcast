@@ -5,7 +5,6 @@ pub mod audio;
 pub mod profile;
 pub mod cast;
 pub mod i18n;
-pub mod icy;
 pub mod local;
 pub mod net;
 pub mod observers;
@@ -17,10 +16,18 @@ pub mod relay;
 pub mod rockserver;
 pub mod runtime;
 pub mod settings;
-pub mod spectrum;
 pub mod stations;
 pub mod telemetry;
 /// Microphone capture and RockServer voice transport.
 pub mod voice;
 /// Embedded voice prompt playback (beep / "turning on" / "not found").
 pub mod voice_prompts;
+
+// Back-compat for tests/examples that import `rockcast::spectrum` or `rockcast::icy`.
+pub mod icy {
+    pub use crate::observers::IcyWatcher;
+}
+pub mod spectrum {
+    pub use crate::observers::spectrum::*;
+}
+pub use observers::spectrum::{BANDS, SpectrumAnalyzer};

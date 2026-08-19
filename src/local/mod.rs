@@ -1,8 +1,12 @@
 //! Local internet-radio playback to PC speakers (cpal + symphonia).
 
+mod cpal_util;
+mod device;
+mod error;
+
 use std::{
     sync::{
-        Arc, OnceLock,
+        Arc,
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc,
     },
@@ -10,9 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use parking_lot::Mutex;
-use thiserror::Error;
 
 use crate::{
     audio::{
@@ -26,92 +29,17 @@ use crate::{
     playback_diag,
 };
 
+pub use device::{list_local_devices, LocalDeviceInfo};
+pub use error::LocalError;
+
+use cpal_util::{
+    bits_f32, cleanup_sender, f32_bits, pick_cpal_device, pick_output_config, LocalCleanup,
+    SendStream,
+};
+
 const RING_MAX: usize = 48000 * 2 * 4; // ~4 sec stereo @ 48k
 /// Give up if the station accepts TCP but never sends HTTP headers / audio.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(12);
-
-#[derive(Debug, Clone)]
-pub struct LocalDeviceInfo {
-    pub id: String,
-    pub name: String,
-    /// cpal device name; `None` — system default.
-    pub cpal_name: Option<String>,
-}
-
-impl LocalDeviceInfo {
-    pub fn label(&self, lang: crate::i18n::Lang) -> String {
-        format!("{}  [{}]", self.name, lang.t().this_pc)
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum LocalError {
-    #[error("audio: {0}")]
-    Audio(String),
-    #[error("stream: {0}")]
-    Stream(String),
-}
-
-pub fn list_local_devices(lang: crate::i18n::Lang) -> Vec<LocalDeviceInfo> {
-    let host = cpal::default_host();
-    let default_name = host.default_output_device().and_then(|d| d.name().ok());
-    let speakers = lang.t().pc_speakers;
-
-    let mut out = Vec::new();
-    let Ok(devices) = host.output_devices() else {
-        out.push(LocalDeviceInfo {
-            id: "local:default".into(),
-            name: speakers.into(),
-            cpal_name: None,
-        });
-        return out;
-    };
-
-    for device in devices {
-        let Ok(name) = device.name() else {
-            continue;
-        };
-        let is_default = default_name.as_ref() == Some(&name);
-        let display = if is_default {
-            format!("{name} ★")
-        } else {
-            name.clone()
-        };
-        out.push(LocalDeviceInfo {
-            id: format!("local:{name}"),
-            name: display,
-            cpal_name: Some(name),
-        });
-    }
-
-    if out.is_empty() {
-        out.push(LocalDeviceInfo {
-            id: "local:default".into(),
-            name: speakers.into(),
-            cpal_name: None,
-        });
-    } else {
-        // Default first.
-        out.sort_by(|a, b| {
-            let ad = a.name.contains('★');
-            let bd = b.name.contains('★');
-            match (ad, bd) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
-        });
-    }
-    out
-}
-
-fn f32_bits(v: f32) -> u32 {
-    v.to_bits()
-}
-
-fn bits_f32(b: u32) -> f32 {
-    f32::from_bits(b)
-}
 
 pub struct LocalPlayer {
     /// Stop flag for the *current* session only. Each `play` gets a fresh Arc so
@@ -130,43 +58,6 @@ struct PlayerState {
     stream: Option<SendStream>,
     pcm_tx: Option<mpsc::SyncSender<Vec<f32>>>,
 }
-
-/// cpal marks Stream as !Send for portability. Access is serialized via Mutex
-/// and the reaper thread (WASAPI / ALSA / PipeWire).
-#[allow(dead_code)]
-struct SendStream(cpal::Stream);
-
-// SAFETY: Stream lives only inside LocalPlayer; access is serialized via Mutex.
-unsafe impl Send for SendStream {}
-
-struct LocalCleanup {
-    stream: Option<SendStream>,
-    decode_join: Option<thread::JoinHandle<()>>,
-    playout_join: Option<thread::JoinHandle<()>>,
-}
-
-fn cleanup_sender() -> &'static mpsc::Sender<LocalCleanup> {
-    static TX: OnceLock<mpsc::Sender<LocalCleanup>> = OnceLock::new();
-    TX.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<LocalCleanup>();
-        thread::Builder::new()
-            .name("rockcast-local-reaper".into())
-            .spawn(move || {
-                while let Ok(cleanup) = rx.recv() {
-                    drop(cleanup.stream);
-                    if let Some(join) = cleanup.playout_join {
-                        let _ = join.join();
-                    }
-                    if let Some(join) = cleanup.decode_join {
-                        let _ = join.join();
-                    }
-                }
-            })
-            .expect("spawn local audio cleanup worker");
-        tx
-    })
-}
-unsafe impl Sync for SendStream {}
 
 impl Default for LocalPlayer {
     fn default() -> Self {
@@ -493,51 +384,4 @@ impl Drop for LocalPlayer {
     fn drop(&mut self) {
         self.stop();
     }
-}
-
-fn pick_cpal_device(info: &LocalDeviceInfo) -> Result<cpal::Device, LocalError> {
-    let host = cpal::default_host();
-    if let Some(want) = &info.cpal_name {
-        let devices = host
-            .output_devices()
-            .map_err(|e| LocalError::Audio(e.to_string()))?;
-        for d in devices {
-            if d.name().ok().as_ref() == Some(want) {
-                return Ok(d);
-            }
-        }
-        return Err(LocalError::Audio(format!("device «{want}» not found")));
-    }
-    host.default_output_device()
-        .ok_or_else(|| LocalError::Audio("no default output device".into()))
-}
-
-fn pick_output_config(
-    device: &cpal::Device,
-    _prefer_rate: u32,
-    prefer_ch: usize,
-) -> Result<cpal::StreamConfig, LocalError> {
-    // Default mix format is the reliable host path (WASAPI Shared, PipeWire via ALSA);
-    // resample in the callback if the station rate differs.
-    if let Ok(def) = device.default_output_config() {
-        return Ok(def.config());
-    }
-
-    let supported = device
-        .supported_output_configs()
-        .map_err(|e| LocalError::Audio(e.to_string()))?;
-
-    let prefer_ch = prefer_ch.clamp(1, 2) as u16;
-    let mut best: Option<cpal::SupportedStreamConfigRange> = None;
-    for range in supported {
-        if range.channels() == prefer_ch {
-            best = Some(range);
-            break;
-        }
-        if best.is_none() {
-            best = Some(range);
-        }
-    }
-    let range = best.ok_or_else(|| LocalError::Audio("no suitable output format".into()))?;
-    Ok(range.with_max_sample_rate().config())
 }
