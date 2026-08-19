@@ -1,6 +1,8 @@
 //! Spectrum analyzer: one HTTP stream → ICY metadata + FFT bands.
 
 use std::{
+    collections::VecDeque,
+    io::Cursor,
     io::{self, Read, Seek, SeekFrom},
     sync::{
         Arc,
@@ -12,6 +14,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
 use symphonia::core::{
     audio::{AudioBufferRef, SampleBuffer},
     codecs::{CODEC_TYPE_NULL, DecoderOptions},
@@ -219,6 +222,12 @@ fn analyze_stream(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
+    if let Some((sample_rate, channels)) = raw_pcm_params(resp.headers(), &content_type) {
+        return analyze_pcm_stream(resp, levels, stop, sample_rate, channels);
+    }
+    if looks_like_opus(url, &content_type) {
+        return analyze_opus_stream(resp, levels, stop);
+    }
 
     let meta_int = metadata_interval(resp.headers());
 
@@ -314,6 +323,249 @@ fn analyze_stream(
     }
 
     Ok(())
+}
+
+fn looks_like_opus(url: &str, content_type: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    let ct = content_type.to_ascii_lowercase();
+    u.ends_with(".opus")
+        || u.contains(".opus?")
+        || ct.contains("codecs=opus")
+        || ct.contains("audio/opus")
+        || ct == "application/ogg"
+}
+
+fn raw_pcm_params(headers: &reqwest::header::HeaderMap, content_type: &str) -> Option<(f32, usize)> {
+    let ct = content_type.to_ascii_lowercase();
+    let is_pcm = ct.contains("audio/l16")
+        || ct.contains("audio/lpcm")
+        || ct.contains("audio/pcm")
+        || headers.contains_key("x-audio-sample-rate");
+    if !is_pcm {
+        return None;
+    }
+    let sample_rate = headers
+        .get("x-audio-sample-rate")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(48_000.0);
+    let channels = headers
+        .get("x-audio-channels")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2)
+        .max(1);
+    Some((sample_rate, channels))
+}
+
+fn analyze_pcm_stream(
+    mut resp: reqwest::blocking::Response,
+    levels: &Mutex<[f32; BANDS]>,
+    stop: &Arc<AtomicBool>,
+    sample_rate: f32,
+    channels: usize,
+) -> Result<(), String> {
+    let mut bands = BandAnalyzer::new();
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut pending = Vec::new();
+    while !stop.load(Ordering::SeqCst) {
+        let n = match resp.read(&mut buf) {
+            Ok(0) => return Err("eof".into()),
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        pending.extend_from_slice(&buf[..n]);
+        let complete = pending.len() / 2 * 2;
+        if complete == 0 {
+            continue;
+        }
+        let mut mono = Vec::with_capacity(complete / (2 * channels.max(1)));
+        for frame in pending[..complete].chunks_exact(2 * channels) {
+            let mut sum = 0.0f32;
+            for sample in frame.chunks_exact(2).take(channels) {
+                let value = i16::from_le_bytes([sample[0], sample[1]]);
+                sum += f32::from(value) / f32::from(i16::MAX);
+            }
+            mono.push(sum / channels as f32);
+        }
+        pending.drain(..complete);
+        if let Some(values) = bands.push_mono(mono, sample_rate) {
+            *levels.lock() = values;
+        }
+    }
+    Err("stopped".into())
+}
+
+fn analyze_opus_stream(
+    resp: reqwest::blocking::Response,
+    levels: &Mutex<[f32; BANDS]>,
+    stop: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut reader = LiveOggOpusReader::new(resp);
+    let mut decoder =
+        OpusDecoder::new(48_000, OpusChannels::Stereo).map_err(|e| format!("opus decoder: {e}"))?;
+    let mut pcm = vec![0i16; 5760 * 2];
+    let mut bands = BandAnalyzer::new();
+    let mut mono = Vec::with_capacity(5760);
+    while !stop.load(Ordering::SeqCst) {
+        let packet = match reader.read_packet(stop)? {
+            Some(packet) => packet,
+            None => return Err("eof".into()),
+        };
+        let samples = match decoder.decode(&packet, &mut pcm, DecodeMode::Normal) {
+            Ok(samples) => samples,
+            Err(e) => {
+                log::debug!("spectrum opus decode error: {e}");
+                continue;
+            }
+        };
+        if samples == 0 {
+            continue;
+        }
+        mono.clear();
+        for frame in pcm[..samples * 2].chunks_exact(2) {
+            let l = f32::from(frame[0]) / f32::from(i16::MAX);
+            let r = f32::from(frame[1]) / f32::from(i16::MAX);
+            mono.push((l + r) * 0.5);
+        }
+        if let Some(values) = bands.push_mono(std::mem::take(&mut mono), 48_000.0) {
+            *levels.lock() = values;
+        }
+    }
+    Err("stopped".into())
+}
+
+struct LiveOggOpusReader<R: Read> {
+    inner: R,
+    packet: Vec<u8>,
+    segments: VecDeque<Vec<u8>>,
+    continued_at_page_start: Option<bool>,
+    skipping_continued: bool,
+    saw_head: bool,
+    saw_tags: bool,
+}
+
+impl<R: Read> LiveOggOpusReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            packet: Vec::new(),
+            segments: VecDeque::new(),
+            continued_at_page_start: None,
+            skipping_continued: false,
+            saw_head: false,
+            saw_tags: false,
+        }
+    }
+
+    fn read_packet(&mut self, stop: &AtomicBool) -> Result<Option<Vec<u8>>, String> {
+        loop {
+            if self.segments.is_empty() {
+                let page = match self.read_page(stop)? {
+                    Some(page) => page,
+                    None => return Ok(None),
+                };
+                self.continued_at_page_start = Some(page.continued);
+                self.segments = page.segments.into();
+            }
+            if self.continued_at_page_start.take().unwrap_or(false) && self.packet.is_empty() {
+                self.skipping_continued = true;
+            }
+            while let Some(segment) = self.segments.pop_front() {
+                if self.skipping_continued {
+                    if segment.len() < 255 {
+                        self.skipping_continued = false;
+                    }
+                    continue;
+                }
+                self.packet.extend_from_slice(&segment);
+                if segment.len() < 255 {
+                    let packet = std::mem::take(&mut self.packet);
+                    if !self.saw_head {
+                        if !packet.starts_with(b"OpusHead") {
+                            return Err("ogg/opus stream missing OpusHead".into());
+                        }
+                        self.saw_head = true;
+                        continue;
+                    }
+                    if !self.saw_tags {
+                        self.saw_tags = true;
+                        continue;
+                    }
+                    return Ok(Some(packet));
+                }
+            }
+        }
+    }
+
+    fn read_page(&mut self, stop: &AtomicBool) -> Result<Option<OggPage>, String> {
+        let mut header = [0u8; 27];
+        if !read_exact_or_eof(&mut self.inner, &mut header, stop)? {
+            return Ok(None);
+        }
+        if &header[0..4] != b"OggS" {
+            return Err("invalid Ogg capture pattern".into());
+        }
+        let continued = (header[5] & 0x01) != 0;
+        let segments_len = header[26] as usize;
+        let mut lacing = vec![0u8; segments_len];
+        read_exact_checked(&mut self.inner, &mut lacing, stop)?;
+        let payload_len: usize = lacing.iter().map(|&v| usize::from(v)).sum();
+        let mut payload = vec![0u8; payload_len];
+        read_exact_checked(&mut self.inner, &mut payload, stop)?;
+        let mut cursor = Cursor::new(payload);
+        let mut segments = Vec::with_capacity(segments_len);
+        for &len in &lacing {
+            let mut part = vec![0u8; usize::from(len)];
+            cursor
+                .read_exact(&mut part)
+                .map_err(|e| format!("ogg payload: {e}"))?;
+            segments.push(part);
+        }
+        Ok(Some(OggPage {
+            continued,
+            segments,
+        }))
+    }
+}
+
+struct OggPage {
+    continued: bool,
+    segments: Vec<Vec<u8>>,
+}
+
+fn read_exact_or_eof<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    stop: &AtomicBool,
+) -> Result<bool, String> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        if stop.load(Ordering::SeqCst) {
+            return Err("stopped".into());
+        }
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) if filled == 0 => return Ok(false),
+            Ok(0) => return Err("unexpected eof".into()),
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(true)
+}
+
+fn read_exact_checked<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    if read_exact_or_eof(reader, buf, stop)? {
+        Ok(())
+    } else {
+        Err("unexpected eof".into())
+    }
 }
 
 fn push_mono(

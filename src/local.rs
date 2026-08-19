@@ -1,7 +1,6 @@
 //! Local internet-radio playback to PC speakers (cpal + symphonia).
 
 use std::{
-    collections::VecDeque,
     io::{self, Read, Seek, SeekFrom},
     sync::{
         Arc, OnceLock,
@@ -119,6 +118,51 @@ fn bits_f32(b: u32) -> f32 {
     f32::from_bits(b)
 }
 
+struct SampleRing {
+    buf: Vec<f32>,
+    head: usize,
+    len: usize,
+}
+
+impl SampleRing {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: vec![0.0; capacity.max(1)],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn capacity(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn sample_at(&self, offset: usize) -> f32 {
+        debug_assert!(offset < self.len);
+        self.buf[(self.head + offset) % self.buf.len()]
+    }
+
+    fn push_slice(&mut self, samples: &[f32]) {
+        debug_assert!(samples.len() <= self.capacity().saturating_sub(self.len));
+        let mut tail = (self.head + self.len) % self.buf.len();
+        for &sample in samples {
+            self.buf[tail] = sample;
+            tail = (tail + 1) % self.buf.len();
+        }
+        self.len += samples.len();
+    }
+
+    fn discard(&mut self, count: usize) {
+        let drop = count.min(self.len);
+        self.head = (self.head + drop) % self.buf.len();
+        self.len -= drop;
+    }
+}
+
 pub struct LocalPlayer {
     /// Stop flag for the *current* session only. Each `play` gets a fresh Arc so
     /// cancelling an old hung decode cannot be undone by the next `play`.
@@ -221,6 +265,7 @@ impl LocalPlayer {
         device: &LocalDeviceInfo,
         url: &str,
         volume: f32,
+        spectrum_enabled: bool,
         title_tx: Option<mpsc::Sender<String>>,
         on_status: impl Fn(&str),
     ) -> Result<(), LocalError> {
@@ -241,7 +286,7 @@ impl LocalPlayer {
         *self.session_stop.lock() = Arc::clone(&stop);
         *self.levels.lock() = [0.08; BANDS];
 
-        let ring = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(RING_MAX / 4)));
+        let ring = Arc::new(Mutex::new(SampleRing::with_capacity(RING_MAX / 4)));
         let src_rate = Arc::new(AtomicU32::new(0));
         let src_ch = Arc::new(AtomicU32::new(2));
         let err_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -264,6 +309,7 @@ impl LocalPlayer {
                     DecodeContext {
                         ring: &ring_dec,
                         levels: &levels,
+                        spectrum_enabled,
                         stop: &stop_dec,
                         src_rate: &src_rate_c,
                         src_ch: &src_ch_c,
@@ -345,8 +391,8 @@ impl LocalPlayer {
                         let frac = (read_pos - i0 as f64) as f32;
                         for (c, sample) in frame.iter_mut().enumerate().take(out_ch) {
                             let src_c = c.min(channels - 1);
-                            let s0 = ring[i0 * channels + src_c];
-                            let s1 = ring[(i0 + 1) * channels + src_c];
+                            let s0 = ring.sample_at(i0 * channels + src_c);
+                            let s1 = ring.sample_at((i0 + 1) * channels + src_c);
                             *sample = (s0 + (s1 - s0) * frac) * gain;
                         }
                         read_pos += ratio;
@@ -354,7 +400,7 @@ impl LocalPlayer {
                         if drop_frames > 0 {
                             let drop_samples = drop_frames * channels;
                             if drop_samples <= ring.len() {
-                                ring.drain(..drop_samples);
+                                ring.discard(drop_samples);
                                 read_pos -= drop_frames as f64;
                             }
                         }
@@ -449,8 +495,9 @@ fn pick_output_config(
 }
 
 struct DecodeContext<'a> {
-    ring: &'a Mutex<VecDeque<f32>>,
+    ring: &'a Mutex<SampleRing>,
     levels: &'a Mutex<[f32; BANDS]>,
+    spectrum_enabled: bool,
     stop: &'a Arc<AtomicBool>,
     src_rate: &'a AtomicU32,
     src_ch: &'a AtomicU32,
@@ -465,6 +512,7 @@ fn decode_into_ring(
     let DecodeContext {
         ring,
         levels,
+        spectrum_enabled,
         stop,
         src_rate,
         src_ch,
@@ -556,7 +604,7 @@ fn decode_into_ring(
         .map_err(|e| e.to_string())?;
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
-    let mut bands = BandAnalyzer::new();
+    let mut bands = spectrum_enabled.then(BandAnalyzer::new);
     let wall_start = Instant::now();
     let mut samples_done: u64 = 0;
 
@@ -585,7 +633,7 @@ fn decode_into_ring(
             Err(e) => return Err(e.to_string()),
         };
 
-        let interleaved = to_interleaved(&decoded, &mut sample_buf);
+        let interleaved = copy_interleaved(&decoded, &mut sample_buf);
         let frames = interleaved.len() / channels.max(1);
         samples_done += frames as u64;
 
@@ -600,14 +648,16 @@ fn decode_into_ring(
                 thread::sleep(Duration::from_millis(5));
                 q = ring.lock();
             }
-            q.extend(interleaved.iter().copied());
+            q.push_slice(interleaved);
         }
 
-        let mono = interleaved
-            .chunks(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32);
-        if let Some(values) = bands.push_mono(mono, sample_rate as f32) {
-            *levels.lock() = values;
+        if let Some(bands) = bands.as_mut() {
+            let mono = interleaved
+                .chunks(channels)
+                .map(|frame| frame.iter().sum::<f32>() / channels as f32);
+            if let Some(values) = bands.push_mono(mono, sample_rate as f32) {
+                *levels.lock() = values;
+            }
         }
 
         let audio_secs = samples_done as f64 / f64::from(sample_rate);
@@ -743,10 +793,10 @@ impl Read for StopAwareBody {
     }
 }
 
-fn to_interleaved(
+fn copy_interleaved<'a>(
     decoded: &AudioBufferRef<'_>,
-    sample_buf: &mut Option<SampleBuffer<f32>>,
-) -> Vec<f32> {
+    sample_buf: &'a mut Option<SampleBuffer<f32>>,
+) -> &'a [f32] {
     let spec = *decoded.spec();
     let frames = decoded.frames();
     if sample_buf.as_ref().is_none_or(|b| b.capacity() < frames) {
@@ -754,7 +804,7 @@ fn to_interleaved(
     }
     let buf = sample_buf.as_mut().unwrap();
     buf.copy_interleaved_ref(decoded.clone());
-    buf.samples().to_vec()
+    buf.samples()
 }
 
 struct IcyStripReader {

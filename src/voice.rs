@@ -68,11 +68,10 @@ pub fn capture_and_recognize(
         .header("Authorization", format!("Bearer {bearer_token}"))
         .body(())
         .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
-    let (mut socket, _) =
-        tungstenite::client(request, tcp).map_err(|e| {
-            log::error!("voice websocket handshake failed: {e}");
-            "Не удалось подключиться к RockServer voice".to_owned()
-        })?;
+    let (mut socket, _) = tungstenite::client(request, tcp).map_err(|e| {
+        log::error!("voice websocket handshake failed: {e}");
+        "Не удалось подключиться к RockServer voice".to_owned()
+    })?;
     log::info!("voice websocket connected");
     socket
         .send(Message::Text(start_message(locale, sample_rate).into()))
@@ -130,7 +129,7 @@ pub fn capture_and_recognize(
                     );
                 }
                 let mut seen_streams = HashSet::new();
-                let stations = stations
+                let mut stations = stations
                     .into_iter()
                     .filter(|station| {
                         let stream_key = station
@@ -156,6 +155,11 @@ pub fn capture_and_recognize(
                     })
                     .map(Station::from)
                     .collect::<Vec<_>>();
+                // RockServer candidates are already roughly ordered by similarity score,
+                // but we further bias ordering towards words from the transcript.
+                // This fixes cases like: first candidate is "Наше радио", while the
+                // user asked "Поставь радио рокс".
+                rerank_voice_candidates(&transcript, &mut stations);
                 if stations.is_empty() {
                     return Err("RockServer не нашёл станцию для команды".into());
                 }
@@ -178,6 +182,69 @@ fn start_message(locale: &str, sample_rate: u32) -> String {
         "limit": 30,
     })
     .to_string()
+}
+
+fn rerank_voice_candidates(transcript: &str, stations: &mut Vec<Station>) {
+    // Keep it simple: split transcript into words, reward stations whose `name`
+    // or `tags` contain those words.
+    let stop_words: &[&str] = &[
+        "радио",
+        "станцию",
+        "станции",
+        "включи",
+        "включить",
+        "поставь",
+        "поставить",
+        "запусти",
+        "найди",
+        "ищи",
+        "найди",
+        "крути",
+        "пожалуйста",
+        "команду",
+    ];
+
+    let terms: Vec<String> = transcript
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 3)
+        .filter(|t| !stop_words.contains(&t.as_ref()))
+        .map(|s| s.to_string())
+        .collect();
+
+    if terms.is_empty() {
+        return;
+    }
+
+    let original = std::mem::take(stations);
+    let mut scored: Vec<(usize, i32, Station)> = original
+        .into_iter()
+        .enumerate()
+        .map(|(idx, s)| {
+            let name = s.name.to_lowercase();
+            let tags = s.tags.to_lowercase();
+            let mut score: i32 = 0;
+            for t in &terms {
+                if name == *t {
+                    score += 120;
+                } else if name.contains(t) {
+                    score += 60;
+                }
+                if tags.contains(t) {
+                    score += 15;
+                }
+            }
+            // Small bias: if transcript contains station name as a whole substring,
+            // keep it near the top.
+            if transcript.to_lowercase().contains(&s.name.to_lowercase()) {
+                score += 30;
+            }
+            (idx, score, s)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    *stations = scored.into_iter().map(|(_, _, s)| s).collect();
 }
 
 fn websocket_url(base: &str) -> Result<String, String> {
@@ -332,4 +399,28 @@ mod tests {
         assert_eq!(value["sample_rate_hz"], 48_000);
         assert_eq!(value["limit"], 30);
     }
+
+    #[test]
+    fn rerank_prefers_station_name_match() {
+        let mut stations = vec![
+            Station {
+                name: "Наше радио".into(),
+                url: "https://example.com/1".into(),
+                tags: "rock".into(),
+                bitrate: 0,
+                codec: "mp3".into(),
+            },
+            Station {
+                name: "Рокс".into(),
+                url: "https://example.com/2".into(),
+                tags: "rock".into(),
+                bitrate: 0,
+                codec: "mp3".into(),
+            },
+        ];
+
+        rerank_voice_candidates("Поставь радио рокс", &mut stations);
+        assert_eq!(stations[0].name, "Рокс");
+    }
+
 }

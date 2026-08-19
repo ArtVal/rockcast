@@ -1,5 +1,7 @@
 //! Shared audio-stream helpers used by local playback and spectrum analysis.
 
+use std::collections::VecDeque;
+
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use symphonia::core::probe::Hint;
 
@@ -8,7 +10,7 @@ const FFT_SIZE: usize = 1024;
 const HOP: usize = 512;
 
 pub(crate) struct BandAnalyzer {
-    pcm: Vec<f32>,
+    pcm: VecDeque<f32>,
     fft: std::sync::Arc<dyn Fft<f32>>,
     fft_buf: Vec<Complex<f32>>,
     window: Vec<f32>,
@@ -19,7 +21,7 @@ impl BandAnalyzer {
     pub(crate) fn new() -> Self {
         let mut planner = FftPlanner::<f32>::new();
         Self {
-            pcm: Vec::with_capacity(FFT_SIZE * 2),
+            pcm: VecDeque::with_capacity(FFT_SIZE * 2),
             fft: planner.plan_fft_forward(FFT_SIZE),
             fft_buf: vec![Complex::new(0.0, 0.0); FFT_SIZE],
             window: hann(FFT_SIZE),
@@ -34,9 +36,13 @@ impl BandAnalyzer {
         self.pcm.extend(samples);
         let mut updated = false;
         while self.pcm.len() >= FFT_SIZE {
-            for i in 0..FFT_SIZE {
-                self.fft_buf[i].re = self.pcm[i] * self.window[i];
-                self.fft_buf[i].im = 0.0;
+            for (slot, (sample, window)) in self
+                .fft_buf
+                .iter_mut()
+                .zip(self.pcm.iter().zip(self.window.iter()))
+            {
+                slot.re = sample * window;
+                slot.im = 0.0;
             }
             self.pcm.drain(..HOP);
             self.fft.process(&mut self.fft_buf);
@@ -56,6 +62,11 @@ pub(crate) fn apply_hint(hint: &mut Hint, content_type: &str) {
         hint.with_extension("mp3");
     } else if content_type.contains("aac") || content_type.contains("mp4") {
         hint.with_extension("aac");
+    } else if content_type.contains("wav")
+        || content_type.contains("wave")
+        || content_type.contains("pcm")
+    {
+        hint.with_extension("wav");
     } else if content_type.contains("ogg") || content_type.contains("vorbis") {
         hint.with_extension("ogg");
     } else if content_type.contains("flac") {

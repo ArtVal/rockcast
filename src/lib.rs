@@ -19,3 +19,5 @@ pub mod spectrum;
 pub mod stations;
 /// Microphone capture and RockServer voice transport.
 pub mod voice;
+/// Embedded voice prompt playback (beep / "turning on" / "not found").
+pub mod voice_prompts;

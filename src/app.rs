@@ -32,7 +32,12 @@ const FG: Color32 = Color32::from_rgb(0xe8, 0xdc, 0xc8);
 const ACCENT: Color32 = Color32::from_rgb(0xc4, 0x5c, 0x26);
 const MUTED: Color32 = Color32::from_rgb(0x9a, 0x8b, 0x78);
 const BAR_DIM: Color32 = Color32::from_rgb(0x5a, 0x40, 0x30);
-const ROW_H: f32 = 28.0;
+const ROW_H: f32 = 24.0;
+const COL_RESIZE_HIT_W: f32 = 10.0;
+const NAME_COL_MIN: f32 = 120.0;
+const NAME_COL_MAX: f32 = 360.0;
+const TAGS_COL_MIN: f32 = 110.0;
+const META_COL_MIN: f32 = 88.0;
 /// Slider 100% → 50% on the speaker (half-scale).
 enum UiMsg {
     Stations {
@@ -60,6 +65,9 @@ pub struct RockCastApp {
     devices: Vec<OutputDevice>,
     source: String,
     selected_station: Option<usize>,
+    scroll_to_station: Option<usize>,
+    station_name_col_w: Option<f32>,
+    station_tags_col_w: Option<f32>,
     selected_device: Option<usize>,
     status: String,
     station_now: String,
@@ -114,10 +122,10 @@ impl RockCastApp {
         cc.egui_ctx.set_visuals(visuals);
 
         let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-        style.spacing.button_padding = Vec2::new(14.0, 6.0);
+        style.spacing.item_spacing = Vec2::new(8.0, 6.0);
+        style.spacing.button_padding = Vec2::new(10.0, 4.0);
         style.spacing.slider_width = 220.0;
-        style.spacing.interact_size.y = 28.0;
+        style.spacing.interact_size.y = 24.0;
         cc.egui_ctx.set_style(style);
 
         let settings = AppSettings::load();
@@ -138,6 +146,9 @@ impl RockCastApp {
             devices: Vec::new(),
             source: String::new(),
             selected_station: None,
+            scroll_to_station: None,
+            station_name_col_w: None,
+            station_tags_col_w: None,
             selected_device: None,
             status: t.loading.into(),
             station_now: "—".into(),
@@ -316,7 +327,7 @@ impl RockCastApp {
                     self.playing_local = local;
                     self.playing_url = Some(url);
                     self.track = self.lang.t().track_meta_hint.into();
-                    if !local {
+                    if !local && let Some(tap_url) = tap_url {
                         self.schedule_stream_tap(generation, tap_url);
                     }
                 }
@@ -358,6 +369,7 @@ impl RockCastApp {
                         self.stations.retain(|station| station.url != next.url);
                         self.stations.insert(0, next);
                         self.selected_station = Some(0);
+                        self.scroll_to_station = Some(0);
                         self.play();
                     } else {
                         self.status = message;
@@ -458,6 +470,7 @@ impl RockCastApp {
                             self.stations = stations;
                             self.source = format!("RockServer · голос · {}", self.stations.len());
                             self.selected_station = Some(0);
+                            self.scroll_to_station = Some(0);
                             log::info!(
                                 "voice selected first station: name={:?} url={} fallbacks={}",
                                 self.stations[0].name,
@@ -465,6 +478,10 @@ impl RockCastApp {
                                 self.voice_fallback.len()
                             );
                             if result.auto_play {
+                                crate::voice_prompts::play(
+                                    crate::voice_prompts::Prompt::TurningOn,
+                                    self.lang,
+                                );
                                 self.status =
                                     "Голосовая команда распознана; запускаю станцию".into();
                                 if self.can_start_play() {
@@ -483,7 +500,13 @@ impl RockCastApp {
                                 );
                             }
                         }
-                        Err(error) => self.status = format!("Голосовое управление: {error}"),
+                        Err(error) => {
+                            crate::voice_prompts::play(
+                                crate::voice_prompts::Prompt::NotFound,
+                                self.lang,
+                            );
+                            self.status = format!("Голосовое управление: {error}");
+                        }
                     }
                 }
             }
@@ -584,6 +607,7 @@ impl RockCastApp {
             return;
         }
         self.voice_busy = true;
+        crate::voice_prompts::play(crate::voice_prompts::Prompt::Beep, self.lang);
         log::info!(
             "voice button pressed: locale=ru-RU rockserver_url={}",
             self.rockserver_url
@@ -645,8 +669,13 @@ impl RockCastApp {
         self.track = self.lang.t().connecting.into();
         self.mark_settings_dirty();
         self.persist_settings_if_needed(true);
-        self.playback
-            .play(station, device, self.volume, self.cast_relay && !local);
+        self.playback.play(
+            station,
+            device,
+            self.volume,
+            self.cast_relay && !local,
+            self.eq_enabled,
+        );
     }
 
     fn stop(&mut self) {
@@ -677,9 +706,7 @@ impl RockCastApp {
 
     fn sync_spectrum(&mut self) {
         let tap = if self.cast_relay {
-            self.playback
-                .relay_public_url()
-                .or_else(|| self.playing_url.clone())
+            self.playback.relay_tap_url()
         } else {
             self.playing_url.clone()
         };
@@ -824,7 +851,7 @@ impl RockCastApp {
             .is_some_and(|d| !d.is_local());
 
         ui.horizontal(|ui| {
-            ui.set_height(32.0);
+            ui.set_height(28.0);
             ui.label(RichText::new(t.device).color(MUTED));
             ui.add_space(8.0);
 
@@ -882,7 +909,7 @@ impl RockCastApp {
 
             ui.add_space(8.0);
             let find = egui::Button::new(RichText::new(t.find).color(FG))
-                .min_size(Vec2::new(find_w, 28.0))
+                .min_size(Vec2::new(find_w, 26.0))
                 .fill(PANEL_2);
             if ui
                 .add_enabled(!self.loading_devices, find)
@@ -928,7 +955,7 @@ impl RockCastApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let btn = egui::Button::new(RichText::new(t.refresh).color(FG))
                     .fill(PANEL_2)
-                    .min_size(Vec2::new(96.0, 28.0));
+                    .min_size(Vec2::new(92.0, 26.0));
                 if ui.add_enabled(!self.loading_stations, btn).clicked() {
                     self.refresh_stations();
                 }
@@ -947,12 +974,110 @@ impl RockCastApp {
         let is_loading = self.loading_stations;
         Self::panel(ui, |ui| {
             let full_w = ui.available_width();
-            let meta_w = 120.0;
-            let tags_w = (full_w * 0.30).clamp(120.0, 240.0);
-            let name_w = (full_w - meta_w - tags_w - 24.0).max(140.0);
+            let reserve = 24.0;
+            let available = (full_w - reserve).max(NAME_COL_MIN + TAGS_COL_MIN + META_COL_MIN);
+            let longest_name = self
+                .stations
+                .iter()
+                .map(|s| s.name.chars().count())
+                .max()
+                .unwrap_or(0);
+            let default_name_w: f32 = if longest_name > 34 {
+                260.0
+            } else if longest_name > 24 {
+                220.0
+            } else {
+                180.0
+            };
+            let default_name_w = default_name_w
+                .clamp(NAME_COL_MIN, NAME_COL_MAX)
+                .min(available - TAGS_COL_MIN - META_COL_MIN);
+            let default_tags_w = (available * 0.44)
+                .clamp(180.0, 340.0)
+                .min(available - default_name_w - META_COL_MIN);
+
+            let mut name_w = self.station_name_col_w.unwrap_or(default_name_w);
+            let mut tags_w = self.station_tags_col_w.unwrap_or(default_tags_w);
+            name_w = name_w.clamp(NAME_COL_MIN, NAME_COL_MAX);
+            tags_w = tags_w.clamp(
+                TAGS_COL_MIN,
+                (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+            );
+            let mut meta_w = available - name_w - tags_w;
+            if meta_w < META_COL_MIN {
+                let deficit = META_COL_MIN - meta_w;
+                let tags_shrink = (tags_w - TAGS_COL_MIN).min(deficit);
+                tags_w -= tags_shrink;
+                let remaining = deficit - tags_shrink;
+                if remaining > 0.0 {
+                    name_w = (name_w - remaining).max(NAME_COL_MIN);
+                }
+                meta_w = available - name_w - tags_w;
+            }
+
             let col_name_x = 8.0;
             let col_tags_x = 8.0 + name_w;
             let col_meta_x = 8.0 + name_w + tags_w;
+            let top = ui.cursor().top();
+
+            let left_handle = Rect::from_min_max(
+                Pos2::new(
+                    ui.min_rect().left() + col_tags_x - COL_RESIZE_HIT_W * 0.5,
+                    top,
+                ),
+                Pos2::new(
+                    ui.min_rect().left() + col_tags_x + COL_RESIZE_HIT_W * 0.5,
+                    top + scroll_h + 28.0,
+                ),
+            );
+            let right_handle = Rect::from_min_max(
+                Pos2::new(
+                    ui.min_rect().left() + col_meta_x - COL_RESIZE_HIT_W * 0.5,
+                    top,
+                ),
+                Pos2::new(
+                    ui.min_rect().left() + col_meta_x + COL_RESIZE_HIT_W * 0.5,
+                    top + scroll_h + 28.0,
+                ),
+            );
+            let left_resp = ui.interact(
+                left_handle,
+                ui.id().with("station_col_resize_left"),
+                Sense::drag(),
+            );
+            let right_resp = ui.interact(
+                right_handle,
+                ui.id().with("station_col_resize_right"),
+                Sense::drag(),
+            );
+            if left_resp.hovered()
+                || left_resp.dragged()
+                || right_resp.hovered()
+                || right_resp.dragged()
+            {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if left_resp.dragged() {
+                let new_name = (name_w + left_resp.drag_delta().x)
+                    .clamp(NAME_COL_MIN, NAME_COL_MAX)
+                    .min(available - TAGS_COL_MIN - META_COL_MIN);
+                self.station_name_col_w = Some(new_name);
+                name_w = new_name;
+                tags_w = tags_w.clamp(
+                    TAGS_COL_MIN,
+                    (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+                );
+                meta_w = available - name_w - tags_w;
+            }
+            if right_resp.dragged() {
+                let new_tags = (tags_w + right_resp.drag_delta().x).clamp(
+                    TAGS_COL_MIN,
+                    (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+                );
+                self.station_tags_col_w = Some(new_tags);
+                tags_w = new_tags;
+                meta_w = available - name_w - tags_w;
+            }
 
             {
                 let (head_rect, _) =
@@ -1026,10 +1151,16 @@ impl RockCastApp {
                         .filter(|s| !s.is_empty())
                         .collect::<Vec<_>>()
                         .join(" / ");
-                        let tags = truncate(&st.tags, 42);
+                        let tags_limit = ((tags_w / 6.8) as usize).clamp(18, 72);
+                        let meta_limit = ((meta_w / 6.4) as usize).clamp(10, 28);
+                        let tags = truncate(&st.tags, tags_limit);
+                        let meta = truncate(&meta, meta_limit);
 
                         let (row_rect, resp) =
                             ui.allocate_exact_size(Vec2::new(full_w, ROW_H), Sense::click());
+                        if self.scroll_to_station == Some(i) {
+                            ui.scroll_to_rect(row_rect, Some(Align::Center));
+                        }
                         if ui.is_rect_visible(row_rect) {
                             let bg = if selected {
                                 ACCENT
@@ -1054,7 +1185,7 @@ impl RockCastApp {
                             ui.painter().text(
                                 Pos2::new(row_rect.left() + col_name_x, y),
                                 egui::Align2::LEFT_CENTER,
-                                truncate(&st.name, 48),
+                                truncate(&st.name, ((name_w / 7.5) as usize).clamp(16, 64)),
                                 egui::FontId::proportional(13.5),
                                 text_color,
                             );
@@ -1083,11 +1214,30 @@ impl RockCastApp {
                         }
                     }
                 });
+
+            let guide_color = if left_resp.dragged() || right_resp.dragged() {
+                ACCENT.gamma_multiply(0.9)
+            } else {
+                Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+            };
+            let guide_top = ui.min_rect().top() + 2.0;
+            let guide_bottom = ui.min_rect().top() + scroll_h + 24.0;
+            ui.painter().vline(
+                ui.min_rect().left() + col_tags_x,
+                guide_top..=guide_bottom,
+                Stroke::new(1.0, guide_color),
+            );
+            ui.painter().vline(
+                ui.min_rect().left() + col_meta_x,
+                guide_top..=guide_bottom,
+                Stroke::new(1.0, guide_color),
+            );
         });
 
         if let Some(i) = clicked_station {
             let prev = self.selected_station;
             self.selected_station = Some(i);
+            self.scroll_to_station = Some(i);
             if let Some(s) = self.stations.get(i) {
                 log::info!(
                     "station selected: idx={i} (was {prev:?}) name='{}' url={} auto_play={should_play}",
@@ -1096,6 +1246,9 @@ impl RockCastApp {
                 );
             }
             self.mark_settings_dirty();
+        }
+        if clicked_station.is_some() || self.scroll_to_station == self.selected_station {
+            self.scroll_to_station = None;
         }
         if should_play {
             log::info!("station double-click → play()");
@@ -1106,11 +1259,11 @@ impl RockCastApp {
     fn draw_now_playing(&mut self, ui: &mut Ui) {
         Self::panel(ui, |ui| {
             ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width(), 72.0),
+                Vec2::new(ui.available_width(), 60.0),
                 Layout::left_to_right(Align::Center),
                 |ui| {
                     ui.vertical(|ui| {
-                        let text_w = (ui.available_width() - 360.0).max(160.0);
+                        let text_w = (ui.available_width() - 320.0).max(160.0);
                         ui.set_max_width(text_w);
                         ui.label(
                             RichText::new(self.lang.t().now_playing)
@@ -1126,7 +1279,7 @@ impl RockCastApp {
                         );
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        self.draw_eq(ui, Vec2::new(240.0, 56.0));
+                        self.draw_eq(ui, Vec2::new(210.0, 46.0));
                         ui.add_space(10.0);
                         let mut enabled = self.eq_enabled;
                         let toggle = ui
@@ -1146,7 +1299,7 @@ impl RockCastApp {
 
     fn draw_controls(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.set_height(34.0);
+            ui.set_height(30.0);
             ui.label(RichText::new(self.lang.t().volume).color(MUTED));
             ui.add_space(8.0);
 
@@ -1187,7 +1340,7 @@ impl RockCastApp {
                     };
                     let voice =
                         egui::Button::new(RichText::new(caption).strong().color(Color32::WHITE))
-                            .min_size(Vec2::new(72.0, 32.0))
+                            .min_size(Vec2::new(68.0, 28.0))
                             .fill(voice_color)
                             .stroke(Stroke::new(2.0, voice_color.gamma_multiply(0.65)));
                     let response = ui.add(voice).on_hover_text(
@@ -1210,7 +1363,7 @@ impl RockCastApp {
                     ui.add_space(6.0);
                 }
                 let stop = egui::Button::new(RichText::new("Stop").color(FG))
-                    .min_size(Vec2::new(72.0, 32.0))
+                    .min_size(Vec2::new(68.0, 28.0))
                     .fill(PANEL_2);
                 if ui.add_enabled(!self.shutting_down, stop).clicked() {
                     log::info!("UI Stop clicked");
@@ -1218,7 +1371,7 @@ impl RockCastApp {
                 }
                 ui.add_space(6.0);
                 let play = egui::Button::new(RichText::new("Play").strong().color(Color32::WHITE))
-                    .min_size(Vec2::new(88.0, 32.0))
+                    .min_size(Vec2::new(82.0, 28.0))
                     .fill(ACCENT);
                 if ui.add_enabled(self.can_start_play(), play).clicked() {
                     log::info!("UI Play clicked");
@@ -1258,27 +1411,33 @@ impl eframe::App for RockCastApp {
         self.tick_eq(ctx.input(|i| i.stable_dt).clamp(0.0, 0.05));
         let eq_busy = self.eq_enabled && self.playing
             || self.eq_levels.iter().any(|l| (*l - 0.08).abs() > 0.01);
-        if self.playing
+        let needs_fast_repaint = eq_busy || self.voice_recording.is_some();
+        let needs_slow_repaint = self.playing
+            || self.playing_op
             || self.loading_stations
             || self.loading_devices
             || self.settings_dirty
-            || eq_busy
-        {
+            || self.voice_busy;
+        if needs_fast_repaint {
             ctx.request_repaint_after(Duration::from_millis(16));
+        } else if needs_slow_repaint {
+            // Keep polling background playback/device work, but avoid a full 60 FPS
+            // UI loop when there is no active animation on screen.
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
 
         egui::TopBottomPanel::bottom("bottom")
             .frame(
                 Frame::new()
                     .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(16, 10)),
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show_separator_line(false)
             .show(ctx, |ui| {
                 self.draw_now_playing(ui);
-                ui.add_space(8.0);
-                self.draw_controls(ui);
                 ui.add_space(6.0);
+                self.draw_controls(ui);
+                ui.add_space(4.0);
                 self.draw_status(ui);
             });
 
@@ -1286,87 +1445,97 @@ impl eframe::App for RockCastApp {
             .frame(
                 Frame::new()
                     .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(16, 12)),
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let t = self.lang.t();
-                        ui.menu_button(
-                            RichText::new(t.menu_language).color(MUTED).size(13.0),
-                            |ui| {
-                                for lang in [Lang::Ru, Lang::En] {
-                                    let selected = self.lang == lang;
-                                    if ui.selectable_label(selected, lang.native_name()).clicked() {
-                                        if self.lang != lang {
-                                            self.set_language(ctx, lang);
+                egui::ScrollArea::vertical()
+                    .id_salt("main_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let t = self.lang.t();
+                                ui.menu_button(
+                                    RichText::new(t.menu_language).color(MUTED).size(13.0),
+                                    |ui| {
+                                        for lang in [Lang::Ru, Lang::En] {
+                                            let selected = self.lang == lang;
+                                            if ui
+                                                .selectable_label(selected, lang.native_name())
+                                                .clicked()
+                                            {
+                                                if self.lang != lang {
+                                                    self.set_language(ctx, lang);
+                                                }
+                                                ui.close();
+                                            }
                                         }
-                                        ui.close();
-                                    }
-                                }
-                            },
-                        );
-                    });
-                });
-                ui.label(
-                    RichText::new(self.lang.t().subtitle)
-                        .size(12.5)
-                        .color(MUTED),
-                );
-                ui.add_space(10.0);
-                Self::panel(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let mut enabled = self.rockserver_enabled;
-                        if ui
-                            .checkbox(&mut enabled, "RockServer (поиск и голос)")
-                            .changed()
-                        {
-                            self.rockserver_enabled = enabled;
-                            self.mark_settings_dirty();
-                            self.refresh_stations();
-                        }
-                        if self.rockserver_enabled {
-                            ui.label(RichText::new("URL").color(MUTED));
-                            if ui
-                                .text_edit_singleline(&mut self.rockserver_url)
-                                .lost_focus()
-                            {
-                                self.mark_settings_dirty();
-                            }
-                            ui.label(RichText::new("Токен").color(MUTED));
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut self.rockserver_bearer_token)
-                                        .password(true),
-                                )
-                                .lost_focus()
-                            {
-                                self.mark_settings_dirty();
-                            }
-                            ui.label(
-                                RichText::new(
-                                    "Токен сохраняется только в локальных настройках RockCast.",
-                                )
-                                .color(MUTED)
-                                .size(11.0),
-                            );
-                        } else {
-                            ui.label(
-                                RichText::new(
-                                    "Автономный режим: локальный каталог и Radio Browser",
-                                )
+                                    },
+                                );
+                            });
+                        });
+                        ui.label(
+                            RichText::new(self.lang.t().subtitle)
+                                .size(12.5)
                                 .color(MUTED),
-                            );
-                        }
-                    });
-                });
-                ui.add_space(8.0);
-                self.draw_device_row(ui);
-                ui.add_space(8.0);
+                        );
+                        ui.add_space(8.0);
+                        Self::panel(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let mut enabled = self.rockserver_enabled;
+                                if ui
+                                    .checkbox(&mut enabled, "RockServer (поиск и голос)")
+                                    .changed()
+                                {
+                                    self.rockserver_enabled = enabled;
+                                    self.mark_settings_dirty();
+                                    self.refresh_stations();
+                                }
+                                if self.rockserver_enabled {
+                                    ui.label(RichText::new("URL").color(MUTED));
+                                    if ui
+                                        .text_edit_singleline(&mut self.rockserver_url)
+                                        .lost_focus()
+                                    {
+                                        self.mark_settings_dirty();
+                                    }
+                                    ui.label(RichText::new("Токен").color(MUTED));
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.rockserver_bearer_token,
+                                            )
+                                            .password(true),
+                                        )
+                                        .lost_focus()
+                                    {
+                                        self.mark_settings_dirty();
+                                    }
+                                    ui.label(
+                                        RichText::new(
+                                            "Токен сохраняется только в локальных настройках RockCast.",
+                                        )
+                                        .color(MUTED)
+                                        .size(11.0),
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new(
+                                            "Автономный режим: локальный каталог и Radio Browser",
+                                        )
+                                        .color(MUTED),
+                                    );
+                                }
+                            });
+                        });
+                        ui.add_space(6.0);
+                        self.draw_device_row(ui);
+                        ui.add_space(6.0);
 
-                let list_h = (ui.available_height() - 8.0).max(120.0);
-                self.draw_station_list(ui, list_h);
+                        let list_h = (ui.available_height() - 2.0).max(120.0);
+                        self.draw_station_list(ui, list_h);
+                    });
             });
     }
 

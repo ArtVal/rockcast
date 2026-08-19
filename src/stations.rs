@@ -22,16 +22,24 @@ pub struct Station {
 
 impl Station {
     pub fn content_type(&self) -> &'static str {
-        let c = self.codec.to_lowercase();
+        let c = self.effective_codec();
         if matches!(c.as_str(), "aac" | "aac+" | "he-aac" | "aacp") {
             "audio/aac"
-        } else if matches!(c.as_str(), "ogg" | "opus" | "vorbis") {
+        } else if c == "opus" {
+            "audio/ogg; codecs=opus"
+        } else if c == "vorbis" {
+            "audio/ogg; codecs=vorbis"
+        } else if c == "ogg" {
             "audio/ogg"
         } else if c == "flac" {
             "audio/flac"
         } else {
             "audio/mpeg"
         }
+    }
+
+    fn effective_codec(&self) -> String {
+        infer_codec(&self.codec, &self.url)
     }
 }
 
@@ -393,4 +401,59 @@ fn order_stations(stations: Vec<Station>) -> Vec<Station> {
     others.sort_by_key(|s| key(s));
     metal.extend(others);
     metal
+}
+
+fn infer_codec(codec: &str, url: &str) -> String {
+    let normalized = codec.trim().to_lowercase();
+    let lower_url = url.to_lowercase();
+    if lower_url.ends_with(".opus") || lower_url.contains(".opus?") {
+        return "opus".into();
+    }
+    if lower_url.ends_with(".ogg") || lower_url.contains(".ogg?") {
+        return if normalized.is_empty() {
+            "ogg".into()
+        } else {
+            normalized
+        };
+    }
+    normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Station;
+
+    fn station(codec: &str) -> Station {
+        Station {
+            name: "test".into(),
+            url: "https://example.test/stream".into(),
+            tags: String::new(),
+            bitrate: 128,
+            codec: codec.into(),
+        }
+    }
+
+    #[test]
+    fn opus_station_uses_codec_specific_ogg_type() {
+        assert_eq!(station("opus").content_type(), "audio/ogg; codecs=opus");
+    }
+
+    #[test]
+    fn vorbis_station_uses_codec_specific_ogg_type() {
+        assert_eq!(station("vorbis").content_type(), "audio/ogg; codecs=vorbis");
+    }
+
+    #[test]
+    fn opus_url_overrides_generic_ogg_codec() {
+        let mut s = station("ogg");
+        s.url = "http://play.global.audio/avtoradio.opus".into();
+        assert_eq!(s.content_type(), "audio/ogg; codecs=opus");
+    }
+
+    #[test]
+    fn opus_url_overrides_missing_codec() {
+        let mut s = station("");
+        s.url = "http://play.global.audio/avtoradio.opus".into();
+        assert_eq!(s.content_type(), "audio/ogg; codecs=opus");
+    }
 }

@@ -50,6 +50,12 @@ struct LiveSession {
     media_session_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadProgress {
+    Pending,
+    Ready(Option<i64>),
+}
+
 impl LiveSession {
     fn start_heartbeat(channel: Arc<CastChannel>) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
         let stop = Arc::new(AtomicBool::new(false));
@@ -176,10 +182,7 @@ impl CastService {
             &json!({ "type": "CONNECT", "userAgent": "RockCast/0.1" }),
         )?;
 
-        let mut content_types = vec![content_type.to_string()];
-        if content_type != "audio/mpeg" {
-            content_types.push("audio/mpeg".into());
-        }
+        let content_types = candidate_content_types(content_type);
 
         let mut last_err = None;
         let mut media_session_id = None;
@@ -206,6 +209,13 @@ impl CastService {
         }
 
         let (stop_hb, hb) = LiveSession::start_heartbeat(Arc::clone(&channel));
+        // Some Chromecast firmware revisions occasionally keep a freshly loaded
+        // live stream in a silent pending state until an explicit media command.
+        // A best-effort PLAY nudge mirrors the user workaround (pause/play) and
+        // is harmless when autoplay already started successfully.
+        if let Some(mid) = media_session_id {
+            let _ = Self::nudge_play(&channel, &app.transport_id, mid);
+        }
         *self.current.lock() = Some((
             device.discovered.id.clone(),
             LiveSession {
@@ -304,6 +314,23 @@ impl CastService {
         Ok(())
     }
 
+    fn nudge_play(
+        channel: &CastChannel,
+        transport_id: &str,
+        media_session_id: i64,
+    ) -> Result<(), CastError> {
+        channel.send_json(
+            transport_id,
+            NS_MEDIA,
+            &json!({
+                "type": "PLAY",
+                "requestId": channel.next_request_id(),
+                "mediaSessionId": media_session_id,
+            }),
+        )?;
+        Ok(())
+    }
+
     fn load_media(
         channel: &CastChannel,
         app: &AppSession,
@@ -313,6 +340,7 @@ impl CastService {
         cancel: &AtomicBool,
     ) -> Result<Option<i64>, CastError> {
         let req = channel.next_request_id();
+        let mut idle_hits: u32 = 0;
         channel.send_json(
             &app.transport_id,
             NS_MEDIA,
@@ -348,24 +376,34 @@ impl CastService {
                 let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match typ {
                     "MEDIA_STATUS" => {
-                        let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                        let status = v
+                        if let Some(st) = v
                             .get("status")
                             .and_then(|s| s.as_array())
-                            .and_then(|a| a.first());
-                        if let Some(st) = status {
+                            .and_then(|a| a.first())
+                        {
                             let content_ok = st
                                 .pointer("/media/contentId")
                                 .and_then(|c| c.as_str())
                                 .is_some_and(|c| c == url);
-                            if rid == req || content_ok {
-                                let mid = st.get("mediaSessionId").and_then(|m| m.as_i64());
-                                return Ok(Some(mid));
+                            let state = st
+                                .get("playerState")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            if content_ok && state == "IDLE" {
+                                idle_hits = idle_hits.saturating_add(1);
+                                if idle_hits >= 10 {
+                                    return Err(ChannelError::Msg(
+                                        "Cast stayed IDLE too long after LOAD".into(),
+                                    ));
+                                }
+                            } else if state == "BUFFERING" || state == "PLAYING" {
+                                idle_hits = 0;
                             }
-                        } else if rid == req {
-                            return Ok(Some(None));
                         }
-                        Ok(None)
+                        match classify_media_status(&v, req, url)? {
+                            LoadProgress::Pending => Ok(None),
+                            LoadProgress::Ready(mid) => Ok(Some(mid)),
+                        }
                     }
                     "LOAD_FAILED" | "LOAD_CANCELLED" | "INVALID_REQUEST" | "ERROR" => {
                         let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
@@ -464,6 +502,87 @@ impl CastService {
     }
 }
 
+fn candidate_content_types(content_type: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let normalized = content_type.trim().to_ascii_lowercase();
+    let mut push = |value: &str| {
+        if !value.is_empty() && !out.iter().any(|existing| existing == value) {
+            out.push(value.to_string());
+        }
+    };
+
+    push(&normalized);
+    if normalized.contains("opus") {
+        push("audio/ogg; codecs=opus");
+        push("audio/ogg");
+        push("application/ogg");
+        push("audio/opus");
+    } else if normalized.contains("vorbis") || normalized == "audio/ogg" || normalized == "application/ogg" {
+        push("audio/ogg; codecs=vorbis");
+        push("audio/ogg");
+        push("application/ogg");
+    }
+    if normalized != "audio/mpeg" {
+        push("audio/mpeg");
+    }
+    out
+}
+
+fn classify_media_status(
+    v: &serde_json::Value,
+    req: u32,
+    url: &str,
+) -> Result<LoadProgress, ChannelError> {
+    let rid = v.get("requestId").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let status = v
+        .get("status")
+        .and_then(|s| s.as_array())
+        .and_then(|a| a.first());
+    let Some(st) = status else {
+        return if rid == req {
+            Ok(LoadProgress::Ready(None))
+        } else {
+            Ok(LoadProgress::Pending)
+        };
+    };
+
+    let content_ok = st
+        .pointer("/media/contentId")
+        .and_then(|c| c.as_str())
+        .is_some_and(|c| c == url);
+    if rid != req && !content_ok {
+        return Ok(LoadProgress::Pending);
+    }
+
+    let state = st
+        .get("playerState")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let idle_reason = st
+        .get("idleReason")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let mid = st.get("mediaSessionId").and_then(|m| m.as_i64());
+    log::info!(
+        "Cast LOAD status: state={} idleReason={} content_ok={} requestId={}",
+        state,
+        idle_reason,
+        content_ok,
+        rid
+    );
+
+    match state {
+        "BUFFERING" | "PLAYING" | "PAUSED" => Ok(LoadProgress::Ready(mid)),
+        "IDLE" if matches!(idle_reason, "ERROR" | "CANCELLED" | "INTERRUPTED" | "FINISHED") => {
+            Err(ChannelError::Msg(format!(
+                "Cast LOAD stalled in IDLE ({idle_reason})"
+            )))
+        }
+        "IDLE" | "" => Ok(LoadProgress::Pending),
+        _ => Ok(LoadProgress::Pending),
+    }
+}
+
 #[derive(Clone)]
 struct AppSession {
     transport_id: String,
@@ -501,4 +620,53 @@ fn parse_dmr(v: &serde_json::Value) -> Option<AppSession> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoadProgress, candidate_content_types, classify_media_status};
+    use serde_json::json;
+
+    #[test]
+    fn opus_candidates_include_ogg_variants() {
+        let values = candidate_content_types("audio/ogg; codecs=opus");
+        assert!(values.iter().any(|v| v == "audio/ogg; codecs=opus"));
+        assert!(values.iter().any(|v| v == "audio/ogg"));
+        assert!(values.iter().any(|v| v == "application/ogg"));
+        assert!(values.iter().any(|v| v == "audio/opus"));
+    }
+
+    #[test]
+    fn idle_status_is_not_treated_as_success() {
+        let payload = json!({
+            "type": "MEDIA_STATUS",
+            "requestId": 7,
+            "status": [{
+                "mediaSessionId": 2,
+                "playerState": "IDLE",
+                "media": { "contentId": "http://127.0.0.1/stream" }
+            }]
+        });
+        assert_eq!(
+            classify_media_status(&payload, 7, "http://127.0.0.1/stream").unwrap(),
+            LoadProgress::Pending
+        );
+    }
+
+    #[test]
+    fn buffering_status_is_treated_as_success() {
+        let payload = json!({
+            "type": "MEDIA_STATUS",
+            "requestId": 7,
+            "status": [{
+                "mediaSessionId": 2,
+                "playerState": "BUFFERING",
+                "media": { "contentId": "http://127.0.0.1/stream" }
+            }]
+        });
+        assert_eq!(
+            classify_media_status(&payload, 7, "http://127.0.0.1/stream").unwrap(),
+            LoadProgress::Ready(Some(2))
+        );
+    }
 }

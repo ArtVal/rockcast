@@ -53,7 +53,7 @@ pub enum PlaybackEvent {
     },
     PlayOk {
         url: String,
-        tap_url: String,
+        tap_url: Option<String>,
         generation: u64,
         local: bool,
     },
@@ -116,6 +116,10 @@ impl PlaybackController {
         self.relay.latest_title()
     }
 
+    pub fn relay_tap_url(&self) -> Option<String> {
+        self.relay.tap_url()
+    }
+
     pub fn local_levels(&self) -> [f32; crate::spectrum::BANDS] {
         self.local.levels()
     }
@@ -126,6 +130,7 @@ impl PlaybackController {
         device: OutputDevice,
         volume: u8,
         use_relay: bool,
+        spectrum_enabled: bool,
     ) -> u64 {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let local_output = device.is_local();
@@ -187,6 +192,12 @@ impl PlaybackController {
                     (station.url.clone(), station.content_type().to_string())
                 };
 
+                if use_relay {
+                    // Give relay feeder a short head start to reduce "silent start"
+                    // races on some Chromecast firmware/network combinations.
+                    let _ = relay.wait_for_data(8 * 1024, std::time::Duration::from_millis(900));
+                }
+
                 if runtime_cancel.is_cancelled()
                     || play_generation.load(Ordering::Acquire) != generation
                 {
@@ -209,9 +220,9 @@ impl PlaybackController {
                     Ok(()) => {
                         let _ = cast.set_volume_current(cast_volume(volume));
                         let tap_url = if use_relay {
-                            relay.public_url().unwrap_or_else(|| station.url.clone())
+                            relay.tap_url()
                         } else {
-                            station.url.clone()
+                            Some(station.url.clone())
                         };
                         let _ = tx.send(PlaybackEvent::PlayOk {
                             url: station.url,
@@ -241,6 +252,7 @@ impl PlaybackController {
                     &local_dev,
                     &station.url,
                     local_volume(volume),
+                    spectrum_enabled,
                     Some(title_tx),
                     |status| {
                         if play_generation.load(Ordering::Acquire) == generation {
@@ -259,7 +271,7 @@ impl PlaybackController {
                     Ok(()) => {
                         let _ = tx.send(PlaybackEvent::PlayOk {
                             url: station.url.clone(),
-                            tap_url: station.url,
+                            tap_url: Some(station.url),
                             generation,
                             local: true,
                         });
@@ -396,7 +408,7 @@ mod tests {
         };
         let stale = PlaybackEvent::PlayOk {
             url: "old".into(),
-            tap_url: "old".into(),
+            tap_url: Some("old".into()),
             generation: 8,
             local: true,
         };
@@ -416,7 +428,7 @@ mod tests {
         controller.generation.store(3, Ordering::Release);
         let event = PlaybackEvent::PlayOk {
             url: "station".into(),
-            tap_url: "station".into(),
+            tap_url: Some("station".into()),
             generation: 3,
             local: true,
         };
