@@ -129,6 +129,7 @@ pub fn run_feeder_transcode(
     run_live_decode_relay_pcm(
         url,
         &stop,
+        &fanout,
         &mut spectrum,
         |chunk| fanout.push(chunk),
         |rate, ch| fanout.set_pcm_format(rate, ch),

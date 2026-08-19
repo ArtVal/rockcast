@@ -41,9 +41,9 @@ pub(super) fn relay_emit_pcm(
         *ctx.format_set = true;
     }
     let out_rate = cast_pcm_rate();
-    let tap = spectrum as *mut SpectrumTap;
     let ch_usize = ch as usize;
     ctx.resampler.push(pcm, |resampled| {
+        spectrum.push_f32(resampled, ch_usize, out_rate);
         ctx.pcm_bytes.clear();
         ctx.pcm_bytes.reserve(resampled.len() * 2);
         for sample in resampled {
@@ -51,10 +51,6 @@ pub(super) fn relay_emit_pcm(
             ctx.pcm_bytes.extend_from_slice(&v.to_le_bytes());
         }
         ctx.smoother.push(ctx.pcm_bytes, |chunk| {
-            // SAFETY: single decode thread; spectrum on fixed 20 ms relay frames.
-            unsafe {
-                (*tap).push_i16_le(chunk, ch_usize, out_rate);
-            }
             push(chunk);
         });
     });
@@ -64,6 +60,7 @@ pub(super) fn relay_emit_pcm(
 pub fn run_live_decode_relay_pcm(
     url: &str,
     stop: &Arc<AtomicBool>,
+    fanout: &crate::relay::Fanout,
     spectrum: &mut SpectrumTap,
     mut push: impl FnMut(&[u8]) + Send,
     mut on_format: impl FnMut(u32, u16) + Send,
@@ -112,6 +109,7 @@ pub fn run_live_decode_relay_pcm(
                     &mut on_format,
                     &mut push,
                 );
+                fanout.pace_if_full();
             }
         }
         StreamFormat::AacAdts => {
@@ -119,6 +117,7 @@ pub fn run_live_decode_relay_pcm(
                 peek,
                 reader,
                 stop,
+                fanout,
                 spectrum,
                 &mut pcm_bytes,
                 &mut push,
@@ -135,6 +134,7 @@ pub fn run_live_decode_relay_pcm(
                 peek,
                 reader,
                 stop,
+                fanout,
                 spectrum,
                 &mut pcm_bytes,
                 &mut push,

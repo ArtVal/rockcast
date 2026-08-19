@@ -66,9 +66,14 @@ impl SpectrumTap {
 
     pub fn push_f32(&mut self, pcm: &[f32], channels: usize, sample_rate: u32) {
         let ch = channels.max(1);
+        let max_frames = HOP;
+        let take = pcm.len().min(max_frames * ch);
+        if take == 0 {
+            return;
+        }
         self.mono_buf.clear();
-        self.mono_buf.reserve(pcm.len() / ch);
-        for frame in pcm.chunks(ch) {
+        self.mono_buf.reserve(take / ch);
+        for frame in pcm[..take].chunks(ch) {
             self.mono_buf.push(frame.iter().sum::<f32>() / ch as f32);
         }
         self.analyze(sample_rate);
@@ -166,8 +171,9 @@ impl BandAnalyzer {
         }
 
         self.pcm.extend(samples);
-        while self.pcm.len() > FFT_SIZE + HOP {
-            self.pcm.drain(..HOP);
+        const MAX_PCM: usize = FFT_SIZE + HOP;
+        if self.pcm.len() > MAX_PCM {
+            self.pcm.drain(..self.pcm.len() - MAX_PCM);
         }
 
         if self.last_fft.elapsed() < LEVEL_PUBLISH_INTERVAL || self.pcm.len() < FFT_SIZE {

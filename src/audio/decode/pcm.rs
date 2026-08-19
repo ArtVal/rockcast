@@ -39,6 +39,19 @@ impl SpscAudioRing {
         self.count()
     }
 
+    /// Drop oldest samples to keep the ring near the live edge.
+    pub fn drop_oldest(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let r = self.read.load(Ordering::Relaxed);
+        let w = self.write.load(Ordering::Acquire);
+        let avail = w.wrapping_sub(r);
+        let drop = count.min(avail);
+        self.read
+            .store(r.wrapping_add(drop), Ordering::Release);
+    }
+
     pub fn clear(&self) {
         let w = self.write.load(Ordering::Relaxed);
         self.read.store(w, Ordering::Release);
@@ -211,6 +224,7 @@ impl SteadyBytePlayout {
 
 pub struct PcmSmoother {
     buf: Vec<u8>,
+    read_pos: usize,
     frame_bytes: usize,
 }
 
@@ -218,12 +232,25 @@ impl PcmSmoother {
     pub fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             buf: Vec::new(),
+            read_pos: 0,
             frame_bytes: frame_bytes_for(sample_rate, channels),
         }
     }
 
     pub fn set_format(&mut self, sample_rate: u32, channels: u16) {
-        self.frame_bytes = frame_bytes_for(sample_rate, channels);
+        let frame_bytes = frame_bytes_for(sample_rate, channels);
+        if frame_bytes != self.frame_bytes {
+            self.buf.clear();
+            self.read_pos = 0;
+            self.frame_bytes = frame_bytes;
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.read_pos > 8192 {
+            self.buf.drain(..self.read_pos);
+            self.read_pos = 0;
+        }
     }
 
     pub fn push(&mut self, pcm: &[u8], mut emit: impl FnMut(&[u8])) {
@@ -231,18 +258,22 @@ impl PcmSmoother {
             return;
         }
         self.buf.extend_from_slice(pcm);
-        while self.buf.len() >= self.frame_bytes {
-            emit(&self.buf[..self.frame_bytes]);
-            self.buf.drain(..self.frame_bytes);
+        while self.read_pos + self.frame_bytes <= self.buf.len() {
+            emit(&self.buf[self.read_pos..self.read_pos + self.frame_bytes]);
+            self.read_pos += self.frame_bytes;
         }
+        self.compact();
     }
 
     pub fn flush(&mut self, mut emit: impl FnMut(&[u8])) {
-        if self.buf.is_empty() {
+        if self.read_pos >= self.buf.len() {
+            self.buf.clear();
+            self.read_pos = 0;
             return;
         }
-        emit(&self.buf);
+        emit(&self.buf[self.read_pos..]);
         self.buf.clear();
+        self.read_pos = 0;
     }
 }
 
@@ -253,6 +284,8 @@ pub struct PcmResampler {
     channels: usize,
     src_pos: f64,
     pending: Vec<f32>,
+    pending_start: usize,
+    out_buf: Vec<f32>,
 }
 
 /// Alias for relay/Cast paths that target 48 kHz.
@@ -266,6 +299,8 @@ impl PcmResampler {
             channels: usize::from(channels.max(1)),
             src_pos: 0.0,
             pending: Vec::new(),
+            pending_start: 0,
+            out_buf: Vec::new(),
         }
     }
 
@@ -281,6 +316,23 @@ impl PcmResampler {
             self.channels = channels;
             self.src_pos = 0.0;
             self.pending.clear();
+            self.pending_start = 0;
+            self.out_buf.clear();
+        }
+    }
+
+    fn pending_len(&self) -> usize {
+        self.pending.len().saturating_sub(self.pending_start)
+    }
+
+    fn pending_at(&self, index: usize) -> f32 {
+        self.pending[self.pending_start + index]
+    }
+
+    fn compact_pending(&mut self) {
+        if self.pending_start > 4096 {
+            self.pending.drain(..self.pending_start);
+            self.pending_start = 0;
         }
     }
 
@@ -295,27 +347,28 @@ impl PcmResampler {
         self.pending.extend_from_slice(pcm);
         let ch = self.channels;
         let ratio = f64::from(self.src_rate) / f64::from(self.dst_rate);
-        let mut out = Vec::new();
+        self.out_buf.clear();
         loop {
             let need = (self.src_pos.floor() as usize + 2) * ch;
-            if self.pending.len() < need {
+            if self.pending_len() < need {
                 break;
             }
             let i0 = self.src_pos.floor() as usize;
             let frac = (self.src_pos - i0 as f64) as f32;
             for c in 0..ch {
-                let s0 = self.pending[i0 * ch + c];
-                let s1 = self.pending[(i0 + 1) * ch + c];
-                out.push(s0 + (s1 - s0) * frac);
+                let s0 = self.pending_at(i0 * ch + c);
+                let s1 = self.pending_at((i0 + 1) * ch + c);
+                self.out_buf.push(s0 + (s1 - s0) * frac);
             }
             self.src_pos += ratio;
-            while self.src_pos >= 1.0 && self.pending.len() >= ch {
-                self.pending.drain(..ch);
+            while self.src_pos >= 1.0 && self.pending_len() >= ch {
+                self.pending_start += ch;
                 self.src_pos -= 1.0;
             }
+            self.compact_pending();
         }
-        if !out.is_empty() {
-            emit(&out);
+        if !self.out_buf.is_empty() {
+            emit(&self.out_buf);
         }
     }
 }
@@ -332,12 +385,24 @@ pub fn upmix_interleaved(pcm: &[f32], src_ch: usize, dst_ch: usize) -> Vec<f32> 
     let dst_ch = dst_ch.max(1);
     let frames = pcm.len() / src_ch;
     let mut out = Vec::with_capacity(frames * dst_ch);
+    upmix_interleaved_into(pcm, src_ch, dst_ch, &mut out);
+    out
+}
+
+pub fn upmix_interleaved_into(pcm: &[f32], src_ch: usize, dst_ch: usize, out: &mut Vec<f32>) {
+    out.clear();
+    if src_ch == dst_ch || src_ch == 0 {
+        out.extend_from_slice(pcm);
+        return;
+    }
+    let src_ch = src_ch.max(1);
+    let dst_ch = dst_ch.max(1);
+    out.reserve((pcm.len() / src_ch) * dst_ch);
     for frame in pcm.chunks(src_ch) {
         for c in 0..dst_ch {
             out.push(frame[c.min(src_ch - 1)]);
         }
     }
-    out
 }
 
 fn frame_bytes_for(sample_rate: u32, channels: u16) -> usize {
@@ -347,4 +412,19 @@ fn frame_bytes_for(sample_rate: u32, channels: u16) -> usize {
 fn frame_bytes_for_ms(sample_rate: u32, channels: u16, ms: u32) -> usize {
     let channels = usize::from(channels.max(1));
     ((sample_rate as usize * channels * 2 * ms as usize) / 1000).max(channels * 2 * 256)
+}
+
+#[cfg(test)]
+mod pcm_tests {
+    use super::PcmSmoother;
+
+    #[test]
+    fn smoother_emits_aligned_frames() {
+        let mut smoother = PcmSmoother::new(48_000, 2);
+        let frame_bytes = 48_000usize * 2 * 2 * 20 / 1000;
+        let chunk = vec![0u8; frame_bytes * 3];
+        let mut frames = 0usize;
+        smoother.push(&chunk, |_| frames += 1);
+        assert_eq!(frames, 3, "expected three 20ms frames");
+    }
 }

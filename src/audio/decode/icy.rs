@@ -118,30 +118,67 @@ pub struct StopAwareBody {
 }
 
 impl StopAwareBody {
-    pub fn spawn(mut resp: reqwest::blocking::Response, stop: Arc<AtomicBool>) -> Self {
-        let (tx, rx) = mpsc::sync_channel(128);
+    pub fn spawn(resp: reqwest::blocking::Response, stop: Arc<AtomicBool>) -> Self {
+        let (tx, rx) = mpsc::sync_channel(32);
         let stop_prod = Arc::clone(&stop);
         std::thread::spawn(move || {
-            let mut buf = vec![0u8; 16 * 1024];
+            let (read_tx, read_rx) = mpsc::sync_channel::<io::Result<Option<Vec<u8>>>>(2);
+            std::thread::spawn(move || {
+                let mut resp = resp;
+                let mut buf = vec![0u8; 16 * 1024];
+                loop {
+                    match resp.read(&mut buf) {
+                        Ok(0) => {
+                            let _ = read_tx.send(Ok(None));
+                            break;
+                        }
+                        Ok(n) => {
+                            if read_tx
+                                .send(Ok(Some(buf[..n].to_vec())))
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) => {
+                            let _ = read_tx.send(Err(e));
+                            break;
+                        }
+                    }
+                }
+            });
             loop {
                 if stop_prod.load(Ordering::SeqCst) {
                     break;
                 }
-                match resp.read(&mut buf) {
-                    Ok(0) => {
-                        let _ = tx.send(Ok(Vec::new()));
+                match read_rx.recv_timeout(READ_POLL) {
+                    Ok(Ok(None)) => {
+                        let _ = tx.try_send(Ok(Vec::new()));
                         break;
                     }
-                    Ok(n) => {
-                        if tx.send(Ok(buf[..n].to_vec())).is_err() {
-                            break;
+                    Ok(Ok(Some(chunk))) => {
+                        let mut msg = Ok(chunk);
+                        loop {
+                            if stop_prod.load(Ordering::SeqCst) {
+                                return;
+                            }
+                            match tx.try_send(msg) {
+                                Ok(()) => break,
+                                Err(mpsc::TrySendError::Full(m)) => {
+                                    msg = m;
+                                    std::thread::sleep(Duration::from_millis(25));
+                                }
+                                Err(mpsc::TrySendError::Disconnected(_)) => return,
+                            }
                         }
                     }
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
+                    Ok(Err(e)) => {
+                        let _ = tx.try_send(Err(e));
                         break;
                     }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
         });
@@ -173,11 +210,12 @@ impl Read for StopAwareBody {
                 }
                 return Ok(n);
             }
-            let chunk = match self.rx.recv() {
+            let chunk = match self.rx.recv_timeout(READ_POLL) {
                 Ok(Ok(chunk)) if chunk.is_empty() => return Ok(0),
                 Ok(Ok(chunk)) => chunk,
                 Ok(Err(e)) => return Err(e),
-                Err(mpsc::RecvError) => return Ok(0),
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
             };
             self.pending = chunk;
             self.pending_at = 0;

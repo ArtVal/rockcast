@@ -57,13 +57,18 @@ impl IcyWatcher {
         }));
     }
 
-    /// Stops the watcher without blocking the UI thread.
+    /// Stops the watcher without blocking the UI thread for long.
     pub fn stop_async(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
-            // The request has a finite timeout and observes `stop`; detaching
-            // avoids creating an additional joiner thread for every UI action.
-            drop(j);
+            let (done_tx, done_rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = j.join();
+                let _ = done_tx.send(());
+            });
+            if done_rx.recv_timeout(Duration::from_secs(2)).is_err() {
+                log::warn!("icy watcher did not exit within 2s");
+            }
         }
     }
 }

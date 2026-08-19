@@ -20,6 +20,15 @@ use super::symphonia::SpectrumState;
 
 const MAX_PCM_SAMPLES: usize = 8192 * 2;
 
+/// PCM output rate after SBR/PS upsampling (`sampleRate`), not core AAC rate (`aacSampleRate`).
+fn fdk_pcm_sample_rate(info: &fdk_aac::dec::StreamInfo) -> u32 {
+    if info.sampleRate > 0 {
+        info.sampleRate as u32
+    } else {
+        info.aacSampleRate.max(1) as u32
+    }
+}
+
 fn adts_total_frame_len(data: &[u8]) -> Option<usize> {
     if data.len() < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0 {
         return None;
@@ -98,7 +107,7 @@ fn emit_fdk_pcm(
 ) {
     let info = decoder.stream_info();
     let channels = info.numChannels.max(1) as usize;
-    let sample_rate = info.aacSampleRate.max(1) as u32;
+    let sample_rate = fdk_pcm_sample_rate(info);
     let size = decoder.decoded_frame_size();
     if size == 0 || pcm_i16.len() < size {
         return;
@@ -161,6 +170,7 @@ pub(super) fn decode_fdk_adts_relay(
     peek: Vec<u8>,
     reader: Box<dyn Read + Send>,
     stop: &Arc<AtomicBool>,
+    fanout: &crate::relay::Fanout,
     spectrum: &mut crate::audio::spectrum::SpectrumTap,
     pcm_bytes: &mut Vec<u8>,
     push: &mut impl FnMut(&[u8]),
@@ -186,7 +196,7 @@ pub(super) fn decode_fdk_adts_relay(
                 Ok(()) => {
                     let info = decoder.stream_info();
                     let channels = info.numChannels.max(1) as u16;
-                    let sample_rate = info.aacSampleRate.max(1) as u32;
+                    let sample_rate = fdk_pcm_sample_rate(info);
                     let size = decoder.decoded_frame_size();
                     if size == 0 || pcm_i16.len() < size {
                         continue;
@@ -207,6 +217,7 @@ pub(super) fn decode_fdk_adts_relay(
                         on_format,
                         push,
                     );
+                    fanout.pace_if_full();
                 }
                 Err(DecoderError::NOT_ENOUGH_BITS) | Err(DecoderError::TRANSPORT_SYNC_ERROR) => break,
                 Err(e) => {

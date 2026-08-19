@@ -10,8 +10,12 @@ use std::sync::{
 };
 
 use crate::{
-    cast::CastService, local::LocalPlayer, output::OutputDevice, relay::StreamRelay,
-    runtime::BackgroundRuntime, stations::Station,
+    cast::CastService,
+    local::LocalPlayer,
+    output::OutputDevice,
+    relay::StreamRelay,
+    runtime::BackgroundRuntime,
+    stations::Station,
 };
 
 pub use phase::{PlaybackEvent, PlaybackPhase};
@@ -75,6 +79,10 @@ impl PlaybackController {
         self.relay.levels()
     }
 
+    pub fn relay_active(&self) -> bool {
+        self.relay.is_active()
+    }
+
     pub fn local_levels(&self) -> [f32; crate::audio::spectrum::BANDS] {
         self.local.levels()
     }
@@ -88,6 +96,7 @@ impl PlaybackController {
         spectrum_enabled: bool,
     ) -> u64 {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.cast.cancel_pending();
         let local_output = device.is_local();
         self.phase = PlaybackPhase::Opening {
             generation,
@@ -104,7 +113,9 @@ impl PlaybackController {
             let title_events = self.event_tx.clone();
             let title_generation = Arc::clone(&self.generation);
             let _ = self.runtime.spawn(move |cancel| {
-                while !cancel.is_cancelled() {
+                while !cancel.is_cancelled()
+                    && title_generation.load(Ordering::Acquire) == generation
+                {
                     match title_rx.recv_timeout(std::time::Duration::from_millis(200)) {
                         Ok(title) if title_generation.load(Ordering::Acquire) == generation => {
                             let _ = title_events.send(PlaybackEvent::Title { title, generation });
@@ -127,6 +138,7 @@ impl PlaybackController {
                 }
 
                 let cancel = std::sync::atomic::AtomicBool::new(false);
+                let mut relay_owned = false;
                 let (load_url, load_ct) = if use_relay {
                     match relay.start(
                         &station.url,
@@ -134,7 +146,10 @@ impl PlaybackController {
                         station.content_type(),
                         &cancel,
                     ) {
-                        Ok(value) => value,
+                        Ok(value) => {
+                            relay_owned = true;
+                            value
+                        }
                         Err(e) => {
                             let _ = tx.send(PlaybackEvent::Error {
                                 message: e.to_string(),
@@ -169,7 +184,9 @@ impl PlaybackController {
                 if runtime_cancel.is_cancelled()
                     || play_generation.load(Ordering::Acquire) != generation
                 {
-                    relay.stop();
+                    if relay_owned {
+                        relay.stop();
+                    }
                     return;
                 }
                 let result = cast.play(&cast_dev, &load_url, &load_ct, &station.name, |status| {
@@ -181,13 +198,12 @@ impl PlaybackController {
                     }
                 });
                 if play_generation.load(Ordering::Acquire) != generation {
-                    relay.stop();
                     return;
                 }
                 match result {
                     Ok(()) => {
                         let _ = cast.set_volume_current(cast_volume(volume));
-                        let tap_url = if use_relay {
+                        let tap_url = if relay_owned {
                             relay.tap_url()
                         } else {
                             Some(station.url.clone())
@@ -200,7 +216,9 @@ impl PlaybackController {
                         });
                     }
                     Err(e) => {
-                        relay.stop();
+                        if relay_owned {
+                            relay.stop();
+                        }
                         let _ = tx.send(PlaybackEvent::Error {
                             message: e.to_string(),
                             generation,

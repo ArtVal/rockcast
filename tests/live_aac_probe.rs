@@ -81,6 +81,11 @@ fn live_aac_fdk_decode_is_sane() {
     assert!(bad == 0, "non-finite samples");
     assert!(peak < 1.5, "peak too high — likely garbage decode");
     assert!(rms > 0.001 && rms < 0.5, "rms {rms} out of music-like range");
+    let rate = src_rate_wait.load(Ordering::SeqCst);
+    assert!(
+        rate >= 44_100,
+        "HE-AAC/aacp should report PCM output rate (sampleRate), got {rate}"
+    );
 }
 
 #[test]

@@ -37,7 +37,7 @@ impl RockCastApp {
                     self.playing_local = local;
                     self.playing_url = Some(url);
                     self.track = self.lang.t().track_meta_hint.into();
-                    if !local && !self.cast_relay && self.eq_enabled {
+                    if !local && !self.playback.relay_active() && self.eq_enabled {
                         if let Some(tap_url) = tap_url {
                             self.schedule_stream_tap(generation, tap_url);
                         }

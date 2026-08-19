@@ -127,6 +127,7 @@ pub(super) fn decode_symphonia_relay(
     peek: Vec<u8>,
     reader: Box<dyn Read + Send>,
     stop: &Arc<AtomicBool>,
+    fanout: &crate::relay::Fanout,
     spectrum: &mut SpectrumTap,
     pcm_bytes: &mut Vec<u8>,
     push: &mut impl FnMut(&[u8]),
@@ -204,6 +205,7 @@ pub(super) fn decode_symphonia_relay(
             on_format,
             push,
         );
+        fanout.pace_if_full();
     }
     Ok(())
 }
@@ -220,6 +222,9 @@ fn next_packet(
     stop: &Arc<AtomicBool>,
 ) -> Result<symphonia::core::formats::Packet, String> {
     loop {
+        if stop.load(Ordering::SeqCst) {
+            return Err("stopped".into());
+        }
         match format.next_packet() {
             Ok(p) => return Ok(p),
             Err(SymError::ResetRequired) => return Err("reset".into()),

@@ -20,7 +20,7 @@ use parking_lot::Mutex;
 use crate::{
     audio::{
         decode::{
-            pcm::{upmix_interleaved, PcmResampler, SpscAudioRing},
+            pcm::{upmix_interleaved_into, PcmResampler, SpscAudioRing},
             run_live_decode_f32,
         },
         spectrum::SpectrumTap,
@@ -178,7 +178,10 @@ impl LocalPlayer {
                         pcm_buf.clear();
                         pcm_buf.extend_from_slice(pcm);
                         if pcm_tx
-                            .send(std::mem::replace(&mut pcm_buf, Vec::with_capacity(16 * 1024)))
+                            .send(std::mem::replace(
+                                &mut pcm_buf,
+                                Vec::with_capacity(16 * 1024),
+                            ))
                             .is_ok()
                         {
                             playback_diag::local_pcm_sent();
@@ -242,27 +245,39 @@ impl LocalPlayer {
             state.playout_join = Some(thread::spawn(move || {
                 let mut resampler = PcmResampler::new(2);
                 let mut spectrum = spectrum_enabled.then(|| SpectrumTap::new(levels_pl));
-                let high_water = play_rate as usize * play_ch * 2;
+                let mut spectrum_pending = Vec::with_capacity(play_rate as usize * play_ch);
+                let spectrum_frame =
+                    (play_rate as usize * play_ch * 20 / 1000).max(play_ch);
+                let mut interleaved = Vec::with_capacity(8192);
+                let target_fill = play_rate as usize * play_ch;
+                let high_water = target_fill * 2;
                 loop {
                     if stop_pl.load(Ordering::SeqCst) {
                         break;
                     }
-                    let wait = if ring_pl.len() > high_water {
-                        Duration::from_millis(10)
-                    } else {
-                        Duration::from_millis(50)
-                    };
-                    match pcm_rx.recv_timeout(wait) {
+                    match pcm_rx.recv_timeout(Duration::from_millis(50)) {
                         Ok(pcm) => {
                             playback_diag::local_pcm_recv();
                             let sr = src_rate_pl.load(Ordering::Acquire);
                             let sc = src_ch_pl.load(Ordering::Acquire).max(1) as u16;
                             resampler.set_format(sr, sc, play_rate);
                             resampler.push(&pcm, |out| {
-                                let interleaved =
-                                    upmix_interleaved(out, sc as usize, play_ch);
+                                upmix_interleaved_into(out, sc as usize, play_ch, &mut interleaved);
                                 if let Some(tap) = spectrum.as_mut() {
-                                    tap.push_f32(&interleaved, play_ch, play_rate);
+                                    spectrum_pending.extend_from_slice(&interleaved);
+                                    while spectrum_pending.len() >= spectrum_frame {
+                                        tap.push_f32(
+                                            &spectrum_pending[..spectrum_frame],
+                                            play_ch,
+                                            play_rate,
+                                        );
+                                        spectrum_pending.copy_within(spectrum_frame.., 0);
+                                        spectrum_pending
+                                            .truncate(spectrum_pending.len() - spectrum_frame);
+                                    }
+                                }
+                                if ring_pl.len() > high_water {
+                                    ring_pl.drop_oldest(ring_pl.len() - target_fill);
                                 }
                                 playback_diag::playout_pending(interleaved.len());
                                 let mut offset = 0usize;
@@ -272,8 +287,7 @@ impl LocalPlayer {
                                     }
                                     let pushed = ring_pl.push_slice(&interleaved[offset..]);
                                     if pushed == 0 {
-                                        thread::sleep(Duration::from_millis(2));
-                                        continue;
+                                        break;
                                     }
                                     offset += pushed;
                                 }
@@ -316,6 +330,8 @@ impl LocalPlayer {
         let vol = Arc::clone(&self.volume);
         let stop_cb = Arc::clone(&stop);
         let err_cb = Arc::clone(&err_slot);
+        let diag_ring = Arc::new(AtomicU32::new(0));
+        let diag_ring_cb = Arc::clone(&diag_ring);
         let mut hold = vec![0.0f32; play_ch.max(1)];
 
         let stream = cpal_device
@@ -342,7 +358,10 @@ impl LocalPlayer {
                             }
                         }
                     }
-                    playback_diag::local_ring_fill(ring_cb.len());
+                    let tick = diag_ring_cb.fetch_add(1, Ordering::Relaxed);
+                    if tick & 31 == 0 {
+                        playback_diag::local_ring_fill(ring_cb.len());
+                    }
                 },
                 move |e| {
                     log::error!("LocalPlayer cpal stream error: {e}");

@@ -37,6 +37,13 @@ impl RockCastApp {
 
     pub(in crate::app) fn play(&mut self) {
         if !self.can_start_play() {
+            log::debug!(
+                "play blocked: loading_devices={} devices={} selected_device={:?} selected_station={:?}",
+                self.loading_devices,
+                self.devices.len(),
+                self.selected_device,
+                self.selected_station
+            );
             return;
         }
         let Some(station) = self
@@ -92,12 +99,15 @@ impl RockCastApp {
     }
 
     pub(in crate::app) fn schedule_stream_tap(&mut self, generation: u64, tap_url: String) {
-        self.observers
-            .schedule(generation, tap_url, self.cast_relay);
+        self.observers.schedule(
+            generation,
+            tap_url,
+            self.playback.relay_active(),
+        );
     }
 
     pub(in crate::app) fn sync_spectrum(&mut self) {
-        if self.cast_relay {
+        if self.playback.relay_active() {
             self.observers.stop();
             return;
         }

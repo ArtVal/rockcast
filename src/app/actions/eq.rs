@@ -9,7 +9,7 @@ impl RockCastApp {
         let targets = if self.eq_enabled && self.playing {
             if self.playing_local {
                 self.playback.local_levels()
-            } else if self.cast_relay {
+            } else if self.playback.relay_active() {
                 self.playback.relay_levels()
             } else {
                 self.observers.levels()

@@ -158,7 +158,10 @@ impl RockCastApp {
         }
     }
     pub(in crate::app) fn can_start_play(&self) -> bool {
-        !self.loading_devices && !self.shutting_down
+        !self.shutting_down
+            && self.selected_station.is_some()
+            && self.selected_device.is_some()
+            && (!self.loading_devices || !self.devices.is_empty())
     }
 }
 
@@ -168,7 +171,7 @@ impl eframe::App for RockCastApp {
         self.poll_messages();
         self.apply_volume_if_needed();
         if self.playing
-            && self.cast_relay
+            && self.playback.relay_active()
             && !self.playing_local
             && let Some(title) = self.playback.relay_latest_title()
             && !title.is_empty()

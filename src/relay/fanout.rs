@@ -75,6 +75,13 @@ impl Fanout {
         self.inner.lock().buf.len()
     }
 
+    /// When the relay ring is full, pace decode to ~realtime so we don't spin decode+drop.
+    pub fn pace_if_full(&self) {
+        if self.buffered_bytes() >= RING_MAX {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     pub fn push(&self, data: &[u8]) {
         if data.is_empty() {
             return;
@@ -85,18 +92,20 @@ impl Fanout {
             .unwrap_or(4)
             .max(4);
         let mut g = self.inner.lock();
-        g.buf.extend(data.iter().copied());
         let mut dropped = 0usize;
-        while g.buf.len() > RING_MAX {
-            let excess = g.buf.len() - RING_MAX;
+        let incoming = data.len();
+        if g.buf.len() + incoming > RING_MAX {
+            let excess = g.buf.len() + incoming - RING_MAX;
             let drop = ((excess / frame_align).max(1)) * frame_align;
             let drop = drop.min(g.buf.len());
-            for _ in 0..drop {
-                g.buf.pop_front();
-                g.start += 1;
-                dropped += 1;
+            if drop > 0 {
+                g.buf.drain(..drop);
+                g.start += drop as u64;
+                dropped += drop;
             }
         }
+        g.buf.extend(data.iter().copied());
+        debug_assert!(g.buf.len() <= RING_MAX);
         self.written
             .store(g.start + g.buf.len() as u64, Ordering::SeqCst);
         let len = g.buf.len();
@@ -164,9 +173,8 @@ impl Fanout {
                     playback_diag::relay_read_wait(wait_start.elapsed());
                     continue;
                 }
-                for (i, b) in g.buf.iter().skip(off).take(n).enumerate() {
-                    out[i] = *b;
-                }
+                let buf = g.buf.make_contiguous();
+                out[..n].copy_from_slice(&buf[off..off + n]);
                 *pos += n as u64;
                 drop(g);
                 playback_diag::relay_served(n);

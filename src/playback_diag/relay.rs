@@ -28,13 +28,6 @@ pub fn relay_dropped(bytes: usize) {
         return;
     }
     RELAY_DROP_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
-    event(
-        "relay_drop",
-        &format!(
-            "bytes={bytes} total_window={}",
-            RELAY_DROP_BYTES.load(Ordering::Relaxed)
-        ),
-    );
 }
 
 pub fn relay_read_wait(d: Duration) {

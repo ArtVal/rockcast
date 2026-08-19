@@ -21,11 +21,11 @@ use std::{
 use parking_lot::Mutex;
 
 pub use error::RelayError;
+pub use fanout::Fanout;
 pub use transport::{
     choose_transport, normalize_content_type, tap_url_from_public, RelayTransport, TranscodeKind,
 };
 
-use fanout::Fanout;
 use feeder::{run_feeder_passthrough, run_feeder_transcode};
 use net::advertise_ipv4_near;
 use server::accept_loop;
@@ -57,8 +57,11 @@ impl StreamRelay {
     }
 
     pub fn stop(&self) {
-        let mut guard = self.session.lock();
-        if let Some(mut s) = guard.take() {
+        let ended = {
+            let mut guard = self.session.lock();
+            guard.take()
+        };
+        if let Some(mut s) = ended {
             log::info!("StreamRelay::stop url={}", s.public_url);
             s.stop.store(true, Ordering::SeqCst);
             if let Some(port) = port_from_url(&s.public_url) {
@@ -67,9 +70,13 @@ impl StreamRelay {
                     Duration::from_millis(200),
                 );
             }
-            drop(s.accept.take());
-            drop(s.feeder.take());
+            detach_relay_worker(s.accept.take(), "accept");
+            detach_relay_worker(s.feeder.take(), "feeder");
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.session.lock().is_some()
     }
 
     pub fn start(
@@ -215,6 +222,23 @@ impl StreamRelay {
             thread::sleep(Duration::from_millis(25));
         }
     }
+}
+
+fn detach_relay_worker(join: Option<thread::JoinHandle<()>>, label: &'static str) {
+    let Some(join) = join else {
+        return;
+    };
+    thread::spawn(move || {
+        let started = Instant::now();
+        if let Err(payload) = join.join() {
+            log::warn!("StreamRelay {label} worker panicked: {payload:?}");
+            return;
+        }
+        let ms = started.elapsed().as_millis();
+        if ms > 3_000 {
+            log::warn!("StreamRelay {label} worker joined after {ms}ms");
+        }
+    });
 }
 
 fn port_from_url(url: &str) -> Option<u16> {
