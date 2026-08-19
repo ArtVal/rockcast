@@ -13,11 +13,10 @@ Code-oriented docs for humans and coding agents. Product overview and user instr
 ## Quick facts
 
 - **Language:** Rust (edition 2024), GUI via `eframe` / `egui`
-- **Platform:** Windows first (WASAPI via `cpal`, `windows_subsystem = "windows"` in release)
+- **Platform:** Windows (WASAPI) and Linux (ALSA / PipeWire via `cpal`). Release Windows builds set `windows_subsystem = "windows"`.
 - **Outputs:** PC speakers (`LocalPlayer`) or Google Cast (`CastService`)
 - **Library crate:** `src/lib.rs` — binary entry is `src/main.rs`
-- **Log file:** `%LOCALAPPDATA%\RockCast\rockcast.log` (truncated each launch)
-- **Settings:** `%LOCALAPPDATA%\RockCast\settings.json`
+- **Log / settings:** `%LOCALAPPDATA%\RockCast\` on Windows; `~/.config/rockcast/` on Linux
 
 ## Mental model (one paragraph)
 

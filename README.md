@@ -1,6 +1,6 @@
 # RockCast
 
-Desktop internet radio player for Windows. Play rock / metal streams on **PC speakers** or on **Google Cast** devices (Chromecast, Cast-enabled speakers such as JBL) using a native CASTV2 client — no Chrome browser required.
+Desktop internet radio player for Windows and Linux. Play rock / metal streams on **PC speakers** or on **Google Cast** devices (Chromecast, Cast-enabled speakers such as JBL) using a native CASTV2 client — no Chrome browser required.
 
 ![RockCast](window_shot.png)
 
@@ -19,15 +19,37 @@ Desktop internet radio player for Windows. Play rock / metal streams on **PC spe
 
 ## Requirements
 
-- Windows 10 / 11 (primary target)
+- Windows 10 / 11, or Linux (X11 or Wayland; audio via ALSA / PipeWire)
 - [Rust](https://rustup.rs/) toolchain (edition 2024 / recent stable)
 - Same Wi‑Fi / LAN as your Cast device for casting
 - Optional: Amnezia or other VPN — Cast discovery still works via subnet scan if LAN unicast is allowed
 
+### Linux packages (Fedora / Kinoite distrobox)
+
+Build the GUI and cpal against system libraries:
+
+```bash
+sudo dnf install gcc gcc-c++ make pkgconf-pkg-config \
+  alsa-lib-devel libxkbcommon-devel wayland-devel \
+  libX11-devel libXcursor-devel libXrandr-devel libXi-devel mesa-libGL-devel
+```
+
+On Fedora Kinoite keep the toolchain in rustup (`~/.cargo`) inside toolbox/distrobox — do not layer `rust`/`cargo` with `rpm-ostree`.
+
+Debian/Ubuntu equivalents: `build-essential pkg-config libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev`.
+
 ## Quick start
+
+Windows:
 
 ```bat
 run.bat
+```
+
+Linux:
+
+```bash
+./run.sh
 ```
 
 Or manually:
@@ -45,8 +67,12 @@ cargo run
 Logging (default level `info`):
 
 ```bash
+# Windows
 set RUST_LOG=info
 cargo run --release
+
+# Linux / macOS
+RUST_LOG=info cargo run --release
 ```
 
 Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
@@ -68,11 +94,11 @@ Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
 - Discovery runs **mDNS** (`_googlecast._tcp`) on the real LAN NIC and, in parallel, a **unicast scan** of `x.x.x.1–254` for TCP **8009**, then reads `http://<ip>:8008/setup/eureka_info`.
 - Split-tunnel VPN exclusions often fix unicast but **not** multicast; the subnet scan is what finds devices like JBL when mDNS returns nothing.
 - Playback on Cast uses CASTV2: connect → launch Default Media Receiver → `LOAD` the live stream URL.
-- With **Via PC**, `LOAD` points at `http://<PC-LAN-IP>:<port>/stream` while the PC downloads the station (through VPN if needed). Allow inbound LAN in Windows Firewall if prompted.
+- With **Via PC**, `LOAD` points at `http://<PC-LAN-IP>:<port>/stream` while the PC downloads the station (through VPN if needed). Allow inbound LAN (Windows Firewall / firewalld) if prompted.
 
 ### Local playback notes
 
-- Uses the selected Windows output device (or the system default).
+- Uses the selected output device (or the system default): WASAPI on Windows, ALSA (PipeWire/Pulse) on Linux.
 - Supports common stream codecs handled by symphonia (MP3, AAC, Ogg/Vorbis, FLAC, etc., depending on the station).
 - Track titles come from ICY metadata when available.
 
@@ -96,7 +122,9 @@ Search order:
 1. `ROCKCAST_STATIONS` environment variable (full path)
 2. `stations.txt` next to the executable
 3. `stations.txt` in the current working directory
-4. `%LOCALAPPDATA%\RockCast\stations.txt` (created from the embedded catalog if missing)
+4. App data dir `stations.txt` (created from the embedded catalog if missing):
+   - Windows: `%LOCALAPPDATA%\RockCast\stations.txt`
+   - Linux: `$XDG_CONFIG_HOME/rockcast/stations.txt` or `~/.config/rockcast/stations.txt`
 
 ### Radio Browser
 
@@ -107,7 +135,8 @@ After the local list appears, RockCast may query Radio Browser for additional me
 Stored at:
 
 ```text
-%LOCALAPPDATA%\RockCast\settings.json
+Windows: %LOCALAPPDATA%\RockCast\settings.json
+Linux:   ~/.config/rockcast/settings.json
 ```
 
 Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`.
@@ -124,7 +153,8 @@ The **Voice** button records up to five seconds from the default Windows microph
 rockcast/
 ├── Cargo.toml
 ├── stations.txt          # bundled rock/metal catalog
-├── run.bat               # release launcher
+├── run.bat               # Windows release launcher
+├── run.sh                # Linux release launcher
 ├── docs/                 # architecture & agent-oriented code docs
 ├── proto/                # Cast channel protobuf reference
 ├── examples/
@@ -158,7 +188,7 @@ Code architecture, module map, playback/Cast flows, and notes for AI coding agen
 cargo build --release
 ```
 
-Binary: `target/release/rockcast.exe`.
+Binary: `target/release/rockcast.exe` (Windows) or `target/release/rockcast` (Linux).
 
 ### Tests
 
@@ -192,7 +222,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 |---------|-------------|
 | No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
 | Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
-| Station needs VPN, silent on JBL | Enable **Via PC**; allow Windows Firewall inbound for RockCast; PC and JBL on same Wi‑Fi |
+| Station needs VPN, silent on JBL | Enable **Via PC**; allow inbound LAN (Windows Firewall / firewalld); PC and JBL on same Wi‑Fi |
 | Empty station list | Check `stations.txt` path / `ROCKCAST_STATIONS`; inspect logs for Radio Browser errors |
 | No track title | Many stations do not send ICY metadata |
 | Wrong PC audio device | Pick another entry under **Device** after **Find** |

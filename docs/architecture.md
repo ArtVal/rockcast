@@ -8,7 +8,7 @@ rockcast (lib)          ← all domain + UI logic
 examples/cast_probe     ← CLI Cast discovery only
 ```
 
-Release builds set `#![windows_subsystem = "windows"]` (no console). Logging always goes to `%LOCALAPPDATA%\RockCast\rockcast.log`; debug also mirrors to stderr.
+Windows release builds set `#![windows_subsystem = "windows"]` (no console). Logging goes to `%LOCALAPPDATA%\RockCast\rockcast.log` on Windows and `~/.config/rockcast/rockcast.log` on Linux; debug also mirrors to stderr.
 
 ## Threading model
 

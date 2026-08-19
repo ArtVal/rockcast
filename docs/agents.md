@@ -4,7 +4,7 @@ Read this first when editing RockCast. Then open [architecture.md](architecture.
 
 ## What this project is
 
-Windows desktop **internet radio** app: egui UI, local WASAPI playback, native Google Cast client. Not a web app. Not using Chrome Cast extension APIs.
+Desktop **internet radio** app (Windows + Linux): egui UI, local cpal playback (WASAPI / ALSA), native Google Cast client. Not a web app. Not using Chrome Cast extension APIs.
 
 ## Where to change what
 
@@ -49,7 +49,7 @@ Windows desktop **internet radio** app: egui UI, local WASAPI playback, native G
 
 ## Logging
 
-- File: `%LOCALAPPDATA%\RockCast\rockcast.log` (truncated each run)
+- File: `%LOCALAPPDATA%\RockCast\rockcast.log` on Windows, `~/.config/rockcast/rockcast.log` on Linux (truncated each run)
 - Default filter: `rockcast=debug,info`
 - Useful prefixes in logs: `play request`, `play worker[N]`, `LocalPlayer::`, `CastService::`, `PlayOk`, `Error applied`, `shutdown_playback`
 
@@ -62,6 +62,7 @@ run.bat
 ```
 
 ```bash
+./run.sh
 cargo run --release
 cargo test --lib
 cargo run --example cast_probe
@@ -77,7 +78,6 @@ cargo run --example cast_probe
 
 ## Out of scope unless asked
 
-- Non-Windows audio backends
 - Official Google Cast SDK
 - Regenerating protobuf from `.proto` via `prost`/`protobuf-codegen`
 - Rewriting UI into another framework

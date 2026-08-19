@@ -179,7 +179,8 @@ struct PlayerState {
     stream: Option<SendStream>,
 }
 
-/// cpal marks Stream as !Send for portability; on WASAPI this is safe.
+/// cpal marks Stream as !Send for portability. Access is serialized via Mutex
+/// and the reaper thread (WASAPI / ALSA / PipeWire).
 #[allow(dead_code)]
 struct SendStream(cpal::Stream);
 
@@ -470,7 +471,8 @@ fn pick_output_config(
     _prefer_rate: u32,
     prefer_ch: usize,
 ) -> Result<cpal::StreamConfig, LocalError> {
-    // WASAPI Shared is more reliable with the default mix format; resample in the callback.
+    // Default mix format is the reliable host path (WASAPI Shared, PipeWire via ALSA);
+    // resample in the callback if the station rate differs.
     if let Ok(def) = device.default_output_config() {
         return Ok(def.config());
     }

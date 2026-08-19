@@ -63,7 +63,7 @@ fn read_stations_file() -> Option<String> {
             return Some(raw);
         }
     }
-    // Create an editable copy in AppData.
+    // Create an editable copy in the app data directory.
     if let Some(path) = appdata_stations_path() {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -96,12 +96,7 @@ fn stations_search_paths() -> Vec<std::path::PathBuf> {
 }
 
 fn appdata_stations_path() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("LOCALAPPDATA")?;
-    Some(
-        std::path::PathBuf::from(base)
-            .join("RockCast")
-            .join("stations.txt"),
-    )
+    crate::settings::app_dir().map(|dir| dir.join("stations.txt"))
 }
 
 /// Line format: `name | url | tags | bitrate | codec | country`
