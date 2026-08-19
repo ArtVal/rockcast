@@ -114,7 +114,7 @@ Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`
 
 ## RockServer and voice control
 
-RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
+RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. Enter the `ROCKSERVER_API_BEARER_TOKEN` in the masked **Токен** field. RockCast sends it as `Authorization: Bearer <token>` for both HTTP search and the voice WebSocket handshake; it never appends the credential to the server URL or writes it to the application log. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
 
 The **Voice** button records up to five seconds from the default Windows microphone, sends PCM16 mono to `/api/v1/voice/stream`, and plays the station selected by the server. RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials.
 

@@ -25,7 +25,7 @@ use symphonia::core::{
 pub use crate::audio::BANDS;
 use crate::audio::{BandAnalyzer, apply_hint, parse_stream_title};
 use crate::net::{metadata_interval, stream_client, stream_headers};
-/// Less frequent FFT — enough for ~15–20 Hz UI, less CPU.
+/// Streaming FFT levels consumed by the UI at display refresh rate.
 pub struct SpectrumAnalyzer {
     stop: Arc<AtomicBool>,
     join: Option<thread::JoinHandle<()>>,

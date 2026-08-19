@@ -4,8 +4,8 @@ use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use symphonia::core::probe::Hint;
 
 pub const BANDS: usize = 24;
-const FFT_SIZE: usize = 2048;
-const HOP: usize = 2048;
+const FFT_SIZE: usize = 1024;
+const HOP: usize = 512;
 
 pub(crate) struct BandAnalyzer {
     pcm: Vec<f32>,
@@ -42,7 +42,7 @@ impl BandAnalyzer {
             self.fft.process(&mut self.fft_buf);
             let bands = magnitudes_to_bands(&self.fft_buf, sample_rate);
             for (i, band) in bands.iter().enumerate() {
-                let rate = if *band > self.smooth[i] { 0.4 } else { 0.15 };
+                let rate = if *band > self.smooth[i] { 0.65 } else { 0.25 };
                 self.smooth[i] += (*band - self.smooth[i]) * rate;
             }
             updated = true;

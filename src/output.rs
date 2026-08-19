@@ -83,3 +83,24 @@ pub fn scan_all(cast_timeout: Duration, lang: Lang) -> (Vec<OutputDevice>, Strin
         }
     }
 }
+
+/// Reports local and Cast devices incrementally, then returns the final status.
+pub fn scan_streaming(
+    cast_timeout: Duration,
+    lang: Lang,
+    mut on_found: impl FnMut(OutputDevice),
+) -> String {
+    let t = lang.t();
+    let local = list_local_devices(lang);
+    let local_n = local.len();
+    for device in local {
+        on_found(OutputDevice::Local(device));
+    }
+    match CastService::scan_streaming(cast_timeout, |device| {
+        on_found(OutputDevice::Cast(device));
+    }) {
+        Ok(cast) if cast.is_empty() => i18n::fmt1(t.cast_none, local_n),
+        Ok(cast) => i18n::fmt3(t.cast_found, local_n, cast.len(), ""),
+        Err(error) => i18n::fmt2(t.cast_err, local_n, error),
+    }
+}

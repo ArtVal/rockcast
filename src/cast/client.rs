@@ -18,7 +18,7 @@ use super::{
         CastChannel, ChannelError, DEFAULT_MEDIA_RECEIVER, NS_CONNECTION, NS_MEDIA, NS_RECEIVER,
         RECEIVER_ID,
     },
-    discovery::{DiscoveredDevice, DiscoveryError, discover},
+    discovery::{DiscoveredDevice, DiscoveryError, discover, discover_streaming},
     proto::Payload,
 };
 
@@ -111,6 +111,20 @@ impl CastService {
         Ok(list
             .into_iter()
             .map(|d| CastDeviceInfo { discovered: d })
+            .collect())
+    }
+
+    /// Scan while reporting devices as soon as either discovery path finds them.
+    pub fn scan_streaming(
+        timeout: Duration,
+        mut on_found: impl FnMut(CastDeviceInfo),
+    ) -> Result<Vec<CastDeviceInfo>, CastError> {
+        let list = discover_streaming(timeout, |discovered| {
+            on_found(CastDeviceInfo { discovered });
+        })?;
+        Ok(list
+            .into_iter()
+            .map(|discovered| CastDeviceInfo { discovered })
             .collect())
     }
 

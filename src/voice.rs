@@ -4,34 +4,75 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Deserialize;
 use std::{
     collections::HashSet,
+    net::ToSocketAddrs,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
-use tungstenite::{Message, connect};
+use tungstenite::Message;
 
 const MAX_RECORDING: Duration = Duration::from_secs(60);
 const MAX_CHUNK: usize = 32 * 1024;
 const MIN_VOICE_CANDIDATE_SCORE: f64 = 0.35;
 
+pub struct VoiceSearchResult {
+    pub stations: Vec<Station>,
+    pub auto_play: bool,
+}
+
 /// Records one short PCM16 mono command and resolves it through RockServer.
 pub fn capture_and_recognize(
     base_url: &str,
+    bearer_token: &str,
     locale: &str,
     recording: Arc<AtomicBool>,
-) -> Result<Vec<Station>, String> {
+) -> Result<VoiceSearchResult, String> {
     log::info!("voice capture started: locale={locale} base_url={base_url}");
     let (audio, sample_rate) = record_default_microphone(&recording)?;
     let url = websocket_url(base_url)?;
+    let bearer_token = bearer_token.trim();
+    if bearer_token.is_empty() {
+        return Err("Токен RockServer не настроен".into());
+    }
     log::info!(
         "voice capture finished: bytes={} sample_rate_hz={} websocket={url}",
         audio.len(),
         sample_rate
     );
+    let host_port = url
+        .strip_prefix("ws://")
+        .or_else(|| url.strip_prefix("wss://"))
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("127.0.0.1:3000");
+    let tcp = std::net::TcpStream::connect_timeout(
+        &host_port
+            .to_socket_addrs()
+            .map_err(|e| format!("RockServer voice DNS: {e}"))?
+            .next()
+            .ok_or_else(|| "RockServer voice: не удалось разрешить адрес".to_owned())?,
+        Duration::from_secs(5),
+    )
+    .map_err(|e| format!("RockServer voice TCP: {e}"))?;
+    let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
+    let _ = tcp.set_write_timeout(Some(Duration::from_secs(5)));
+    let ws_key = tungstenite::handshake::client::generate_key();
+    let request = tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Host", host_port)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", &ws_key)
+        .header("Authorization", format!("Bearer {bearer_token}"))
+        .body(())
+        .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
     let (mut socket, _) =
-        connect(url).map_err(|_| "Не удалось подключиться к RockServer voice".to_owned())?;
+        tungstenite::client(request, tcp).map_err(|e| {
+            log::error!("voice websocket handshake failed: {e}");
+            "Не удалось подключиться к RockServer voice".to_owned()
+        })?;
     log::info!("voice websocket connected");
     socket
         .send(Message::Text(start_message(locale, sample_rate).into()))
@@ -71,6 +112,7 @@ pub fn capture_and_recognize(
             }
             VoiceEvent::Result {
                 transcript,
+                normalized_query,
                 stations,
                 ..
             } => {
@@ -117,7 +159,10 @@ pub fn capture_and_recognize(
                 if stations.is_empty() {
                     return Err("RockServer не нашёл станцию для команды".into());
                 }
-                return Ok(stations);
+                return Ok(VoiceSearchResult {
+                    stations,
+                    auto_play: normalized_query.action == VoiceAction::Play,
+                });
             }
             VoiceEvent::Error { message, .. } => return Err(message),
             _ => {}
@@ -130,7 +175,7 @@ fn start_message(locale: &str, sample_rate: u32) -> String {
         "type": "start",
         "locale": locale,
         "sample_rate_hz": sample_rate,
-        "limit": 10,
+        "limit": 30,
     })
     .to_string()
 }
@@ -231,12 +276,25 @@ enum VoiceEvent {
     },
     Result {
         transcript: String,
+        normalized_query: NormalizedQueryDto,
         #[serde(default)]
         stations: Vec<StationDto>,
     },
     Error {
         message: String,
     },
+}
+
+#[derive(Deserialize)]
+struct NormalizedQueryDto {
+    action: VoiceAction,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum VoiceAction {
+    Play,
+    Show,
 }
 #[derive(Deserialize)]
 struct StationDto {
@@ -272,6 +330,6 @@ mod tests {
         assert_eq!(value["type"], "start");
         assert_eq!(value["locale"], "ru-RU");
         assert_eq!(value["sample_rate_hz"], 48_000);
-        assert_eq!(value["limit"], 10);
+        assert_eq!(value["limit"], 30);
     }
 }

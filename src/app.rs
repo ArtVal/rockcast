@@ -18,7 +18,7 @@ use eframe::egui::{
 use crate::{
     i18n::{self, Lang},
     observers::StreamObservers,
-    output::{OutputDevice, scan_all},
+    output::{OutputDevice, scan_streaming},
     playback::{PlaybackController, PlaybackEvent},
     settings::AppSettings,
     spectrum::BANDS,
@@ -41,8 +41,17 @@ enum UiMsg {
         /// false = local catalog (enrich still running), true = final.
         finished: bool,
     },
-    Devices(Vec<OutputDevice>, String),
-    VoiceResult(Result<Vec<Station>, String>),
+    DeviceFound(OutputDevice),
+    DevicesFinished(String),
+    VoiceResult(Result<crate::voice::VoiceSearchResult, String>),
+}
+
+fn same_output_device(left: &OutputDevice, right: &OutputDevice) -> bool {
+    match (left, right) {
+        (OutputDevice::Local(a), OutputDevice::Local(b)) => a.id == b.id,
+        (OutputDevice::Cast(a), OutputDevice::Cast(b)) => a.discovered.host == b.discovered.host,
+        _ => false,
+    }
 }
 
 pub struct RockCastApp {
@@ -72,6 +81,7 @@ pub struct RockCastApp {
     /// Relay station through PC LAN HTTP for Cast (VPN-friendly).
     cast_relay: bool,
     eq_levels: [f32; BANDS],
+    eq_peaks: [f32; BANDS],
     observers: StreamObservers,
     ui_rx: mpsc::Receiver<UiMsg>,
     ui_tx: mpsc::Sender<UiMsg>,
@@ -83,6 +93,7 @@ pub struct RockCastApp {
     lang: Lang,
     rockserver_enabled: bool,
     rockserver_url: String,
+    rockserver_bearer_token: String,
 }
 
 impl RockCastApp {
@@ -116,6 +127,7 @@ impl RockCastApp {
         let lang = settings.language;
         let rockserver_enabled = settings.rockserver_enabled;
         let rockserver_url = settings.rockserver_url.clone();
+        let rockserver_bearer_token = settings.rockserver_bearer_token.clone();
         let t = lang.t();
 
         let (ui_tx, ui_rx) = mpsc::channel();
@@ -144,6 +156,7 @@ impl RockCastApp {
             eq_enabled,
             cast_relay,
             eq_levels: [0.08; BANDS],
+            eq_peaks: [0.08; BANDS],
             observers: StreamObservers::new(),
             ui_rx,
             ui_tx,
@@ -155,6 +168,7 @@ impl RockCastApp {
             lang,
             rockserver_enabled,
             rockserver_url,
+            rockserver_bearer_token,
         }
     }
 
@@ -197,6 +211,7 @@ impl RockCastApp {
         self.settings.language = self.lang;
         self.settings.rockserver_enabled = self.rockserver_enabled;
         self.settings.rockserver_url = self.rockserver_url.trim().to_owned();
+        self.settings.rockserver_bearer_token = self.rockserver_bearer_token.trim().to_owned();
         if let Some(url) = self
             .selected_station
             .and_then(|i| self.stations.get(i).map(|s| s.url.clone()))
@@ -363,17 +378,49 @@ impl RockCastApp {
                     self.loading_stations = !finished;
                     self.status = i18n::fmt1(self.lang.t().stations_count, self.stations.len());
                 }
-                UiMsg::Devices(list, status) => {
-                    log::info!("devices scanned: count={} status={status}", list.len());
-                    for (i, d) in list.iter().enumerate() {
-                        let kind = if d.is_local() { "local" } else { "cast" };
-                        log::info!(
-                            "  device[{i}] kind={kind} id={} name='{}'",
-                            d.id(),
-                            d.name()
-                        );
+                UiMsg::DeviceFound(device) => {
+                    let selected_id = self
+                        .selected_device
+                        .and_then(|index| self.devices.get(index))
+                        .map(|device| device.id().to_owned());
+                    let kind = if device.is_local() { "local" } else { "cast" };
+                    log::info!(
+                        "device found incrementally: kind={kind} id={} name='{}'",
+                        device.id(),
+                        device.name()
+                    );
+                    if let Some(index) = self
+                        .devices
+                        .iter()
+                        .position(|existing| same_output_device(existing, &device))
+                    {
+                        self.devices[index] = device;
+                    } else {
+                        self.devices.push(device);
                     }
-                    self.devices = list;
+                    self.devices.sort_by_key(|device| !device.is_local());
+                    self.selected_device = selected_id
+                        .as_deref()
+                        .and_then(|id| self.devices.iter().position(|device| device.id() == id));
+                    if self.selected_device.is_none() {
+                        self.restore_device_selection();
+                    }
+                    self.status = format!(
+                        "{} ({})",
+                        self.lang.t().searching_devices,
+                        self.devices.len()
+                    );
+                    if self.pending_voice_play && self.can_start_play() {
+                        self.pending_voice_play = false;
+                        log::info!("voice playback resumed after first audio device");
+                        self.play();
+                    }
+                }
+                UiMsg::DevicesFinished(status) => {
+                    log::info!(
+                        "device scan finished: count={} status={status}",
+                        self.devices.len()
+                    );
                     self.restore_device_selection();
                     self.loading_devices = false;
                     let local_n = self.devices.iter().filter(|d| d.is_local()).count();
@@ -397,17 +444,13 @@ impl RockCastApp {
                             self.devices.get(i).map(|d| d.id()).unwrap_or("?")
                         );
                     }
-                    if self.pending_voice_play && self.can_start_play() {
-                        self.pending_voice_play = false;
-                        log::info!("voice playback resumed after device scan");
-                        self.play();
-                    }
                 }
                 UiMsg::VoiceResult(result) => {
                     self.voice_busy = false;
                     self.voice_recording = None;
                     match result {
-                        Ok(stations) => {
+                        Ok(result) => {
+                            let stations = result.stations;
                             log::info!("voice candidates received: count={}", stations.len());
                             let first = stations[0].clone();
                             self.voice_fallback = stations.iter().skip(1).cloned().collect();
@@ -421,12 +464,23 @@ impl RockCastApp {
                                 self.stations[0].url,
                                 self.voice_fallback.len()
                             );
-                            self.status = "Голосовая команда распознана; запускаю станцию".into();
-                            if self.can_start_play() {
-                                self.play();
+                            if result.auto_play {
+                                self.status =
+                                    "Голосовая команда распознана; запускаю станцию".into();
+                                if self.can_start_play() {
+                                    self.play();
+                                } else {
+                                    self.pending_voice_play = true;
+                                    self.status =
+                                        "Команда распознана; ожидаю аудиоустройство…".into();
+                                }
                             } else {
-                                self.pending_voice_play = true;
-                                self.status = "Команда распознана; ожидаю аудиоустройство…".into();
+                                self.pending_voice_play = false;
+                                self.voice_fallback.clear();
+                                self.status = format!(
+                                    "Найдено станций: {}. Список отсортирован по похожести.",
+                                    self.stations.len()
+                                );
                             }
                         }
                         Err(error) => self.status = format!("Голосовое управление: {error}"),
@@ -444,6 +498,9 @@ impl RockCastApp {
         self.status = self.lang.t().loading_stations_status.into();
         let tx = self.ui_tx.clone();
         let lang = self.lang;
+        let rockserver_enabled = self.rockserver_enabled;
+        let rockserver_url = self.rockserver_url.clone();
+        let rockserver_token = self.rockserver_bearer_token.clone();
         let _ = self.playback.spawn_job(move |cancel| {
             if cancel.is_cancelled() {
                 return;
@@ -454,6 +511,28 @@ impl RockCastApp {
                 source,
                 finished: false,
             });
+            if rockserver_enabled && !rockserver_token.trim().is_empty() {
+                let locale = match lang {
+                    Lang::Ru => "ru",
+                    Lang::En => "en",
+                };
+                match crate::rockserver::search(&rockserver_url, &rockserver_token, "", locale) {
+                    Ok(stations) if !stations.is_empty() => {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let n = stations.len();
+                        let _ = tx.send(UiMsg::Stations {
+                            list: stations,
+                            source: format!("RockServer · {n}"),
+                            finished: true,
+                        });
+                        return;
+                    }
+                    Ok(_) => log::info!("RockServer returned empty station list, falling back"),
+                    Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
+                }
+            }
             let (merged, source) = enrich_stations(catalog, lang);
             if cancel.is_cancelled() {
                 return;
@@ -479,14 +558,18 @@ impl RockCastApp {
                 return;
             }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scan_all(Duration::from_secs(10), lang)
+                scan_streaming(Duration::from_secs(6), lang, |device| {
+                    if !cancel.is_cancelled() {
+                        let _ = tx.send(UiMsg::DeviceFound(device));
+                    }
+                })
             }));
             match result {
-                Ok((list, status)) => {
-                    let _ = tx.send(UiMsg::Devices(list, status));
+                Ok(status) => {
+                    let _ = tx.send(UiMsg::DevicesFinished(status));
                 }
                 Err(_) => {
-                    let _ = tx.send(UiMsg::Devices(Vec::new(), lang.t().scan_panic.into()));
+                    let _ = tx.send(UiMsg::DevicesFinished(lang.t().scan_panic.into()));
                 }
             }
         });
@@ -494,6 +577,10 @@ impl RockCastApp {
 
     fn start_voice(&mut self) {
         if !self.rockserver_enabled || self.voice_busy {
+            return;
+        }
+        if self.rockserver_bearer_token.trim().is_empty() {
+            self.status = "Укажите токен RockServer в настройках.".into();
             return;
         }
         self.voice_busy = true;
@@ -506,11 +593,15 @@ impl RockCastApp {
         self.voice_recording = Some(Arc::clone(&recording));
         let tx = self.ui_tx.clone();
         let url = self.rockserver_url.clone();
+        let bearer_token = self.rockserver_bearer_token.clone();
         // Voice commands are currently Russian regardless of UI translation.
         let locale = "ru-RU".to_owned();
         let _ = self.playback.spawn_job(move |_| {
             let _ = tx.send(UiMsg::VoiceResult(crate::voice::capture_and_recognize(
-                &url, &locale, recording,
+                &url,
+                &bearer_token,
+                &locale,
+                recording,
             )));
         });
     }
@@ -644,8 +735,19 @@ impl RockCastApp {
         } else {
             [0.08; BANDS]
         };
-        for (level, target) in self.eq_levels.iter_mut().zip(targets) {
+        for ((level, peak), target) in self
+            .eq_levels
+            .iter_mut()
+            .zip(self.eq_peaks.iter_mut())
+            .zip(targets)
+        {
             *level += (target - *level) * (dt * 14.0).min(1.0);
+            if self.eq_enabled && self.playing {
+                *peak = peak.max(*level);
+                *peak = (*peak - dt * 0.32).max(*level);
+            } else {
+                *peak += (0.08 - *peak) * (dt * 10.0).min(1.0);
+            }
         }
     }
 
@@ -667,6 +769,12 @@ impl RockCastApp {
                 Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x0 + bar_w, y1)),
                 CornerRadius::same(2),
                 color,
+            );
+            let peak = self.eq_peaks[i].clamp(0.08, 1.0);
+            let peak_y = y1 - (rect.height() - 8.0) * peak;
+            painter.line_segment(
+                [Pos2::new(x0, peak_y), Pos2::new(x0 + bar_w, peak_y)],
+                Stroke::new(1.5, if active { Color32::WHITE } else { BAR_DIM }),
             );
         }
     }
@@ -1156,7 +1264,7 @@ impl eframe::App for RockCastApp {
             || self.settings_dirty
             || eq_busy
         {
-            ctx.request_repaint_after(Duration::from_millis(33));
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
 
         egui::TopBottomPanel::bottom("bottom")
@@ -1226,6 +1334,23 @@ impl eframe::App for RockCastApp {
                             {
                                 self.mark_settings_dirty();
                             }
+                            ui.label(RichText::new("Токен").color(MUTED));
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut self.rockserver_bearer_token)
+                                        .password(true),
+                                )
+                                .lost_focus()
+                            {
+                                self.mark_settings_dirty();
+                            }
+                            ui.label(
+                                RichText::new(
+                                    "Токен сохраняется только в локальных настройках RockCast.",
+                                )
+                                .color(MUTED)
+                                .size(11.0),
+                            );
                         } else {
                             ui.label(
                                 RichText::new(

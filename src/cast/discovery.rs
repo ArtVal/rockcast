@@ -49,6 +49,13 @@ pub enum DiscoveryError {
 }
 
 pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>, DiscoveryError> {
+    discover_streaming(timeout, |_| {})
+}
+
+pub fn discover_streaming(
+    timeout: Duration,
+    mut on_found: impl FnMut(DiscoveredDevice),
+) -> Result<Vec<DiscoveredDevice>, DiscoveryError> {
     let lan = collect_lan_ipv4();
     let (tx, rx) = mpsc::channel::<DiscoveredDevice>();
 
@@ -77,7 +84,11 @@ pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>, DiscoveryErr
             .min(Duration::from_millis(200));
         match rx.recv_timeout(wait) {
             Ok(dev) => {
+                let host = dev.host.clone();
                 merge_device(&mut found, dev);
+                if let Some(device) = found.get(&host) {
+                    on_found(device.clone());
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if mdns_h.is_finished() && scan_h.is_finished() {
@@ -90,7 +101,11 @@ pub fn discover(timeout: Duration) -> Result<Vec<DiscoveredDevice>, DiscoveryErr
     let _ = mdns_h.join();
     let _ = scan_h.join();
     while let Ok(dev) = rx.try_recv() {
+        let host = dev.host.clone();
         merge_device(&mut found, dev);
+        if let Some(device) = found.get(&host) {
+            on_found(device.clone());
+        }
     }
 
     let mut devices: Vec<_> = found.into_values().collect();

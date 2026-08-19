@@ -39,6 +39,9 @@ pub struct AppSettings {
     /// Local or LAN RockServer base URL, never a credential-bearing URL.
     #[serde(default = "default_rockserver_url")]
     pub rockserver_url: String,
+    /// Bearer credential sent to RockServer; it is never embedded in the URL.
+    #[serde(default)]
+    pub rockserver_bearer_token: String,
 }
 
 fn default_rockserver_url() -> String {
@@ -146,12 +149,14 @@ mod tests {
         let expected = AppSettings {
             volume: 73,
             cast_relay: true,
+            rockserver_bearer_token: "test-token".to_owned(),
             ..Default::default()
         };
         expected.save_to(&path).unwrap();
         let actual = AppSettings::load_from(&path).unwrap();
         assert_eq!(actual.volume, 73);
         assert!(actual.cast_relay);
+        assert_eq!(actual.rockserver_bearer_token, "test-token");
         fs::write(&path, b"{").unwrap();
         assert!(AppSettings::load_from(&path).is_err());
         let _ = fs::remove_dir_all(dir);
