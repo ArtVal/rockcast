@@ -1,7 +1,6 @@
 //! Local internet-radio playback to PC speakers (cpal + symphonia).
 
 use std::{
-    io::{self, Read, Seek, SeekFrom},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -13,27 +12,23 @@ use std::{
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
-use symphonia::core::{
-    audio::{AudioBufferRef, SampleBuffer},
-    codecs::{CODEC_TYPE_NULL, DecoderOptions},
-    errors::Error as SymError,
-    formats::FormatOptions,
-    io::{MediaSource, MediaSourceStream},
-    meta::MetadataOptions,
-    probe::Hint,
-};
 use thiserror::Error;
 
 use crate::{
-    audio::{BandAnalyzer, LevelPublisher, apply_hint, parse_stream_title},
-    net::{metadata_interval, stream_client, stream_headers},
-    spectrum::BANDS,
+    audio::{
+        decode::{
+            pcm::{upmix_interleaved, PcmResampler, SpscAudioRing},
+            run_live_decode_f32,
+        },
+        spectrum::SpectrumTap,
+        spectrum::BANDS,
+    },
+    playback_diag,
 };
 
 const RING_MAX: usize = 48000 * 2 * 4; // ~4 sec stereo @ 48k
 /// Give up if the station accepts TCP but never sends HTTP headers / audio.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(12);
-const READ_POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone)]
 pub struct LocalDeviceInfo {
@@ -118,51 +113,6 @@ fn bits_f32(b: u32) -> f32 {
     f32::from_bits(b)
 }
 
-struct SampleRing {
-    buf: Vec<f32>,
-    head: usize,
-    len: usize,
-}
-
-impl SampleRing {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buf: vec![0.0; capacity.max(1)],
-            head: 0,
-            len: 0,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    fn capacity(&self) -> usize {
-        self.buf.len()
-    }
-
-    fn sample_at(&self, offset: usize) -> f32 {
-        debug_assert!(offset < self.len);
-        self.buf[(self.head + offset) % self.buf.len()]
-    }
-
-    fn push_slice(&mut self, samples: &[f32]) {
-        debug_assert!(samples.len() <= self.capacity().saturating_sub(self.len));
-        let mut tail = (self.head + self.len) % self.buf.len();
-        for &sample in samples {
-            self.buf[tail] = sample;
-            tail = (tail + 1) % self.buf.len();
-        }
-        self.len += samples.len();
-    }
-
-    fn discard(&mut self, count: usize) {
-        let drop = count.min(self.len);
-        self.head = (self.head + drop) % self.buf.len();
-        self.len -= drop;
-    }
-}
-
 pub struct LocalPlayer {
     /// Stop flag for the *current* session only. Each `play` gets a fresh Arc so
     /// cancelling an old hung decode cannot be undone by the next `play`.
@@ -175,8 +125,10 @@ pub struct LocalPlayer {
 }
 
 struct PlayerState {
-    join: Option<thread::JoinHandle<()>>,
+    decode_join: Option<thread::JoinHandle<()>>,
+    playout_join: Option<thread::JoinHandle<()>>,
     stream: Option<SendStream>,
+    pcm_tx: Option<mpsc::SyncSender<Vec<f32>>>,
 }
 
 /// cpal marks Stream as !Send for portability. Access is serialized via Mutex
@@ -189,7 +141,8 @@ unsafe impl Send for SendStream {}
 
 struct LocalCleanup {
     stream: Option<SendStream>,
-    join: Option<thread::JoinHandle<()>>,
+    decode_join: Option<thread::JoinHandle<()>>,
+    playout_join: Option<thread::JoinHandle<()>>,
 }
 
 fn cleanup_sender() -> &'static mpsc::Sender<LocalCleanup> {
@@ -201,7 +154,10 @@ fn cleanup_sender() -> &'static mpsc::Sender<LocalCleanup> {
             .spawn(move || {
                 while let Ok(cleanup) = rx.recv() {
                     drop(cleanup.stream);
-                    if let Some(join) = cleanup.join {
+                    if let Some(join) = cleanup.playout_join {
+                        let _ = join.join();
+                    }
+                    if let Some(join) = cleanup.decode_join {
                         let _ = join.join();
                     }
                 }
@@ -224,8 +180,10 @@ impl LocalPlayer {
             session_stop: Mutex::new(Arc::new(AtomicBool::new(true))),
             play_lock: Mutex::new(()),
             state: Mutex::new(PlayerState {
-                join: None,
+                decode_join: None,
+                playout_join: None,
                 stream: None,
+                pcm_tx: None,
             }),
             volume: Arc::new(AtomicU32::new(f32_bits(0.5))),
             levels: Arc::new(Mutex::new([0.08; BANDS])),
@@ -244,19 +202,27 @@ impl LocalPlayer {
     pub fn stop(&self) {
         log::info!("LocalPlayer::stop");
         self.session_stop.lock().store(true, Ordering::SeqCst);
-        let (stream, join) = {
+        let (stream, decode_join, playout_join) = {
             let mut state = self.state.lock();
-            (state.stream.take(), state.join.take())
+            state.pcm_tx.take();
+            (
+                state.stream.take(),
+                state.decode_join.take(),
+                state.playout_join.take(),
+            )
         };
         log::debug!(
-            "LocalPlayer::stop: had_stream={} had_join={}",
+            "LocalPlayer::stop: had_stream={} had_decode={} had_playout={}",
             stream.is_some(),
-            join.is_some()
+            decode_join.is_some(),
+            playout_join.is_some()
         );
-        // Dropping cpal::Stream / joining a hung HTTP decode can block — never do
-        // that on the UI thread.
-        if stream.is_some() || join.is_some() {
-            let _ = cleanup_sender().send(LocalCleanup { stream, join });
+        if stream.is_some() || decode_join.is_some() || playout_join.is_some() {
+            let _ = cleanup_sender().send(LocalCleanup {
+                stream,
+                decode_join,
+                playout_join,
+            });
         }
         *self.levels.lock() = [0.08; BANDS];
     }
@@ -287,36 +253,46 @@ impl LocalPlayer {
         *self.session_stop.lock() = Arc::clone(&stop);
         *self.levels.lock() = [0.08; BANDS];
 
-        let ring = Arc::new(Mutex::new(SampleRing::with_capacity(RING_MAX / 4)));
+        let ring = Arc::new(SpscAudioRing::with_capacity(RING_MAX));
         let src_rate = Arc::new(AtomicU32::new(0));
         let src_ch = Arc::new(AtomicU32::new(2));
         let err_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let (pcm_tx, pcm_rx) = mpsc::sync_channel(128);
 
         let url = url.to_string();
-        let levels = Arc::clone(&self.levels);
-        let ring_dec = Arc::clone(&ring);
         let stop_dec = Arc::clone(&stop);
-        let src_rate_c = Arc::clone(&src_rate);
-        let src_ch_c = Arc::clone(&src_ch);
+        let src_rate_dec = Arc::clone(&src_rate);
+        let src_ch_dec = Arc::clone(&src_ch);
+        let stop_push = Arc::clone(&stop_dec);
         let err_c = Arc::clone(&err_slot);
 
         {
             let mut state = self.state.lock();
-            state.join = Some(thread::spawn(move || {
+            state.pcm_tx = Some(pcm_tx.clone());
+            state.decode_join = Some(thread::spawn(move || {
                 log::info!("LocalPlayer decode thread started url={url}");
-                let ready = AtomicBool::new(false);
-                if let Err(e) = decode_into_ring(
+                let mut pcm_buf = Vec::with_capacity(16 * 1024);
+                if let Err(e) = run_live_decode_f32(
                     &url,
-                    DecodeContext {
-                        ring: &ring_dec,
-                        levels: &levels,
-                        spectrum_enabled,
-                        stop: &stop_dec,
-                        src_rate: &src_rate_c,
-                        src_ch: &src_ch_c,
-                        ready: &ready,
+                    &stop_dec,
+                    title_tx,
+                    None,
+                    src_rate_dec,
+                    src_ch_dec,
+                    move |pcm| {
+                        if stop_push.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        playback_diag::decode_pcm(pcm.len());
+                        pcm_buf.clear();
+                        pcm_buf.extend_from_slice(pcm);
+                        if pcm_tx
+                            .send(std::mem::replace(&mut pcm_buf, Vec::with_capacity(16 * 1024)))
+                            .is_ok()
+                        {
+                            playback_diag::local_pcm_sent();
+                        }
                     },
-                    title_tx.as_ref(),
                 ) {
                     if !stop_dec.load(Ordering::SeqCst) {
                         log::warn!("LocalPlayer decode ended with error: {e}");
@@ -358,19 +334,98 @@ impl LocalPlayer {
 
         let cpal_device = pick_cpal_device(device)?;
         let config = pick_output_config(&cpal_device, rate, channels)?;
-        let out_rate = config.sample_rate.0;
-        let out_ch = config.channels as usize;
+        let play_rate = config.sample_rate.0;
+        let play_ch = config.channels as usize;
+        ring.clear();
         log::info!(
-            "LocalPlayer::play: cpal out_rate={out_rate} out_ch={out_ch} (src {rate}/{channels})"
+            "LocalPlayer::play: cpal out_rate={play_rate} out_ch={play_ch} (src {rate}/{channels})"
         );
+
+        let ring_pl = Arc::clone(&ring);
+        let stop_pl = Arc::clone(&stop);
+        let src_rate_pl = Arc::clone(&src_rate);
+        let src_ch_pl = Arc::clone(&src_ch);
+        let levels_pl = Arc::clone(&self.levels);
+        {
+            let mut state = self.state.lock();
+            state.playout_join = Some(thread::spawn(move || {
+                let mut resampler = PcmResampler::new(2);
+                let mut spectrum = spectrum_enabled.then(|| SpectrumTap::new(levels_pl));
+                let high_water = play_rate as usize * play_ch * 2;
+                loop {
+                    if stop_pl.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let wait = if ring_pl.len() > high_water {
+                        Duration::from_millis(10)
+                    } else {
+                        Duration::from_millis(50)
+                    };
+                    match pcm_rx.recv_timeout(wait) {
+                        Ok(pcm) => {
+                            playback_diag::local_pcm_recv();
+                            let sr = src_rate_pl.load(Ordering::Acquire);
+                            let sc = src_ch_pl.load(Ordering::Acquire).max(1) as u16;
+                            resampler.set_format(sr, sc, play_rate);
+                            resampler.push(&pcm, |out| {
+                                let interleaved =
+                                    upmix_interleaved(out, sc as usize, play_ch);
+                                if let Some(tap) = spectrum.as_mut() {
+                                    tap.push_f32(&interleaved, play_ch, play_rate);
+                                }
+                                playback_diag::playout_pending(interleaved.len());
+                                let mut offset = 0usize;
+                                while offset < interleaved.len() {
+                                    if stop_pl.load(Ordering::SeqCst) {
+                                        return;
+                                    }
+                                    let pushed = ring_pl.push_slice(&interleaved[offset..]);
+                                    if pushed == 0 {
+                                        thread::sleep(Duration::from_millis(2));
+                                        continue;
+                                    }
+                                    offset += pushed;
+                                }
+                                playback_diag::playout_tick(interleaved.len());
+                                playback_diag::local_ring_fill(ring_pl.len());
+                            });
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }));
+        }
+
+        // Pre-buffer ~1 s at device rate so brief HTTP gaps do not underrun cpal.
+        let min_buffer = play_rate as usize * play_ch;
+        let prebuf_deadline = Instant::now() + Duration::from_secs(4);
+        while ring.len() < min_buffer {
+            if stop.load(Ordering::SeqCst) {
+                log::info!("LocalPlayer::play: cancelled during pre-buffer");
+                self.stop();
+                return Err(LocalError::Stream("stopped".into()));
+            }
+            if let Some(e) = err_slot.lock().clone() {
+                log::error!("LocalPlayer::play: decode error during pre-buffer: {e}");
+                self.stop();
+                return Err(LocalError::Stream(e));
+            }
+            if Instant::now() >= prebuf_deadline {
+                log::warn!(
+                    "LocalPlayer::play: pre-buffer timeout (have {} want {min_buffer})",
+                    ring.len()
+                );
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
 
         let ring_cb = Arc::clone(&ring);
         let vol = Arc::clone(&self.volume);
         let stop_cb = Arc::clone(&stop);
         let err_cb = Arc::clone(&err_slot);
-
-        let mut read_pos = 0.0f64;
-        let ratio = rate as f64 / out_rate as f64;
+        let mut hold = vec![0.0f32; play_ch.max(1)];
 
         let stream = cpal_device
             .build_output_stream(
@@ -381,31 +436,22 @@ impl LocalPlayer {
                         return;
                     }
                     let gain = bits_f32(vol.load(Ordering::Relaxed));
-                    let mut ring = ring_cb.lock();
-                    for frame in data.chunks_mut(out_ch) {
-                        let need = ((read_pos.floor() as usize) + 2) * channels;
-                        if ring.len() < need {
-                            frame.fill(0.0);
-                            continue;
-                        }
-                        let i0 = read_pos.floor() as usize;
-                        let frac = (read_pos - i0 as f64) as f32;
-                        for (c, sample) in frame.iter_mut().enumerate().take(out_ch) {
-                            let src_c = c.min(channels - 1);
-                            let s0 = ring.sample_at(i0 * channels + src_c);
-                            let s1 = ring.sample_at((i0 + 1) * channels + src_c);
-                            *sample = (s0 + (s1 - s0) * frac) * gain;
-                        }
-                        read_pos += ratio;
-                        let drop_frames = read_pos.floor() as usize;
-                        if drop_frames > 0 {
-                            let drop_samples = drop_frames * channels;
-                            if drop_samples <= ring.len() {
-                                ring.discard(drop_samples);
-                                read_pos -= drop_frames as f64;
+                    let mut scratch = [0.0f32; 8];
+                    for frame in data.chunks_mut(play_ch) {
+                        let n = ring_cb.pop_slice(&mut scratch[..play_ch]);
+                        if n >= play_ch {
+                            for (out, &sample) in frame.iter_mut().zip(scratch[..play_ch].iter()) {
+                                *out = sample * gain;
+                            }
+                            hold.copy_from_slice(&scratch[..play_ch]);
+                        } else {
+                            playback_diag::local_underrun(play_ch - n);
+                            for (i, out) in frame.iter_mut().enumerate().take(play_ch) {
+                                *out = hold.get(i).copied().unwrap_or(0.0) * gain;
                             }
                         }
                     }
+                    playback_diag::local_ring_fill(ring_cb.len());
                 },
                 move |e| {
                     log::error!("LocalPlayer cpal stream error: {e}");
@@ -494,418 +540,4 @@ fn pick_output_config(
     }
     let range = best.ok_or_else(|| LocalError::Audio("no suitable output format".into()))?;
     Ok(range.with_max_sample_rate().config())
-}
-
-struct DecodeContext<'a> {
-    ring: &'a Mutex<SampleRing>,
-    levels: &'a Mutex<[f32; BANDS]>,
-    spectrum_enabled: bool,
-    stop: &'a Arc<AtomicBool>,
-    src_rate: &'a AtomicU32,
-    src_ch: &'a AtomicU32,
-    ready: &'a AtomicBool,
-}
-
-fn decode_into_ring(
-    url: &str,
-    context: DecodeContext<'_>,
-    title_tx: Option<&mpsc::Sender<String>>,
-) -> Result<(), String> {
-    let DecodeContext {
-        ring,
-        levels,
-        spectrum_enabled,
-        stop,
-        src_rate,
-        src_ch,
-        ready,
-    } = context;
-    if stop.load(Ordering::SeqCst) {
-        return Err("stopped".into());
-    }
-
-    let headers = stream_headers(false);
-    let client = stream_client(Duration::from_secs(10), None)?;
-
-    // `.send()` can hang forever on a dead host (timeout(None) + no headers).
-    // Open in a side thread and abandon it on stop/timeout.
-    let resp = open_stream_response(client, url, headers, stop)?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    log::info!(
-        "LocalPlayer HTTP ok status={} content-type={} icy-metaint={}",
-        resp.status(),
-        resp.headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("?"),
-        resp.headers()
-            .get("icy-metaint")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("-")
-    );
-
-    let content_type = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("audio/mpeg")
-        .to_string();
-    let meta_int = metadata_interval(resp.headers());
-
-    let body = StopAwareBody::spawn(resp, Arc::clone(stop));
-    let reader = IcyStripReader {
-        inner: body,
-        meta_int,
-        until_meta: meta_int,
-        stop: Arc::clone(stop),
-        title_tx: title_tx.cloned(),
-        last_title: String::new(),
-    };
-
-    let mss = MediaSourceStream::new(Box::new(reader), Default::default());
-    let mut hint = Hint::new();
-    apply_hint(&mut hint, &content_type);
-
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|e| e.to_string())?;
-    let mut format = probed.format;
-
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "no audio track".to_string())?
-        .clone();
-    let track_id = track.id;
-    let sample_rate = track
-        .codec_params
-        .sample_rate
-        .ok_or_else(|| "missing sample rate".to_string())?;
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(2)
-        .max(1);
-
-    src_rate.store(sample_rate, Ordering::SeqCst);
-    src_ch.store(channels as u32, Ordering::SeqCst);
-    ready.store(true, Ordering::SeqCst);
-    log::info!("LocalPlayer decode probe: sample_rate={sample_rate} channels={channels}");
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| e.to_string())?;
-
-    let mut sample_buf: Option<SampleBuffer<f32>> = None;
-    let mut bands = spectrum_enabled.then(BandAnalyzer::new);
-    let mut level_publish = spectrum_enabled.then(LevelPublisher::new);
-    let wall_start = Instant::now();
-    let mut samples_done: u64 = 0;
-
-    loop {
-        if stop.load(Ordering::SeqCst) {
-            return Err("stopped".into());
-        }
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(SymError::ResetRequired) => return Err("reset".into()),
-            Err(SymError::IoError(e))
-                if e.kind() == io::ErrorKind::UnexpectedEof
-                    || e.kind() == io::ErrorKind::Interrupted =>
-            {
-                return Err("eof".into());
-            }
-            Err(_) if stop.load(Ordering::SeqCst) => return Err("stopped".into()),
-            Err(e) => return Err(e.to_string()),
-        };
-        if packet.track_id() != track_id {
-            continue;
-        }
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(SymError::DecodeError(_)) => continue,
-            Err(e) => return Err(e.to_string()),
-        };
-
-        let interleaved = copy_interleaved(&decoded, &mut sample_buf);
-        let frames = interleaved.len() / channels.max(1);
-        samples_done += frames as u64;
-
-        {
-            let mut q = ring.lock();
-            // Don't grow the buffer — wait for consumers.
-            while q.len() + interleaved.len() > RING_MAX {
-                if stop.load(Ordering::SeqCst) {
-                    return Err("stopped".into());
-                }
-                drop(q);
-                thread::sleep(Duration::from_millis(5));
-                q = ring.lock();
-            }
-            q.push_slice(interleaved);
-        }
-
-        if let Some(bands) = bands.as_mut() {
-            let mono = interleaved
-                .chunks(channels)
-                .map(|frame| frame.iter().sum::<f32>() / channels as f32);
-            if let Some(values) = bands.push_mono(mono, sample_rate as f32)
-                && let Some(publisher) = level_publish.as_mut()
-            {
-                publisher.publish_limited(values, |values| *levels.lock() = values);
-            }
-        }
-
-        let audio_secs = samples_done as f64 / f64::from(sample_rate);
-        let elapsed = wall_start.elapsed().as_secs_f64();
-        if audio_secs > elapsed + 0.25 {
-            let ms = ((audio_secs - elapsed - 0.1) * 1000.0).clamp(1.0, 40.0) as u64;
-            let until = Instant::now() + Duration::from_millis(ms);
-            while Instant::now() < until {
-                if stop.load(Ordering::SeqCst) {
-                    return Err("stopped".into());
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-        }
-    }
-}
-
-fn open_stream_response(
-    client: reqwest::blocking::Client,
-    url: &str,
-    headers: reqwest::header::HeaderMap,
-    stop: &Arc<AtomicBool>,
-) -> Result<reqwest::blocking::Response, String> {
-    let url = url.to_string();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = client.get(url).headers(headers).send();
-        let _ = tx.send(result);
-    });
-
-    let deadline = Instant::now() + OPEN_TIMEOUT;
-    loop {
-        if stop.load(Ordering::SeqCst) {
-            return Err("stopped".into());
-        }
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .min(READ_POLL);
-        if wait.is_zero() {
-            return Err("stream open timeout".into());
-        }
-        match rx.recv_timeout(wait) {
-            Ok(Ok(resp)) => {
-                log::debug!("open_stream_response: headers received");
-                return Ok(resp);
-            }
-            Ok(Err(e)) => return Err(e.to_string()),
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("failed to open audio stream".into());
-            }
-        }
-    }
-}
-
-/// Reads the HTTP body on a side thread so `stop` can interrupt within ~READ_POLL.
-struct StopAwareBody {
-    rx: Mutex<mpsc::Receiver<io::Result<Vec<u8>>>>,
-    stop: Arc<AtomicBool>,
-    pending: Vec<u8>,
-    pending_at: usize,
-}
-
-impl StopAwareBody {
-    fn spawn(mut resp: reqwest::blocking::Response, stop: Arc<AtomicBool>) -> Self {
-        let (tx, rx) = mpsc::sync_channel(8);
-        let stop_prod = Arc::clone(&stop);
-        thread::spawn(move || {
-            let mut buf = vec![0u8; 16 * 1024];
-            loop {
-                if stop_prod.load(Ordering::SeqCst) {
-                    break;
-                }
-                match resp.read(&mut buf) {
-                    Ok(0) => {
-                        let _ = tx.send(Ok(Vec::new()));
-                        break;
-                    }
-                    Ok(n) => {
-                        if tx.send(Ok(buf[..n].to_vec())).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        break;
-                    }
-                }
-            }
-        });
-        Self {
-            rx: Mutex::new(rx),
-            stop,
-            pending: Vec::new(),
-            pending_at: 0,
-        }
-    }
-}
-
-impl Read for StopAwareBody {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        loop {
-            if self.stop.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
-            }
-            if self.pending_at < self.pending.len() {
-                let n = (self.pending.len() - self.pending_at).min(buf.len());
-                buf[..n].copy_from_slice(&self.pending[self.pending_at..self.pending_at + n]);
-                self.pending_at += n;
-                if self.pending_at >= self.pending.len() {
-                    self.pending.clear();
-                    self.pending_at = 0;
-                }
-                return Ok(n);
-            }
-            let chunk = {
-                let rx = self.rx.lock();
-                match rx.recv_timeout(READ_POLL) {
-                    Ok(Ok(chunk)) if chunk.is_empty() => return Ok(0),
-                    Ok(Ok(chunk)) => chunk,
-                    Ok(Err(e)) => return Err(e),
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
-                }
-            };
-            self.pending = chunk;
-            self.pending_at = 0;
-        }
-    }
-}
-
-fn copy_interleaved<'a>(
-    decoded: &AudioBufferRef<'_>,
-    sample_buf: &'a mut Option<SampleBuffer<f32>>,
-) -> &'a [f32] {
-    let spec = *decoded.spec();
-    let frames = decoded.frames();
-    if sample_buf.as_ref().is_none_or(|b| b.capacity() < frames) {
-        *sample_buf = Some(SampleBuffer::<f32>::new(frames as u64, spec));
-    }
-    let buf = sample_buf.as_mut().unwrap();
-    buf.copy_interleaved_ref(decoded.clone());
-    buf.samples()
-}
-
-struct IcyStripReader {
-    inner: StopAwareBody,
-    meta_int: usize,
-    until_meta: usize,
-    stop: Arc<AtomicBool>,
-    title_tx: Option<mpsc::Sender<String>>,
-    last_title: String,
-}
-
-impl IcyStripReader {
-    fn skip_meta(&mut self) -> io::Result<()> {
-        let mut len_byte = [0u8; 1];
-        self.read_exact_stop(&mut len_byte)?;
-        let meta_len = (len_byte[0] as usize) * 16;
-        if meta_len > 0 {
-            let mut meta = vec![0u8; meta_len];
-            self.read_exact_stop(&mut meta)?;
-            if let Some(tx) = &self.title_tx
-                && let Some(title) = parse_stream_title(&meta)
-            {
-                let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !title.is_empty() && title != self.last_title {
-                    self.last_title = title.clone();
-                    let _ = tx.send(title);
-                }
-            }
-        }
-        self.until_meta = self.meta_int;
-        Ok(())
-    }
-
-    fn read_exact_stop(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        let mut got = 0;
-        while got < buf.len() {
-            if self.stop.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
-            }
-            match self.inner.read(&mut buf[got..]) {
-                Ok(0) => {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "eof"));
-                }
-                Ok(n) => got += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                    if self.stop.load(Ordering::SeqCst) {
-                        return Err(e);
-                    }
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Read for IcyStripReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.stop.load(Ordering::SeqCst) {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
-        }
-        if self.meta_int == 0 {
-            return self.inner.read(buf);
-        }
-        if self.until_meta == 0 {
-            self.skip_meta()?;
-        }
-        let max = buf.len().min(self.until_meta);
-        if max == 0 {
-            return Ok(0);
-        }
-        let n = self.inner.read(&mut buf[..max])?;
-        if n == 0 {
-            return Ok(0);
-        }
-        self.until_meta = self.until_meta.saturating_sub(n);
-        Ok(n)
-    }
-}
-
-impl Seek for IcyStripReader {
-    fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "stream is not seekable",
-        ))
-    }
-}
-
-impl MediaSource for IcyStripReader {
-    fn is_seekable(&self) -> bool {
-        false
-    }
-
-    fn byte_len(&self) -> Option<u64> {
-        None
-    }
 }

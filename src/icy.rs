@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::audio::parse_stream_title;
+use crate::audio::format::parse_stream_title;
 use crate::net::{metadata_interval, stream_client, stream_headers};
 
 pub struct IcyWatcher {

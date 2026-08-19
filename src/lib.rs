@@ -1,7 +1,7 @@
 //! RockCast library (GUI binary is `main.rs`).
 
 pub mod app;
-mod audio;
+pub mod audio;
 pub mod profile;
 pub mod cast;
 pub mod i18n;
@@ -11,6 +11,7 @@ pub mod net;
 pub mod observers;
 pub mod output;
 pub mod playback;
+pub mod playback_diag;
 pub mod relay;
 /// Optional RockServer search integration.
 pub mod rockserver;

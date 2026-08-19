@@ -100,7 +100,7 @@ fn opus_via_pc_exposes_same_public_url_for_spectrum() {
 }
 
 #[test]
-fn mp3_via_pc_keeps_raw_tap_endpoint() {
+fn mp3_via_pc_exposes_pcm_tap_for_spectrum() {
     let _guard = ENV_LOCK.lock().expect("env lock");
     unsafe {
         std::env::set_var("ROCKCAST_RELAY_ADVERTISE_IP", "127.0.0.1");
@@ -116,7 +116,7 @@ fn mp3_via_pc_keeps_raw_tap_endpoint() {
         )
         .expect("start relay");
 
-    assert_eq!(content_type, "audio/mpeg");
+    assert_eq!(content_type, "audio/wav");
     let expected_tap = public_url.replace("/stream", "/tap");
     assert_eq!(relay.tap_url().as_deref(), Some(expected_tap.as_str()));
 
@@ -128,7 +128,7 @@ fn mp3_via_pc_keeps_raw_tap_endpoint() {
         .expect("http headers")
         + 4;
     let headers = String::from_utf8_lossy(&response[..header_end]);
-    assert!(headers.contains("Content-Type: audio/mpeg\r\n"));
+    assert!(headers.contains("Content-Type: audio/L16\r\n"));
     assert!(!headers.contains("Transfer-Encoding: chunked\r\n"));
 
     relay.stop();

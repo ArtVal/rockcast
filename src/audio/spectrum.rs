@@ -1,40 +1,107 @@
-//! Shared audio-stream helpers used by local playback and spectrum analysis.
+//! FFT spectrum bands for EQ visualization.
 
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use rustfft::{Fft, FftPlanner, num_complex::Complex};
-use symphonia::core::probe::Hint;
+use parking_lot::Mutex;
+use rustfft::{num_complex::Complex, Fft, FftPlanner};
 
 pub const BANDS: usize = 24;
 const FFT_SIZE: usize = 1024;
 const HOP: usize = 512;
 
 /// UI/spectrum level publish rate (~50 Hz).
-pub(crate) const LEVEL_PUBLISH_INTERVAL: Duration = Duration::from_millis(20);
+pub const LEVEL_PUBLISH_INTERVAL: Duration = Duration::from_millis(20);
 
-pub(crate) struct LevelPublisher {
+pub struct LevelPublisher {
     last: Instant,
     pending: Option<[f32; BANDS]>,
 }
 
 impl LevelPublisher {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             last: Instant::now() - LEVEL_PUBLISH_INTERVAL,
             pending: None,
         }
     }
 
-    pub(crate) fn publish_limited(&mut self, values: [f32; BANDS], write: impl FnOnce([f32; BANDS])) {
+    pub fn publish_limited(&mut self, values: [f32; BANDS], write: impl FnOnce([f32; BANDS])) {
         self.pending = Some(values);
         if self.last.elapsed() >= LEVEL_PUBLISH_INTERVAL
             && let Some(values) = self.pending.take()
         {
             write(values);
             self.last = Instant::now();
+        }
+    }
+}
+
+impl Default for LevelPublisher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// FFT analyzer wired to a shared levels buffer (playout / relay decode at device rate).
+pub struct SpectrumTap {
+    bands: BandAnalyzer,
+    publish: LevelPublisher,
+    levels: Arc<Mutex<[f32; BANDS]>>,
+    mono_buf: Vec<f32>,
+}
+
+impl SpectrumTap {
+    pub fn new(levels: Arc<Mutex<[f32; BANDS]>>) -> Self {
+        Self {
+            bands: BandAnalyzer::new(),
+            publish: LevelPublisher::new(),
+            levels,
+            mono_buf: Vec::with_capacity(4096),
+        }
+    }
+
+    pub fn push_f32(&mut self, pcm: &[f32], channels: usize, sample_rate: u32) {
+        let ch = channels.max(1);
+        self.mono_buf.clear();
+        self.mono_buf.reserve(pcm.len() / ch);
+        for frame in pcm.chunks(ch) {
+            self.mono_buf.push(frame.iter().sum::<f32>() / ch as f32);
+        }
+        self.analyze(sample_rate);
+    }
+
+    /// Interleaved 16-bit LE PCM (relay playout chunks).
+    pub fn push_i16_le(&mut self, pcm: &[u8], channels: usize, sample_rate: u32) {
+        let ch = channels.max(1);
+        let frame_bytes = ch * 2;
+        self.mono_buf.clear();
+        self.mono_buf.reserve(pcm.len() / frame_bytes);
+        for frame in pcm.chunks(frame_bytes) {
+            if frame.len() < frame_bytes {
+                break;
+            }
+            let mut sum = 0.0f32;
+            for c in 0..ch {
+                let off = c * 2;
+                let s = i16::from_le_bytes([frame[off], frame[off + 1]]);
+                sum += f32::from(s) / f32::from(i16::MAX);
+            }
+            self.mono_buf.push(sum / ch as f32);
+        }
+        self.analyze(sample_rate);
+    }
+
+    fn analyze(&mut self, sample_rate: u32) {
+        if let Some(values) = self
+            .bands
+            .push_mono(self.mono_buf.iter().copied(), sample_rate as f32)
+        {
+            self.publish
+                .publish_limited(values, |values| *self.levels.lock() = values);
         }
     }
 }
@@ -63,7 +130,7 @@ impl BandRanges {
     }
 }
 
-pub(crate) struct BandAnalyzer {
+pub struct BandAnalyzer {
     pcm: VecDeque<f32>,
     fft: std::sync::Arc<dyn Fft<f32>>,
     fft_buf: Vec<Complex<f32>>,
@@ -75,7 +142,7 @@ pub(crate) struct BandAnalyzer {
 }
 
 impl BandAnalyzer {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut planner = FftPlanner::<f32>::new();
         Self {
             pcm: VecDeque::with_capacity(FFT_SIZE * 2),
@@ -89,7 +156,7 @@ impl BandAnalyzer {
         }
     }
 
-    pub(crate) fn push_mono<I>(&mut self, samples: I, sample_rate: f32) -> Option<[f32; BANDS]>
+    pub fn push_mono<I>(&mut self, samples: I, sample_rate: f32) -> Option<[f32; BANDS]>
     where
         I: IntoIterator<Item = f32>,
     {
@@ -139,32 +206,10 @@ impl BandAnalyzer {
     }
 }
 
-pub(crate) fn apply_hint(hint: &mut Hint, content_type: &str) {
-    if content_type.contains("mpeg") || content_type.contains("mp3") {
-        hint.with_extension("mp3");
-    } else if content_type.contains("aac") || content_type.contains("mp4") {
-        hint.with_extension("aac");
-    } else if content_type.contains("wav")
-        || content_type.contains("wave")
-        || content_type.contains("pcm")
-    {
-        hint.with_extension("wav");
-    } else if content_type.contains("ogg") || content_type.contains("vorbis") {
-        hint.with_extension("ogg");
-    } else if content_type.contains("flac") {
-        hint.with_extension("flac");
-    } else {
-        hint.with_extension("mp3");
+impl Default for BandAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
-}
-
-pub(crate) fn parse_stream_title(meta: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(meta);
-    let lower = text.to_ascii_lowercase();
-    let start = lower.find("streamtitle='")? + "streamtitle='".len();
-    let rest = &text[start..];
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
 }
 
 fn hann(n: usize) -> Vec<f32> {
@@ -193,16 +238,8 @@ fn magnitudes_to_bands(fft: &[Complex<f32>], ranges: &BandRanges) -> [f32; BANDS
 
 #[cfg(test)]
 mod tests {
-    use super::{BandAnalyzer, FFT_SIZE, parse_stream_title};
+    use super::{BandAnalyzer, FFT_SIZE};
     use std::{thread, time::Duration};
-
-    #[test]
-    fn parses_icy_stream_title_case_insensitively() {
-        assert_eq!(
-            parse_stream_title(b"StreamTitle='Artist - Track';"),
-            Some("Artist - Track".into())
-        );
-    }
 
     #[test]
     fn analyzer_waits_for_a_full_window() {

@@ -77,6 +77,12 @@ fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let log_path = init_logging();
     log::info!("RockCast starting; log file: {}", log_path.display());
+    if rockcast::profile::enabled() {
+        log::info!(
+            "Playback diagnostics ON — PLAYBACK_DIAG every 2s + DIAG warnings in {}",
+            log_path.display()
+        );
+    }
     #[cfg(debug_assertions)]
     log::debug!("Optional telemetry: set ROCKCAST_METRICS=1 or ROCKCAST_PROFILE=1 before launch");
 

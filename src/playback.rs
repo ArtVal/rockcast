@@ -120,7 +120,11 @@ impl PlaybackController {
         self.relay.tap_url()
     }
 
-    pub fn local_levels(&self) -> [f32; crate::spectrum::BANDS] {
+    pub fn relay_levels(&self) -> [f32; crate::audio::spectrum::BANDS] {
+        self.relay.levels()
+    }
+
+    pub fn local_levels(&self) -> [f32; crate::audio::spectrum::BANDS] {
         self.local.levels()
     }
 
@@ -193,9 +197,22 @@ impl PlaybackController {
                 };
 
                 if use_relay {
-                    // Give relay feeder a short head start to reduce "silent start"
-                    // races on some Chromecast firmware/network combinations.
-                    let _ = relay.wait_for_data(8 * 1024, std::time::Duration::from_millis(900));
+                    let min_pcm = 48_000usize * 2 * 2;
+                    let min_bytes = if load_ct.contains("wav") {
+                        min_pcm
+                    } else {
+                        8 * 1024
+                    };
+                    let format_timeout = std::time::Duration::from_secs(12);
+                    let buffer_timeout = std::time::Duration::from_secs(12);
+                    if load_ct.contains("wav") && !relay.wait_for_pcm_format(format_timeout) {
+                        log::warn!("relay pre-buffer: PCM format not ready within {format_timeout:?}");
+                    }
+                    if !relay.wait_for_data(min_bytes, buffer_timeout) {
+                        log::warn!(
+                            "relay pre-buffer short: wanted {min_bytes} B within {buffer_timeout:?}"
+                        );
+                    }
                 }
 
                 if runtime_cancel.is_cancelled()

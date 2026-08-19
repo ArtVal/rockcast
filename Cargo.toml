@@ -9,6 +9,7 @@ cpal = "0.15"
 eframe = { version = "0.33", default-features = true }
 egui = "0.33"
 env_logger = "0.11"
+fdk-aac-rust = { version = "0.2.3", default-features = false }
 if-addrs = "0.14"
 log = "0.4"
 mdns-sd = "0.15"

@@ -1362,6 +1362,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdk-aac-rust"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "607e6ba558b60e1219ccc8200bbf03fb96fad20c5d948ab25982ea964af13ae5"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3379,6 +3385,7 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
+ "fdk-aac-rust",
  "if-addrs",
  "log",
  "mdns-sd",

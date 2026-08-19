@@ -20,6 +20,7 @@ use crate::{
     observers::StreamObservers,
     output::{OutputDevice, scan_streaming},
     playback::{PlaybackController, PlaybackEvent},
+    playback_diag,
     settings::AppSettings,
     spectrum::BANDS,
     stations::{Station, enrich_stations, load_catalog},
@@ -338,8 +339,10 @@ impl RockCastApp {
                     self.playing_local = local;
                     self.playing_url = Some(url);
                     self.track = self.lang.t().track_meta_hint.into();
-                    if !local && let Some(tap_url) = tap_url {
-                        self.schedule_stream_tap(generation, tap_url);
+                    if !local && !self.cast_relay && self.eq_enabled {
+                        if let Some(tap_url) = tap_url {
+                            self.schedule_stream_tap(generation, tap_url);
+                        }
                     }
                 }
                 PlaybackEvent::StopOk { .. } => {
@@ -717,11 +720,11 @@ impl RockCastApp {
     }
 
     fn sync_spectrum(&mut self) {
-        let tap = if self.cast_relay {
-            self.playback.relay_tap_url()
-        } else {
-            self.playing_url.clone()
-        };
+        if self.cast_relay {
+            self.observers.stop();
+            return;
+        }
+        let tap = self.playing_url.clone();
         let relay_url = self.playback.relay_public_url();
         self.observers.sync(
             self.playing,
@@ -769,6 +772,8 @@ impl RockCastApp {
         let targets = if self.eq_enabled && self.playing {
             if self.playing_local {
                 self.playback.local_levels()
+            } else if self.cast_relay {
+                self.playback.relay_levels()
             } else {
                 self.observers.levels()
             }
@@ -1549,13 +1554,17 @@ impl eframe::App for RockCastApp {
             || self.loading_devices
             || self.settings_dirty
             || self.voice_busy;
-        self.telemetry.maybe_log(PlaybackSnapshot {
+        let snap = PlaybackSnapshot {
             playing: self.playing,
             eq_enabled: self.eq_enabled,
             cast_relay: self.cast_relay,
             playing_local: self.playing_local,
             fast_repaint: needs_fast_repaint,
-        });
+        };
+        self.telemetry.maybe_log(snap);
+        if snap.playing {
+            playback_diag::maybe_log(snap);
+        }
         if self.voice_recording.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if eq_ui_active {

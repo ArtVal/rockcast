@@ -411,6 +411,19 @@ fn infer_codec(codec: &str, url: &str) -> String {
             normalized
         };
     }
+    if lower_url.contains("aacp")
+        || lower_url.ends_with(".aac")
+        || lower_url.contains(".aac?")
+        || lower_url.contains("/aac")
+    {
+        return "aac+".into();
+    }
+    if matches!(
+        normalized.as_str(),
+        "aac" | "aac+" | "he-aac" | "aacp" | "he-aac-v2"
+    ) {
+        return normalized;
+    }
     normalized
 }
 
@@ -446,9 +459,9 @@ mod tests {
     }
 
     #[test]
-    fn opus_url_overrides_missing_codec() {
+    fn aac_url_overrides_missing_codec() {
         let mut s = station("");
-        s.url = "http://play.global.audio/avtoradio.opus".into();
-        assert_eq!(s.content_type(), "audio/ogg; codecs=opus");
+        s.url = "http://example.test/live.aac".into();
+        assert_eq!(s.content_type(), "audio/aac");
     }
 }
