@@ -22,12 +22,7 @@ fn live_via_pc_aac_forwards_icy_title_to_relay() {
     let relay = StreamRelay::new();
     let cancel = AtomicBool::new(false);
     relay
-        .start(
-            ROCK_ANTENNE_AAC_URL,
-            "127.0.0.1",
-            "audio/aac",
-            &cancel,
-        )
+        .start(ROCK_ANTENNE_AAC_URL, "127.0.0.1", "audio/aac", &cancel)
         .expect("start AAC relay");
 
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -47,6 +42,9 @@ fn live_via_pc_aac_forwards_icy_title_to_relay() {
         std::env::remove_var("ROCKCAST_RELAY_ADVERTISE_IP");
     }
 
-    assert!(title.is_some(), "AAC relay did not forward an ICY stream title");
+    assert!(
+        title.is_some(),
+        "AAC relay did not forward an ICY stream title"
+    );
     eprintln!("relay ICY title: {}", title.unwrap());
 }

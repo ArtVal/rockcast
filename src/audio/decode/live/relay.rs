@@ -13,11 +13,13 @@ use crate::audio::{
         opus::LiveOggOpusReader,
         pcm::{CastPcmResampler, PcmSmoother, cast_pcm_rate},
     },
-    format::{infer_stream_format, PrefixedReader, StreamFormat},
+    format::{PrefixedReader, StreamFormat, infer_stream_format},
     spectrum::SpectrumTap,
 };
 
-use super::{open::open_icy_reader, adts::decode_fdk_adts_relay, symphonia::decode_symphonia_relay};
+use super::{
+    adts::decode_fdk_adts_relay, open::open_icy_reader, symphonia::decode_symphonia_relay,
+};
 
 pub(super) struct RelayEmitCtx<'a> {
     pub format_set: &'a mut bool,
@@ -84,15 +86,17 @@ pub fn run_live_decode_relay_pcm(
     match format {
         StreamFormat::OpusOgg => {
             let mut reader = LiveOggOpusReader::new(PrefixedReader::new(peek, reader));
-            let mut decoder = OpusDecoder::new(48_000, OpusChannels::Stereo)
-                .map_err(|e| format!("opus: {e}"))?;
+            let mut decoder =
+                OpusDecoder::new(48_000, OpusChannels::Stereo).map_err(|e| format!("opus: {e}"))?;
             let mut pcm = vec![0i16; 5760 * 2];
             while !stop.load(Ordering::SeqCst) {
                 let packet = match reader.read_packet(stop)? {
                     Some(p) => p,
                     None => return Err("eof".into()),
                 };
-                let samples = decoder.decode(&packet, &mut pcm, DecodeMode::Normal).unwrap_or(0);
+                let samples = decoder
+                    .decode(&packet, &mut pcm, DecodeMode::Normal)
+                    .unwrap_or(0);
                 if samples == 0 {
                     continue;
                 }

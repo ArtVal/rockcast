@@ -24,12 +24,12 @@ pub(crate) const EQ_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 pub(crate) const UI_SLOW_REPAINT_INTERVAL: Duration = Duration::from_millis(120);
 
 pub(crate) fn panel(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-        Frame::new()
-            .fill(PANEL)
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, add);
-    }
+    Frame::new()
+        .fill(PANEL)
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, add);
+}
 
 pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
     let count = s.chars().count();

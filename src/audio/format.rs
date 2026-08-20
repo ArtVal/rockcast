@@ -18,7 +18,9 @@ pub enum StreamFormat {
 }
 
 pub fn find_adts_sync(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(2).position(|w| w[0] == 0xFF && (w[1] & 0xF6) == 0xF0)
+    bytes
+        .windows(2)
+        .position(|w| w[0] == 0xFF && (w[1] & 0xF6) == 0xF0)
 }
 
 pub fn find_mp3_sync(bytes: &[u8]) -> Option<usize> {
@@ -178,7 +180,7 @@ pub fn parse_stream_title(meta: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_adts_sync, infer_stream_format, parse_stream_title, StreamFormat};
+    use super::{StreamFormat, find_adts_sync, infer_stream_format, parse_stream_title};
 
     #[test]
     fn parses_icy_stream_title_case_insensitively() {

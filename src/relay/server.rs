@@ -129,23 +129,19 @@ fn handle_client(
                 channels,
                 ..
             } => {
-                let (sample_rate, channels) =
-                    resolved_pcm.unwrap_or((*sample_rate, *channels));
+                let (sample_rate, channels) = resolved_pcm.unwrap_or((*sample_rate, *channels));
                 pcm_tap_response_headers(sample_rate, channels)
             }
         }
     } else {
         match transport {
-            RelayTransport::Passthrough { content_type } => {
-                stream_response_headers(content_type)
-            }
+            RelayTransport::Passthrough { content_type } => stream_response_headers(content_type),
             RelayTransport::WavPcm {
                 sample_rate,
                 channels,
                 ..
             } => {
-                let (sample_rate, channels) =
-                    resolved_pcm.unwrap_or((*sample_rate, *channels));
+                let (sample_rate, channels) = resolved_pcm.unwrap_or((*sample_rate, *channels));
                 wav_response_headers(sample_rate, channels)
             }
         }

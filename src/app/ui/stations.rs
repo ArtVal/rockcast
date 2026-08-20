@@ -1,12 +1,11 @@
 //! egui panel widgets.
 
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui,
-    Vec2,
+    self, Align, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
 
-use super::super::theme::*;
 use super::super::RockCastApp;
+use super::super::theme::*;
 
 impl RockCastApp {
     pub(in crate::app) fn draw_station_list(&mut self, ui: &mut Ui, list_h: f32) {
@@ -233,10 +232,8 @@ impl RockCastApp {
                         let tags_limit = ((tags_w / 6.8) as usize).clamp(18, 72);
                         let meta_limit = ((meta_w / 6.4) as usize).clamp(10, 28);
                         let tags = truncate(&st.tags, tags_limit);
-                        let country = truncate(
-                            &st.country,
-                            ((country_w / 7.0) as usize).clamp(10, 18),
-                        );
+                        let country =
+                            truncate(&st.country, ((country_w / 7.0) as usize).clamp(10, 18));
                         let meta = truncate(&meta, meta_limit);
 
                         let (row_rect, resp) =

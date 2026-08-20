@@ -14,6 +14,8 @@ static TOKEN_MISSING_RU: &[u8] = include_bytes!("../assets/token_missing_ru.wav"
 static TOKEN_MISSING_EN: &[u8] = include_bytes!("../assets/token_missing_en.wav");
 static TOKEN_INVALID_RU: &[u8] = include_bytes!("../assets/token_invalid_ru.wav");
 static TOKEN_INVALID_EN: &[u8] = include_bytes!("../assets/token_invalid_en.wav");
+static STATION_UNAVAILABLE_RU: &[u8] = include_bytes!("../assets/station_unavailable_ru.wav");
+static STATION_UNAVAILABLE_EN: &[u8] = include_bytes!("../assets/station_unavailable_en.wav");
 
 #[derive(Clone, Copy)]
 pub enum Prompt {
@@ -23,6 +25,7 @@ pub enum Prompt {
     ServerUnavailable,
     TokenMissing,
     TokenInvalid,
+    StationUnavailable,
 }
 
 pub fn play(prompt: Prompt, lang: Lang) {
@@ -48,6 +51,10 @@ pub fn play(prompt: Prompt, lang: Lang) {
             Lang::Ru => TOKEN_INVALID_RU,
             Lang::En => TOKEN_INVALID_EN,
         },
+        Prompt::StationUnavailable => match lang {
+            Lang::Ru => STATION_UNAVAILABLE_RU,
+            Lang::En => STATION_UNAVAILABLE_EN,
+        },
     };
     std::thread::spawn(move || {
         if let Err(e) = play_wav(wav) {
@@ -61,35 +68,71 @@ fn play_wav(wav: &[u8]) -> Result<(), String> {
     let device = cpal::default_host()
         .default_output_device()
         .ok_or("no output device")?;
-    let config = cpal::StreamConfig {
-        channels,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
+    let supported = device
+        .default_output_config()
+        .map_err(|e| format!("default output configuration: {e}"))?;
+    let config = supported.config();
+    let output_channels = usize::from(config.channels);
+    let output_rate = config.sample_rate.0;
     let pos = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let pos2 = pos.clone();
-    let len = samples.len();
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let done2 = done.clone();
-    let stream = device
-        .build_output_stream(
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::F32 => device.build_output_stream(
             &config,
             move |out: &mut [f32], _| {
-                let start = pos2.load(std::sync::atomic::Ordering::Relaxed);
-                for (i, s) in out.iter_mut().enumerate() {
-                    let idx = start + i;
-                    *s = if idx < len { samples[idx] } else { 0.0 };
-                }
-                let new_pos = start + out.len();
-                pos2.store(new_pos, std::sync::atomic::Ordering::Relaxed);
-                if new_pos >= len {
-                    done2.store(true, std::sync::atomic::Ordering::Release);
-                }
+                fill_prompt(
+                    out,
+                    &samples,
+                    sample_rate,
+                    channels,
+                    output_rate,
+                    output_channels,
+                    &pos2,
+                    &done2,
+                );
             },
             |e| log::warn!("prompt stream error: {e}"),
             None,
-        )
-        .map_err(|e| format!("build_output_stream: {e}"))?;
+        ),
+        cpal::SampleFormat::I16 => device.build_output_stream(
+            &config,
+            move |out: &mut [i16], _| {
+                fill_prompt_i16(
+                    out,
+                    &samples,
+                    sample_rate,
+                    channels,
+                    output_rate,
+                    output_channels,
+                    &pos2,
+                    &done2,
+                );
+            },
+            |e| log::warn!("prompt stream error: {e}"),
+            None,
+        ),
+        cpal::SampleFormat::U16 => device.build_output_stream(
+            &config,
+            move |out: &mut [u16], _| {
+                fill_prompt_u16(
+                    out,
+                    &samples,
+                    sample_rate,
+                    channels,
+                    output_rate,
+                    output_channels,
+                    &pos2,
+                    &done2,
+                );
+            },
+            |e| log::warn!("prompt stream error: {e}"),
+            None,
+        ),
+        format => return Err(format!("unsupported output sample format {format:?}")),
+    }
+    .map_err(|e| format!("build_output_stream: {e}"))?;
     stream.play().map_err(|e| format!("play: {e}"))?;
     while !done.load(std::sync::atomic::Ordering::Acquire) {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -97,6 +140,115 @@ fn play_wav(wav: &[u8]) -> Result<(), String> {
     // Small tail to let the audio buffer flush.
     std::thread::sleep(std::time::Duration::from_millis(50));
     Ok(())
+}
+
+fn prompt_samples(
+    output_len: usize,
+    samples: &[f32],
+    source_rate: u32,
+    source_channels: u16,
+    output_rate: u32,
+    output_channels: usize,
+    position: &std::sync::atomic::AtomicUsize,
+    done: &std::sync::atomic::AtomicBool,
+) -> Vec<f32> {
+    let start_frame = position.load(std::sync::atomic::Ordering::Relaxed);
+    let source_channels = usize::from(source_channels).max(1);
+    let source_frames = samples.len().div_ceil(source_channels);
+    let frames = output_len.div_ceil(output_channels.max(1));
+    let mut output = vec![0.0; output_len];
+    for frame in 0..frames {
+        let source_frame =
+            start_frame + (frame * source_rate as usize / output_rate.max(1) as usize);
+        if source_frame >= source_frames {
+            continue;
+        }
+        for channel in 0..output_channels {
+            let source_channel = channel.min(source_channels - 1);
+            if let Some(sample) = output.get_mut(frame * output_channels + channel) {
+                *sample = samples[source_frame * source_channels + source_channel];
+            }
+        }
+    }
+    let advanced = frames * source_rate as usize / output_rate.max(1) as usize;
+    let next_frame = start_frame + advanced.max(1);
+    position.store(next_frame, std::sync::atomic::Ordering::Relaxed);
+    if next_frame >= source_frames {
+        done.store(true, std::sync::atomic::Ordering::Release);
+    }
+    output
+}
+
+fn fill_prompt(
+    out: &mut [f32],
+    samples: &[f32],
+    source_rate: u32,
+    source_channels: u16,
+    output_rate: u32,
+    output_channels: usize,
+    position: &std::sync::atomic::AtomicUsize,
+    done: &std::sync::atomic::AtomicBool,
+) {
+    out.copy_from_slice(&prompt_samples(
+        out.len(),
+        samples,
+        source_rate,
+        source_channels,
+        output_rate,
+        output_channels,
+        position,
+        done,
+    ));
+}
+
+fn fill_prompt_i16(
+    out: &mut [i16],
+    samples: &[f32],
+    source_rate: u32,
+    source_channels: u16,
+    output_rate: u32,
+    output_channels: usize,
+    position: &std::sync::atomic::AtomicUsize,
+    done: &std::sync::atomic::AtomicBool,
+) {
+    let rendered = prompt_samples(
+        out.len(),
+        samples,
+        source_rate,
+        source_channels,
+        output_rate,
+        output_channels,
+        position,
+        done,
+    );
+    for (target, sample) in out.iter_mut().zip(rendered) {
+        *target = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+    }
+}
+
+fn fill_prompt_u16(
+    out: &mut [u16],
+    samples: &[f32],
+    source_rate: u32,
+    source_channels: u16,
+    output_rate: u32,
+    output_channels: usize,
+    position: &std::sync::atomic::AtomicUsize,
+    done: &std::sync::atomic::AtomicBool,
+) {
+    let rendered = prompt_samples(
+        out.len(),
+        samples,
+        source_rate,
+        source_channels,
+        output_rate,
+        output_channels,
+        position,
+        done,
+    );
+    for (target, sample) in out.iter_mut().zip(rendered) {
+        *target = ((sample.clamp(-1.0, 1.0) + 1.0) * 32767.5) as u16;
+    }
 }
 
 fn decode_wav(data: &[u8]) -> Result<(Vec<f32>, u32, u16), String> {

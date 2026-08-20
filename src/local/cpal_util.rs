@@ -1,7 +1,7 @@
 //! cpal stream helpers and background cleanup.
 
 use std::{
-    sync::{mpsc, OnceLock},
+    sync::{OnceLock, mpsc},
     thread,
 };
 

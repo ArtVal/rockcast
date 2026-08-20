@@ -20,9 +20,7 @@ fn connect_and_get(url: &str, path: &str) -> Vec<u8> {
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
         .expect("set write timeout");
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n"
-    );
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).expect("write request");
 
     let mut buf = Vec::with_capacity(4096);
@@ -78,7 +76,11 @@ fn opus_via_pc_exposes_same_public_url_for_spectrum() {
     let headers = String::from_utf8_lossy(&response[..header_end]);
     assert!(headers.contains("Content-Type: audio/wav\r\n"));
     assert!(headers.contains("Content-Length:"));
-    assert!(response.len() >= header_end + 12, "wav header incomplete: {} bytes", response.len());
+    assert!(
+        response.len() >= header_end + 12,
+        "wav header incomplete: {} bytes",
+        response.len()
+    );
     assert_eq!(&response[header_end..header_end + 4], b"RIFF");
     assert_eq!(&response[header_end + 8..header_end + 12], b"WAVE");
 

@@ -44,8 +44,12 @@ pub fn local_pcm_sent() {
     let q = LOCAL_PCM_Q.fetch_add(1, Ordering::Relaxed) + 1;
     let mut cur_max = LOCAL_PCM_Q_MAX.load(Ordering::Relaxed);
     while q > cur_max {
-        match LOCAL_PCM_Q_MAX.compare_exchange_weak(cur_max, q, Ordering::Relaxed, Ordering::Relaxed)
-        {
+        match LOCAL_PCM_Q_MAX.compare_exchange_weak(
+            cur_max,
+            q,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => break,
             Err(v) => cur_max = v,
         }

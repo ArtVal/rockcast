@@ -18,14 +18,14 @@ use serde_json::json;
 
 pub use error::CastError;
 use media::{candidate_content_types, classify_media_status};
-use session::{parse_dmr, AppSession, LiveSession, LoadProgress};
+use session::{AppSession, LiveSession, LoadProgress, parse_dmr};
 
 use super::{
     channel::{
         CastChannel, ChannelError, DEFAULT_MEDIA_RECEIVER, NS_CONNECTION, NS_MEDIA, NS_RECEIVER,
         RECEIVER_ID,
     },
-    discovery::{discover, discover_streaming, DiscoveredDevice},
+    discovery::{DiscoveredDevice, discover, discover_streaming},
     proto::Payload,
 };
 
@@ -342,10 +342,8 @@ impl CastService {
                                 .pointer("/media/contentId")
                                 .and_then(|c| c.as_str())
                                 .is_some_and(|c| c == url);
-                            let state = st
-                                .get("playerState")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("");
+                            let state =
+                                st.get("playerState").and_then(|s| s.as_str()).unwrap_or("");
                             if content_ok && state == "IDLE" {
                                 idle_hits = idle_hits.saturating_add(1);
                                 if idle_hits >= 10 {

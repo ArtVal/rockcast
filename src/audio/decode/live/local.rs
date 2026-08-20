@@ -11,11 +11,15 @@ use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
 
 use crate::audio::{
     decode::opus::LiveOggOpusReader,
-    format::{infer_stream_format, PrefixedReader, StreamFormat},
+    format::{PrefixedReader, StreamFormat, infer_stream_format},
     spectrum::BANDS,
 };
 
-use super::{open::open_icy_reader, adts::{decode_fdk_adts_f32}, symphonia::{decode_symphonia_f32, SpectrumState}};
+use super::{
+    adts::decode_fdk_adts_f32,
+    open::open_icy_reader,
+    symphonia::{SpectrumState, decode_symphonia_f32},
+};
 
 /// Local playback: decode once, push interleaved f32, optional spectrum on same PCM.
 pub fn run_live_decode_f32(
@@ -52,15 +56,17 @@ pub fn run_live_decode_f32(
             src_rate.store(48_000, Ordering::SeqCst);
             src_ch.store(2, Ordering::SeqCst);
             let mut reader = LiveOggOpusReader::new(PrefixedReader::new(peek, reader));
-            let mut decoder = OpusDecoder::new(48_000, OpusChannels::Stereo)
-                .map_err(|e| format!("opus: {e}"))?;
+            let mut decoder =
+                OpusDecoder::new(48_000, OpusChannels::Stereo).map_err(|e| format!("opus: {e}"))?;
             let mut pcm = vec![0i16; 5760 * 2];
             while !stop.load(Ordering::SeqCst) {
                 let packet = match reader.read_packet(stop)? {
                     Some(p) => p,
                     None => return Err("eof".into()),
                 };
-                let samples = decoder.decode(&packet, &mut pcm, DecodeMode::Normal).unwrap_or(0);
+                let samples = decoder
+                    .decode(&packet, &mut pcm, DecodeMode::Normal)
+                    .unwrap_or(0);
                 if samples == 0 {
                     continue;
                 }

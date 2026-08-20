@@ -1,10 +1,7 @@
 use std::{
     io::{Read, Write},
     net::TcpStream,
-    sync::{
-        Mutex,
-        atomic::AtomicBool,
-    },
+    sync::{Mutex, atomic::AtomicBool},
     thread,
     time::{Duration, Instant},
 };
@@ -21,9 +18,7 @@ fn connect_and_read(url: &str) -> Vec<u8> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set read timeout");
-    let request = format!(
-        "GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n"
-    );
+    let request = format!("GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).expect("write request");
 
     let mut buf = Vec::with_capacity(4096);
@@ -82,7 +77,11 @@ fn live_relay_decodes_avtoradio_opus_into_wav() {
         + 4;
     let headers = String::from_utf8_lossy(&response[..header_end]);
     assert!(headers.contains("Content-Type: audio/wav\r\n"));
-    assert!(response.len() >= header_end + 44, "short wav response: {} bytes", response.len());
+    assert!(
+        response.len() >= header_end + 44,
+        "short wav response: {} bytes",
+        response.len()
+    );
     assert_eq!(&response[header_end..header_end + 4], b"RIFF");
     assert_eq!(&response[header_end + 8..header_end + 12], b"WAVE");
 
@@ -110,5 +109,8 @@ fn live_spectrum_moves_on_avtoradio_opus() {
     }
 
     spectrum.stop_async();
-    assert!(moved, "spectrum levels never moved on live avtoradio opus stream");
+    assert!(
+        moved,
+        "spectrum levels never moved on live avtoradio opus stream"
+    );
 }

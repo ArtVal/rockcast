@@ -23,7 +23,7 @@ use parking_lot::Mutex;
 pub use error::RelayError;
 pub use fanout::Fanout;
 pub use transport::{
-    choose_transport, normalize_content_type, tap_url_from_public, RelayTransport, TranscodeKind,
+    RelayTransport, TranscodeKind, choose_transport, normalize_content_type, tap_url_from_public,
 };
 
 use feeder::{run_feeder_passthrough, run_feeder_transcode};
@@ -109,9 +109,10 @@ impl StreamRelay {
                 normalize_content_type(content_type),
                 Some(tap_url_from_public(&public_url)),
             ),
-            RelayTransport::WavPcm { .. } => {
-                ("audio/wav".to_string(), Some(tap_url_from_public(&public_url)))
-            }
+            RelayTransport::WavPcm { .. } => (
+                "audio/wav".to_string(),
+                Some(tap_url_from_public(&public_url)),
+            ),
         };
         if cancel.load(Ordering::SeqCst) {
             return Err(RelayError::Cancelled);
@@ -134,9 +135,11 @@ impl StreamRelay {
                     RelayTransport::Passthrough { .. } => {
                         run_feeder_passthrough(&upstream, &fan_feed, &stop_feed)
                     }
-                    RelayTransport::WavPcm { .. } => {
-                        run_feeder_transcode(&upstream, Arc::clone(&fan_feed), Arc::clone(&stop_feed))
-                    }
+                    RelayTransport::WavPcm { .. } => run_feeder_transcode(
+                        &upstream,
+                        Arc::clone(&fan_feed),
+                        Arc::clone(&stop_feed),
+                    ),
                 };
                 if stop_feed.load(Ordering::SeqCst) {
                     break;
@@ -268,7 +271,10 @@ fn port_from_url(url: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::transport::{choose_transport, normalize_content_type, tap_url_from_public, RelayTransport, TranscodeKind};
+    use super::transport::{
+        RelayTransport, TranscodeKind, choose_transport, normalize_content_type,
+        tap_url_from_public,
+    };
     use super::wav::{stream_response_headers, wav_live_header};
 
     #[test]

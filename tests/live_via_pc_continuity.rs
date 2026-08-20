@@ -18,9 +18,7 @@ fn open_stream(url: &str) -> (TcpStream, usize) {
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .expect("set read timeout");
-    let request = format!(
-        "GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n"
-    );
+    let request = format!("GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).expect("write request");
 
     let mut buf = Vec::with_capacity(4096);
@@ -99,7 +97,11 @@ fn live_via_pc_stream_stays_alive_for_twenty_seconds_and_feeds_spectrum() {
             }
         }
         let second_bytes = audio_bytes - before;
-        eprintln!("relay second {}: {} bytes", per_second.len() + 1, second_bytes);
+        eprintln!(
+            "relay second {}: {} bytes",
+            per_second.len() + 1,
+            second_bytes
+        );
         eprintln!("relay spectrum levels: {:?}", relay.levels());
         per_second.push(second_bytes);
     }

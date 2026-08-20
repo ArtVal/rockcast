@@ -11,7 +11,7 @@ use crate::{
     net::{metadata_interval, stream_client, stream_headers},
 };
 
-use super::super::icy::{open_stream_response, IcyStreamReader, StopAwareBody};
+use super::super::icy::{IcyStreamReader, StopAwareBody, open_stream_response};
 
 pub(super) fn open_icy_reader(
     url: &str,
@@ -44,12 +44,7 @@ pub(super) fn open_icy_reader(
             title_tx,
         ))
     } else {
-        Box::new(IcyStreamReader::new(
-            resp,
-            meta_int,
-            stop_reader,
-            title_tx,
-        ))
+        Box::new(IcyStreamReader::new(resp, meta_int, stop_reader, title_tx))
     };
 
     let peek = read_format_peek(&mut reader, 8_192, stop)?;

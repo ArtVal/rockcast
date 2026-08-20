@@ -139,10 +139,7 @@ impl StopAwareBody {
                             break;
                         }
                         Ok(n) => {
-                            if read_tx
-                                .send(Ok(Some(buf[..n].to_vec())))
-                                .is_err()
-                            {
+                            if read_tx.send(Ok(Some(buf[..n].to_vec()))).is_err() {
                                 break;
                             }
                         }
@@ -151,7 +148,7 @@ impl StopAwareBody {
                                 || e.kind() == io::ErrorKind::WouldBlock
                                 || e.kind() == io::ErrorKind::TimedOut =>
                         {
-                            continue
+                            continue;
                         }
                         Err(e) => {
                             let _ = read_tx.send(Err(e));

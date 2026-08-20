@@ -140,6 +140,8 @@ fn reset_session() {
 }
 
 pub use http::{decode_pcm, http_read};
-pub use local::{local_pcm_queue_full, local_pcm_recv, local_pcm_sent, local_ring_fill, local_underrun};
+pub use local::{
+    local_pcm_queue_full, local_pcm_recv, local_pcm_sent, local_ring_fill, local_underrun,
+};
 pub use playout::{playout_pending, playout_tick};
 pub use relay::{relay_buffer_bytes, relay_dropped, relay_read_wait, relay_served};

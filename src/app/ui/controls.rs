@@ -2,13 +2,10 @@
 
 use std::time::Duration;
 
-use eframe::egui::{
-    self, Align, Color32, CornerRadius, Frame, Layout, RichText, Stroke, Ui,
-    Vec2,
-};
+use eframe::egui::{self, Align, Color32, CornerRadius, Frame, Layout, RichText, Stroke, Ui, Vec2};
 
-use super::super::theme::*;
 use super::super::RockCastApp;
+use super::super::theme::*;
 
 impl RockCastApp {
     pub(in crate::app) fn draw_now_playing(&mut self, ui: &mut Ui) {

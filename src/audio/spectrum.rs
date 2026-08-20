@@ -7,7 +7,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
-use rustfft::{num_complex::Complex, Fft, FftPlanner};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
 
 pub const BANDS: usize = 24;
 const FFT_SIZE: usize = 1024;

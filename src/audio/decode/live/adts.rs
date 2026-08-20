@@ -11,11 +11,11 @@ use std::{
 use fdk_aac::dec::{Decoder, DecoderError, Transport};
 
 use crate::{
-    audio::format::{find_adts_sync, PrefixedReader},
+    audio::format::{PrefixedReader, find_adts_sync},
     playback_diag,
 };
 
-use super::relay::{relay_emit_pcm, RelayEmitCtx};
+use super::relay::{RelayEmitCtx, relay_emit_pcm};
 use super::symphonia::SpectrumState;
 
 const MAX_PCM_SAMPLES: usize = 8192 * 2;
@@ -37,8 +37,9 @@ fn adts_total_frame_len(data: &[u8]) -> Option<usize> {
     if data.len() < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0 {
         return None;
     }
-    let frame_len =
-        ((data[3] as usize & 0x03) << 11) | ((data[4] as usize) << 3) | ((data[5] as usize & 0xE0) >> 5);
+    let frame_len = ((data[3] as usize & 0x03) << 11)
+        | ((data[4] as usize) << 3)
+        | ((data[5] as usize & 0xE0) >> 5);
     (frame_len >= 7).then_some(frame_len)
 }
 
@@ -128,7 +129,6 @@ fn emit_fdk_pcm(
     push_pcm(&pcm_f32);
 }
 
-
 pub(super) fn decode_fdk_adts_f32(
     peek: Vec<u8>,
     reader: Box<dyn Read + Send>,
@@ -169,7 +169,9 @@ pub(super) fn decode_fdk_adts_f32(
                     &src_rate,
                     &src_ch,
                 ),
-                Err(DecoderError::NOT_ENOUGH_BITS) | Err(DecoderError::TRANSPORT_SYNC_ERROR) => break,
+                Err(DecoderError::NOT_ENOUGH_BITS) | Err(DecoderError::TRANSPORT_SYNC_ERROR) => {
+                    break;
+                }
                 Err(e) => {
                     log::debug!("fdk-aac frame skip: {}", e.message());
                     break;
@@ -242,7 +244,9 @@ pub(super) fn decode_fdk_adts_relay(
                     );
                     fanout.pace_if_full();
                 }
-                Err(DecoderError::NOT_ENOUGH_BITS) | Err(DecoderError::TRANSPORT_SYNC_ERROR) => break,
+                Err(DecoderError::NOT_ENOUGH_BITS) | Err(DecoderError::TRANSPORT_SYNC_ERROR) => {
+                    break;
+                }
                 Err(e) => {
                     log::debug!("fdk-aac frame skip: {}", e.message());
                     break;
@@ -258,9 +262,7 @@ mod tests {
 
     #[test]
     fn parses_somafm_first_frame_length() {
-        let data = [
-            0xFF, 0xF9, 0x5C, 0x80, 0x5C, 0xE1, 0x8C, 0x21, 0x1B, 0x55,
-        ];
+        let data = [0xFF, 0xF9, 0x5C, 0x80, 0x5C, 0xE1, 0x8C, 0x21, 0x1B, 0x55];
         let len = adts_total_frame_len(&data).expect("adts len");
         assert!(len >= 7 && len < 2048, "unexpected frame len {len}");
     }

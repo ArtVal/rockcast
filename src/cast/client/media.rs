@@ -18,7 +18,9 @@ pub(super) fn candidate_content_types(content_type: &str) -> Vec<String> {
         push("audio/ogg");
         push("application/ogg");
         push("audio/opus");
-    } else if normalized.contains("vorbis") || normalized == "audio/ogg" || normalized == "application/ogg"
+    } else if normalized.contains("vorbis")
+        || normalized == "audio/ogg"
+        || normalized == "application/ogg"
     {
         push("audio/ogg; codecs=vorbis");
         push("audio/ogg");
@@ -56,14 +58,8 @@ pub(super) fn classify_media_status(
         return Ok(LoadProgress::Pending);
     }
 
-    let state = st
-        .get("playerState")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
-    let idle_reason = st
-        .get("idleReason")
-        .and_then(|s| s.as_str())
-        .unwrap_or("");
+    let state = st.get("playerState").and_then(|s| s.as_str()).unwrap_or("");
+    let idle_reason = st.get("idleReason").and_then(|s| s.as_str()).unwrap_or("");
     let mid = st.get("mediaSessionId").and_then(|m| m.as_i64());
     log::info!(
         "Cast LOAD status: state={} idleReason={} content_ok={} requestId={}",
@@ -75,7 +71,12 @@ pub(super) fn classify_media_status(
 
     match state {
         "BUFFERING" | "PLAYING" | "PAUSED" => Ok(LoadProgress::Ready(mid)),
-        "IDLE" if matches!(idle_reason, "ERROR" | "CANCELLED" | "INTERRUPTED" | "FINISHED") => {
+        "IDLE"
+            if matches!(
+                idle_reason,
+                "ERROR" | "CANCELLED" | "INTERRUPTED" | "FINISHED"
+            ) =>
+        {
             Err(ChannelError::Msg(format!(
                 "Cast LOAD stalled in IDLE ({idle_reason})"
             )))
@@ -87,8 +88,8 @@ pub(super) fn classify_media_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{candidate_content_types, classify_media_status};
     use super::super::session::LoadProgress;
+    use super::{candidate_content_types, classify_media_status};
     use serde_json::json;
 
     #[test]

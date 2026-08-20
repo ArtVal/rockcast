@@ -48,8 +48,7 @@ impl SpscAudioRing {
         let w = self.write.load(Ordering::Acquire);
         let avail = w.wrapping_sub(r);
         let drop = count.min(avail);
-        self.read
-            .store(r.wrapping_add(drop), Ordering::Release);
+        self.read.store(r.wrapping_add(drop), Ordering::Release);
     }
 
     pub fn clear(&self) {
@@ -307,10 +306,7 @@ impl PcmResampler {
     pub fn set_format(&mut self, sample_rate: u32, channels: u16, dst_rate: u32) {
         let channels = usize::from(channels.max(1));
         let dst_rate = dst_rate.max(1);
-        if self.src_rate != sample_rate
-            || self.channels != channels
-            || self.dst_rate != dst_rate
-        {
+        if self.src_rate != sample_rate || self.channels != channels || self.dst_rate != dst_rate {
             self.src_rate = sample_rate;
             self.dst_rate = dst_rate;
             self.channels = channels;

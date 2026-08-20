@@ -1,11 +1,27 @@
 //! Poll playback events and background UiMsg queue.
 
-use crate::{
-    i18n,
-    playback::PlaybackEvent,
+use crate::{i18n, playback::PlaybackEvent};
+
+use super::super::{
+    RockCastApp,
+    messages::{UiMsg, same_output_device},
 };
 
-use super::super::{messages::{UiMsg, same_output_device}, RockCastApp};
+fn is_station_unavailable_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "404",
+        "station unavailable",
+        "failed to open audio stream",
+        "upstream",
+        "timed out",
+        "timeout",
+        "eof",
+        "stalled in idle",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
 
 impl RockCastApp {
     pub(in crate::app) fn poll_messages(&mut self) {
@@ -53,6 +69,12 @@ impl RockCastApp {
                     self.status = self.lang.t().stopped.into();
                 }
                 PlaybackEvent::Error { message, .. } => {
+                    if is_station_unavailable_error(&message) {
+                        crate::voice_prompts::play(
+                            crate::voice_prompts::Prompt::StationUnavailable,
+                            self.lang,
+                        );
+                    }
                     self.playing_op = false;
                     self.playing = false;
                     self.playing_local = false;

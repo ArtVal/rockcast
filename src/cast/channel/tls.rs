@@ -1,10 +1,6 @@
 //! TLS connect with certificate verification disabled (typical for Cast).
 
-use std::{
-    net::TcpStream,
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::TcpStream, sync::Arc, time::Duration};
 
 use rustls::{
     ClientConfig, ClientConnection, DigitallySignedStruct, StreamOwned,

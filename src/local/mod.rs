@@ -20,21 +20,21 @@ use parking_lot::Mutex;
 use crate::{
     audio::{
         decode::{
-            pcm::{upmix_interleaved_into, PcmResampler, SpscAudioRing, SteadyPlayout},
+            pcm::{PcmResampler, SpscAudioRing, SteadyPlayout, upmix_interleaved_into},
             run_live_decode_f32,
         },
-        spectrum::SpectrumTap,
         spectrum::BANDS,
+        spectrum::SpectrumTap,
     },
     playback_diag,
 };
 
-pub use device::{list_local_devices, LocalDeviceInfo};
+pub use device::{LocalDeviceInfo, list_local_devices};
 pub use error::LocalError;
 
 use cpal_util::{
-    bits_f32, cleanup_sender, f32_bits, pick_cpal_device, pick_output_config, LocalCleanup,
-    SendStream,
+    LocalCleanup, SendStream, bits_f32, cleanup_sender, f32_bits, pick_cpal_device,
+    pick_output_config,
 };
 
 const RING_MAX: usize = 48000 * 2 * 4; // ~4 sec stereo @ 48k
@@ -248,8 +248,7 @@ impl LocalPlayer {
                 let mut resampler = PcmResampler::new(2);
                 let mut spectrum = spectrum_enabled.then(|| SpectrumTap::new(levels_pl));
                 let mut spectrum_pending = Vec::with_capacity(play_rate as usize * play_ch);
-                let spectrum_frame =
-                    (play_rate as usize * play_ch * 20 / 1000).max(play_ch);
+                let spectrum_frame = (play_rate as usize * play_ch * 20 / 1000).max(play_ch);
                 let mut interleaved = Vec::with_capacity(8192);
                 let mut steady = SteadyPlayout::new(play_rate, play_ch, 20);
                 let max_pending = play_rate as usize * play_ch * 2;
@@ -260,29 +259,34 @@ impl LocalPlayer {
                     if steady.pending_len() < max_pending {
                         match pcm_rx.recv_timeout(steady.sleep_hint()) {
                             Ok(pcm) => {
-                            playback_diag::local_pcm_recv();
-                            let sr = src_rate_pl.load(Ordering::Acquire);
-                            let sc = src_ch_pl.load(Ordering::Acquire).max(1) as u16;
-                            resampler.set_format(sr, sc, play_rate);
-                            let resample = crate::profile::scoped("local_resample");
-                            resampler.push(&pcm, |out| {
-                                upmix_interleaved_into(out, sc as usize, play_ch, &mut interleaved);
-                                if let Some(tap) = spectrum.as_mut() {
-                                    spectrum_pending.extend_from_slice(&interleaved);
-                                    while spectrum_pending.len() >= spectrum_frame {
-                                        tap.push_f32(
-                                            &spectrum_pending[..spectrum_frame],
-                                            play_ch,
-                                            play_rate,
-                                        );
-                                        spectrum_pending.copy_within(spectrum_frame.., 0);
-                                        spectrum_pending
-                                            .truncate(spectrum_pending.len() - spectrum_frame);
+                                playback_diag::local_pcm_recv();
+                                let sr = src_rate_pl.load(Ordering::Acquire);
+                                let sc = src_ch_pl.load(Ordering::Acquire).max(1) as u16;
+                                resampler.set_format(sr, sc, play_rate);
+                                let resample = crate::profile::scoped("local_resample");
+                                resampler.push(&pcm, |out| {
+                                    upmix_interleaved_into(
+                                        out,
+                                        sc as usize,
+                                        play_ch,
+                                        &mut interleaved,
+                                    );
+                                    if let Some(tap) = spectrum.as_mut() {
+                                        spectrum_pending.extend_from_slice(&interleaved);
+                                        while spectrum_pending.len() >= spectrum_frame {
+                                            tap.push_f32(
+                                                &spectrum_pending[..spectrum_frame],
+                                                play_ch,
+                                                play_rate,
+                                            );
+                                            spectrum_pending.copy_within(spectrum_frame.., 0);
+                                            spectrum_pending
+                                                .truncate(spectrum_pending.len() - spectrum_frame);
+                                        }
                                     }
-                                }
-                                steady.ingest(&interleaved);
-                            });
-                            drop(resample);
+                                    steady.ingest(&interleaved);
+                                });
+                                drop(resample);
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {}
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,

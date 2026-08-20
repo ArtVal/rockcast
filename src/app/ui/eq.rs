@@ -1,12 +1,9 @@
 //! egui panel widgets.
 
-use eframe::egui::{
-    Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Ui,
-    Vec2,
-};
+use eframe::egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::super::theme::*;
 use super::super::RockCastApp;
+use super::super::theme::*;
 
 impl RockCastApp {
     pub(in crate::app) fn draw_eq(&self, ui: &mut Ui, size: Vec2) {

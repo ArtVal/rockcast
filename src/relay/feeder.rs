@@ -10,11 +10,7 @@ use std::{
 };
 
 use crate::{
-    audio::{
-        decode::run_live_decode_relay_pcm,
-        format::parse_stream_title,
-        spectrum::SpectrumTap,
-    },
+    audio::{decode::run_live_decode_relay_pcm, format::parse_stream_title, spectrum::SpectrumTap},
     net::{metadata_interval, stream_client, stream_headers},
 };
 
@@ -62,7 +58,7 @@ pub fn run_feeder_passthrough(url: &str, fanout: &Fanout, stop: &AtomicBool) -> 
                     || e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                continue
+                continue;
             }
             Err(e) => return Err(e.to_string()),
         };

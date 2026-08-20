@@ -1,12 +1,9 @@
 //! egui panel widgets.
 
-use eframe::egui::{
-    self, CornerRadius, Frame, RichText, Ui,
-    Vec2,
-};
+use eframe::egui::{self, CornerRadius, Frame, RichText, Ui, Vec2};
 
-use super::super::theme::*;
 use super::super::RockCastApp;
+use super::super::theme::*;
 
 impl RockCastApp {
     pub(in crate::app) fn draw_device_row(&mut self, ui: &mut Ui) {

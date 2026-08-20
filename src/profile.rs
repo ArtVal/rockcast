@@ -51,11 +51,12 @@ pub fn record(label: &'static str, ns: u64) {
         return;
     }
     let mut map = counters().lock();
-    map.entry(label).or_insert_with(|| Counter {
-        ns: AtomicU64::new(0),
-        calls: AtomicU64::new(0),
-    })
-    .record(ns);
+    map.entry(label)
+        .or_insert_with(|| Counter {
+            ns: AtomicU64::new(0),
+            calls: AtomicU64::new(0),
+        })
+        .record(ns);
 }
 
 pub fn bump(label: &'static str) {
@@ -182,7 +183,10 @@ pub fn report(prefix: &str) {
         .collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1));
     let total_ns: u64 = rows.iter().map(|(_, ns, _)| ns).sum();
-    eprintln!("{prefix} profile breakdown (total {:.1} ms):", total_ns as f64 / 1e6);
+    eprintln!(
+        "{prefix} profile breakdown (total {:.1} ms):",
+        total_ns as f64 / 1e6
+    );
     for (label, ns, calls) in rows {
         let pct = if total_ns == 0 {
             0.0

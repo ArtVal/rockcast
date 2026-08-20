@@ -6,10 +6,7 @@ mod error;
 mod recv;
 mod tls;
 
-use std::{
-    io::Write,
-    time::Duration,
-};
+use std::{io::Write, time::Duration};
 
 use parking_lot::Mutex as PMutex;
 

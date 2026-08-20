@@ -73,11 +73,7 @@ mod cpu {
         pub fn cpu_percent(&self) -> f64 {
             let wall = self.start_wall.elapsed().as_nanos() as f64;
             let cpu = (cpu_time_ns().saturating_sub(self.start_cpu)) as f64;
-            if wall == 0.0 {
-                0.0
-            } else {
-                100.0 * cpu / wall
-            }
+            if wall == 0.0 { 0.0 } else { 100.0 * cpu / wall }
         }
     }
 }
@@ -171,9 +167,8 @@ fn spawn_stream_consumer(public_url: String, stop: Arc<AtomicBool>) -> thread::J
             return;
         };
         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-        let request = format!(
-            "GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n"
-        );
+        let request =
+            format!("GET /stream HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n");
         let Ok(()) = stream.write_all(request.as_bytes()) else {
             return;
         };
@@ -212,7 +207,10 @@ fn run_scenario(name: &str, setup: impl FnOnce() -> Box<dyn FnMut() + Send>) {
         thread::sleep(Duration::from_millis(16));
     }
     let cpu_pct = cpu.cpu_percent();
-    eprintln!("process CPU (1 core ~= 100%): {cpu_pct:.2}% over {:.1}s", MEASURE.as_secs_f64());
+    eprintln!(
+        "process CPU (1 core ~= 100%): {cpu_pct:.2}% over {:.1}s",
+        MEASURE.as_secs_f64()
+    );
     profile::report(name);
     eprintln!("=== scenario {name} done ===");
 }
@@ -221,7 +219,9 @@ fn main() {
     unsafe {
         std::env::set_var("ROCKCAST_PROFILE", "1");
     }
-    let _ = env_logger::builder().filter_level(log::LevelFilter::Warn).try_init();
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .try_init();
 
     eprintln!("RockCast EQ profiler — Avtoradio Opus, warmup {WARMUP:?}, measure {MEASURE:?}");
 

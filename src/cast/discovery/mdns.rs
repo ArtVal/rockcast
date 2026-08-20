@@ -7,8 +7,8 @@ use std::{
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 
-use super::{DiscoveredDevice, DiscoveryError, CAST_PORT};
-use super::lan::{bind_lan_interfaces, LanIface};
+use super::lan::{LanIface, bind_lan_interfaces};
+use super::{CAST_PORT, DiscoveredDevice, DiscoveryError};
 
 pub(super) fn discover_mdns(
     timeout: Duration,

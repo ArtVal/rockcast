@@ -8,7 +8,9 @@ pub enum TranscodeKind {
 
 #[derive(Clone)]
 pub enum RelayTransport {
-    Passthrough { content_type: String },
+    Passthrough {
+        content_type: String,
+    },
     WavPcm {
         kind: TranscodeKind,
         sample_rate: u32,

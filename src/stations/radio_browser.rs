@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::i18n::{self, Lang};
 
-use super::{catalog, Station};
+use super::{Station, catalog};
 
 /// Fallback entry points if DNS/servers are unavailable.
 const FALLBACK_HOSTS: &[&str] = &["all.api.radio-browser.info"];

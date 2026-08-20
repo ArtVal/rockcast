@@ -4,8 +4,8 @@
 
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     thread,
     time::{Duration, Instant},

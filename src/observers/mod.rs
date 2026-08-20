@@ -9,7 +9,7 @@ use std::{
 };
 
 pub use icy::IcyWatcher;
-pub use spectrum::{SpectrumAnalyzer, BANDS};
+pub use spectrum::{BANDS, SpectrumAnalyzer};
 
 pub struct StreamObservers {
     icy: IcyWatcher,
@@ -69,8 +69,8 @@ impl StreamObservers {
         self.stop();
         let relay_tap = url.ends_with("/tap");
         if eq_enabled {
-            let title_tx = (!relay_tap && relay_url != Some(url.as_str()))
-                .then(|| self.title_tx.clone());
+            let title_tx =
+                (!relay_tap && relay_url != Some(url.as_str())).then(|| self.title_tx.clone());
             self.spectrum.start(url, title_tx);
         } else if !relay_tap {
             // Relay /tap has no ICY metadata — title comes from StreamRelay upstream.

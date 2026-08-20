@@ -7,14 +7,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{DiscoveredDevice, CAST_PORT};
 use super::eureka::eureka_fallback;
 use super::lan::LanIface;
+use super::{CAST_PORT, DiscoveredDevice};
 
 const TCP_PROBE_TIMEOUT: Duration = Duration::from_millis(180);
 const SCAN_WORKERS: usize = 64;
 
-pub(super) fn discover_subnet(timeout: Duration, lan: &[LanIface], tx: mpsc::Sender<DiscoveredDevice>) {
+pub(super) fn discover_subnet(
+    timeout: Duration,
+    lan: &[LanIface],
+    tx: mpsc::Sender<DiscoveredDevice>,
+) {
     let mut targets = Vec::new();
     let mut seen_net = std::collections::HashSet::new();
     for iface in lan {

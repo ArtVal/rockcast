@@ -12,7 +12,9 @@ use crate::stations::Station;
 
 use dto::{VoiceAction, VoiceEvent};
 use rank::rerank_voice_candidates;
-use record::record_default_microphone;
+use record::{
+    default_microphone_sample_rate, record_default_microphone, stream_default_microphone,
+};
 
 const MAX_CHUNK: usize = 32 * 1024;
 const MIN_VOICE_CANDIDATE_SCORE: f64 = 0.35;
@@ -76,17 +78,87 @@ pub fn capture_and_recognize(
     recording: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<VoiceSearchResult, VoiceError> {
     log::info!("voice capture started: locale={locale} base_url={base_url}");
+    if recognizer_mode == "streaming_v3" {
+        return capture_and_recognize_streaming(base_url, bearer_token, locale, recording);
+    }
     let (audio, sample_rate) = record_default_microphone(&recording)?;
+    log::info!(
+        "voice capture finished: bytes={} sample_rate_hz={} server={base_url}",
+        audio.len(),
+        sample_rate
+    );
+    let mut socket = connect_voice_socket(base_url, bearer_token)?;
+    socket
+        .send(Message::Text(
+            start_message(locale, sample_rate, recognizer_mode).into(),
+        ))
+        .map_err(|_| "Не удалось начать voice session".to_owned())?;
+    let _ = socket
+        .read()
+        .map_err(|_| "RockServer не подтвердил voice session".to_owned())?;
+    for chunk in audio.chunks(MAX_CHUNK) {
+        socket
+            .send(Message::Binary(chunk.to_vec().into()))
+            .map_err(|_| "Не удалось отправить аудио".to_owned())?;
+    }
+    socket
+        .send(Message::Text(r#"{"type":"commit"}"#.into()))
+        .map_err(|_| "Не удалось завершить voice session".to_owned())?;
+    log::info!(
+        "voice audio sent: bytes={} chunks={}",
+        audio.len(),
+        audio.len().div_ceil(MAX_CHUNK)
+    );
+    receive_voice_result(&mut socket)
+}
+
+fn capture_and_recognize_streaming(
+    base_url: &str,
+    bearer_token: &str,
+    locale: &str,
+    recording: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<VoiceSearchResult, VoiceError> {
+    let sample_rate = default_microphone_sample_rate()?;
+    let mut socket = connect_voice_socket(base_url, bearer_token)?;
+    socket
+        .send(Message::Text(
+            start_message(locale, sample_rate, "streaming_v3").into(),
+        ))
+        .map_err(|_| "Не удалось начать voice session".to_owned())?;
+    let _ = socket
+        .read()
+        .map_err(|_| "RockServer не подтвердил voice session".to_owned())?;
+    log::info!("voice websocket connected before microphone capture");
+    let mut sent_bytes = 0usize;
+    let mut sent_chunks = 0usize;
+    let recorded_rate = stream_default_microphone(&recording, |audio| {
+        for chunk in audio.chunks(MAX_CHUNK) {
+            socket
+                .send(Message::Binary(chunk.to_vec().into()))
+                .map_err(|_| "Не удалось отправить потоковое аудио".to_owned())?;
+            sent_bytes += chunk.len();
+            sent_chunks += 1;
+        }
+        Ok(())
+    })?;
+    socket
+        .send(Message::Text(r#"{"type":"commit"}"#.into()))
+        .map_err(|_| "Не удалось завершить voice session".to_owned())?;
+    log::info!(
+        "streaming voice audio committed: bytes={sent_bytes} chunks={sent_chunks} sample_rate_hz={recorded_rate}"
+    );
+    receive_voice_result(&mut socket)
+}
+
+fn connect_voice_socket(
+    base_url: &str,
+    bearer_token: &str,
+) -> Result<tungstenite::WebSocket<std::net::TcpStream>, VoiceError> {
     let url = websocket_url(base_url)?;
     let bearer_token = bearer_token.trim();
     if bearer_token.is_empty() {
         return Err("Токен RockServer не настроен".into());
     }
-    log::info!(
-        "voice capture finished: bytes={} sample_rate_hz={} websocket={url}",
-        audio.len(),
-        sample_rate
-    );
     let host_port = url
         .strip_prefix("ws://")
         .or_else(|| url.strip_prefix("wss://"))
@@ -114,32 +186,17 @@ pub fn capture_and_recognize(
         .header("Authorization", format!("Bearer {bearer_token}"))
         .body(())
         .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
-    let (mut socket, _) = tungstenite::client(request, tcp).map_err(|e| {
+    let (socket, _) = tungstenite::client(request, tcp).map_err(|e| {
         log::error!("voice websocket handshake failed: {e}");
         VoiceError::from(format!("RockServer voice handshake: {e}"))
     })?;
     log::info!("voice websocket connected");
-    socket
-        .send(Message::Text(
-            start_message(locale, sample_rate, recognizer_mode).into(),
-        ))
-        .map_err(|_| "Не удалось начать voice session".to_owned())?;
-    let _ = socket
-        .read()
-        .map_err(|_| "RockServer не подтвердил voice session".to_owned())?;
-    for chunk in audio.chunks(MAX_CHUNK) {
-        socket
-            .send(Message::Binary(chunk.to_vec().into()))
-            .map_err(|_| "Не удалось отправить аудио".to_owned())?;
-    }
-    socket
-        .send(Message::Text(r#"{"type":"commit"}"#.into()))
-        .map_err(|_| "Не удалось завершить voice session".to_owned())?;
-    log::info!(
-        "voice audio sent: bytes={} chunks={}",
-        audio.len(),
-        audio.len().div_ceil(MAX_CHUNK)
-    );
+    Ok(socket)
+}
+
+fn receive_voice_result(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+) -> Result<VoiceSearchResult, VoiceError> {
     loop {
         let Message::Text(text) = socket
             .read()

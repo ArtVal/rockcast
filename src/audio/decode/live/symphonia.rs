@@ -22,13 +22,13 @@ use symphonia::core::{
 use crate::{
     audio::{
         decode::{codecs, probe},
-        format::{apply_format_hint, infer_stream_format, StreamFormat},
+        format::{StreamFormat, apply_format_hint, infer_stream_format},
         spectrum::SpectrumTap,
     },
     playback_diag,
 };
 
-use super::relay::{relay_emit_pcm, RelayEmitCtx};
+use super::relay::{RelayEmitCtx, relay_emit_pcm};
 
 pub(super) struct SpectrumState {
     tap: SpectrumTap,

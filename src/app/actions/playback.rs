@@ -99,11 +99,8 @@ impl RockCastApp {
     }
 
     pub(in crate::app) fn schedule_stream_tap(&mut self, generation: u64, tap_url: String) {
-        self.observers.schedule(
-            generation,
-            tap_url,
-            self.playback.relay_active(),
-        );
+        self.observers
+            .schedule(generation, tap_url, self.playback.relay_active());
     }
 
     pub(in crate::app) fn sync_spectrum(&mut self) {

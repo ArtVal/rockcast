@@ -1,15 +1,12 @@
 //! Post-TLS device authentication handshake.
 
-use std::{
-    sync::atomic::AtomicBool,
-    time::Duration,
-};
+use std::{sync::atomic::AtomicBool, time::Duration};
 
+use super::super::proto::{CastMessage, encode_auth_challenge};
 use super::{
-    consts::{NS_DEVICEAUTH, RECEIVER_ID, SENDER_ID},
     CastChannel, ChannelError,
+    consts::{NS_DEVICEAUTH, RECEIVER_ID, SENDER_ID},
 };
-use super::super::proto::{encode_auth_challenge, CastMessage};
 
 impl CastChannel {
     pub(super) fn authenticate(&self) -> Result<(), ChannelError> {

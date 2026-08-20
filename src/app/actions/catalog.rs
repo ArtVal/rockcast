@@ -8,7 +8,7 @@ use crate::{
     stations::{enrich_stations, load_catalog},
 };
 
-use super::super::{messages::UiMsg, RockCastApp};
+use super::super::{RockCastApp, messages::UiMsg};
 
 impl RockCastApp {
     pub(in crate::app) fn bootstrap(&mut self) {

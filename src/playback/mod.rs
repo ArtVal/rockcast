@@ -10,12 +10,8 @@ use std::sync::{
 };
 
 use crate::{
-    cast::CastService,
-    local::LocalPlayer,
-    output::OutputDevice,
-    relay::StreamRelay,
-    runtime::BackgroundRuntime,
-    stations::Station,
+    cast::CastService, local::LocalPlayer, output::OutputDevice, relay::StreamRelay,
+    runtime::BackgroundRuntime, stations::Station,
 };
 
 pub use phase::{PlaybackEvent, PlaybackPhase};
@@ -175,9 +171,14 @@ impl PlaybackController {
                         log::warn!("relay pre-buffer: PCM format not ready within {format_timeout:?}");
                     }
                     if !relay.wait_for_data(min_bytes, buffer_timeout) {
-                        log::warn!(
-                            "relay pre-buffer short: wanted {min_bytes} B within {buffer_timeout:?}"
-                        );
+                        let _ = tx.send(PlaybackEvent::Error {
+                            message: format!(
+                                "station unavailable: relay produced no audio within {buffer_timeout:?}"
+                            ),
+                            generation,
+                        });
+                        relay.stop();
+                        return;
                     }
                 }
 

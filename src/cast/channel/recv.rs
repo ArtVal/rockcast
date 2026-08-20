@@ -6,11 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{
-    consts::{NS_HEARTBEAT, RECEIVER_ID},
-    CastChannel, ChannelError,
-};
 use super::super::proto::{CastMessage, Payload};
+use super::{
+    CastChannel, ChannelError,
+    consts::{NS_HEARTBEAT, RECEIVER_ID},
+};
 
 impl CastChannel {
     /// Reads messages until `f` returns `Some`. Others go into the inbox
