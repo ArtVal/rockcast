@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rockcast::{observers::SpectrumAnalyzer, relay::StreamRelay};
+use rockcast::relay::StreamRelay;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 const AVTORADIO_OPUS_URL: &str = "http://play.global.audio/avtoradio.opus";
@@ -75,9 +75,6 @@ fn live_via_pc_stream_stays_alive_for_twenty_seconds_and_feeds_spectrum() {
         "relay never produced enough decoded PCM"
     );
 
-    let mut spectrum = SpectrumAnalyzer::new();
-    spectrum.start(tap_url, None);
-
     let (mut stream, mut audio_bytes) = open_stream(&public_url);
     let start = Instant::now();
     let mut per_second = Vec::new();
@@ -96,18 +93,17 @@ fn live_via_pc_stream_stays_alive_for_twenty_seconds_and_feeds_spectrum() {
                         || e.kind() == std::io::ErrorKind::TimedOut => {}
                 Err(e) => panic!("relay stream read failed: {e}"),
             }
-            let levels = spectrum.levels();
+            let levels = relay.levels();
             if levels.iter().any(|level| (level - 0.08).abs() > 0.03) {
                 moved = true;
             }
         }
         let second_bytes = audio_bytes - before;
         eprintln!("relay second {}: {} bytes", per_second.len() + 1, second_bytes);
-        eprintln!("spectrum levels: {:?}", spectrum.levels());
+        eprintln!("relay spectrum levels: {:?}", relay.levels());
         per_second.push(second_bytes);
     }
 
-    spectrum.stop_async();
     relay.stop();
     unsafe {
         std::env::remove_var("ROCKCAST_RELAY_ADVERTISE_IP");

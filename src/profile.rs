@@ -25,9 +25,14 @@ impl Counter {
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static COUNTERS: OnceLock<Mutex<HashMap<&'static str, Counter>>> = OnceLock::new();
+static WORKERS: OnceLock<Mutex<HashMap<&'static str, i64>>> = OnceLock::new();
 
 fn counters() -> &'static Mutex<HashMap<&'static str, Counter>> {
     COUNTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn workers() -> &'static Mutex<HashMap<&'static str, i64>> {
+    WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub fn enabled() -> bool {
@@ -55,6 +60,52 @@ pub fn record(label: &'static str, ns: u64) {
 
 pub fn bump(label: &'static str) {
     record(label, 0);
+}
+
+/// Registers a long-lived worker while it is executing.  This is deliberately
+/// opt-in and only active in diagnostic runs, so production playback has no
+/// shared-counter work in its hot paths.
+pub fn worker(label: &'static str) -> Option<WorkerGuard> {
+    if !enabled() {
+        return None;
+    }
+    let active = {
+        let mut map = workers().lock();
+        let active = map.entry(label).or_default();
+        *active += 1;
+        *active
+    };
+    log::debug!("LIFECYCLE worker_start kind={label} active={active}");
+    Some(WorkerGuard { label })
+}
+
+pub struct WorkerGuard {
+    label: &'static str,
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        let active = {
+            let mut map = workers().lock();
+            let active = map.entry(self.label).or_default();
+            *active = active.saturating_sub(1);
+            *active
+        };
+        log::debug!("LIFECYCLE worker_stop kind={} active={active}", self.label);
+    }
+}
+
+/// Stable, compact active-worker gauges for `METRICS` and soak artefacts.
+pub fn worker_snapshot_line() -> String {
+    if !enabled() {
+        return String::new();
+    }
+    let mut rows: Vec<_> = workers().lock().iter().map(|(k, v)| (*k, *v)).collect();
+    rows.sort_unstable_by_key(|(label, _)| *label);
+    rows.into_iter()
+        .map(|(label, active)| format!("{label}={active}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn scoped(label: &'static str) -> Option<ProfileGuard> {

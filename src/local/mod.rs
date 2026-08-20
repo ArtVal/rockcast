@@ -20,7 +20,7 @@ use parking_lot::Mutex;
 use crate::{
     audio::{
         decode::{
-            pcm::{upmix_interleaved_into, PcmResampler, SpscAudioRing},
+            pcm::{upmix_interleaved_into, PcmResampler, SpscAudioRing, SteadyPlayout},
             run_live_decode_f32,
         },
         spectrum::SpectrumTap,
@@ -161,6 +161,7 @@ impl LocalPlayer {
             let mut state = self.state.lock();
             state.pcm_tx = Some(pcm_tx.clone());
             state.decode_join = Some(thread::spawn(move || {
+                let _worker = crate::profile::worker("local_decode");
                 log::info!("LocalPlayer decode thread started url={url}");
                 let mut pcm_buf = Vec::with_capacity(16 * 1024);
                 if let Err(e) = run_live_decode_f32(
@@ -243,24 +244,27 @@ impl LocalPlayer {
         {
             let mut state = self.state.lock();
             state.playout_join = Some(thread::spawn(move || {
+                let _worker = crate::profile::worker("local_playout");
                 let mut resampler = PcmResampler::new(2);
                 let mut spectrum = spectrum_enabled.then(|| SpectrumTap::new(levels_pl));
                 let mut spectrum_pending = Vec::with_capacity(play_rate as usize * play_ch);
                 let spectrum_frame =
                     (play_rate as usize * play_ch * 20 / 1000).max(play_ch);
                 let mut interleaved = Vec::with_capacity(8192);
-                let target_fill = play_rate as usize * play_ch;
-                let high_water = target_fill * 2;
+                let mut steady = SteadyPlayout::new(play_rate, play_ch, 20);
+                let max_pending = play_rate as usize * play_ch * 2;
                 loop {
                     if stop_pl.load(Ordering::SeqCst) {
                         break;
                     }
-                    match pcm_rx.recv_timeout(Duration::from_millis(50)) {
-                        Ok(pcm) => {
+                    if steady.pending_len() < max_pending {
+                        match pcm_rx.recv_timeout(steady.sleep_hint()) {
+                            Ok(pcm) => {
                             playback_diag::local_pcm_recv();
                             let sr = src_rate_pl.load(Ordering::Acquire);
                             let sc = src_ch_pl.load(Ordering::Acquire).max(1) as u16;
                             resampler.set_format(sr, sc, play_rate);
+                            let resample = crate::profile::scoped("local_resample");
                             resampler.push(&pcm, |out| {
                                 upmix_interleaved_into(out, sc as usize, play_ch, &mut interleaved);
                                 if let Some(tap) = spectrum.as_mut() {
@@ -276,27 +280,34 @@ impl LocalPlayer {
                                             .truncate(spectrum_pending.len() - spectrum_frame);
                                     }
                                 }
-                                if ring_pl.len() > high_water {
-                                    ring_pl.drop_oldest(ring_pl.len() - target_fill);
-                                }
-                                playback_diag::playout_pending(interleaved.len());
-                                let mut offset = 0usize;
-                                while offset < interleaved.len() {
-                                    if stop_pl.load(Ordering::SeqCst) {
-                                        return;
-                                    }
-                                    let pushed = ring_pl.push_slice(&interleaved[offset..]);
-                                    if pushed == 0 {
-                                        break;
-                                    }
-                                    offset += pushed;
-                                }
-                                playback_diag::playout_tick(interleaved.len());
-                                playback_diag::local_ring_fill(ring_pl.len());
+                                steady.ingest(&interleaved);
                             });
+                            drop(resample);
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    } else {
+                        // Leave the bounded PCM channel full until wall-clock
+                        // playout catches up; this propagates back-pressure to
+                        // bursty decoders instead of decoding at maximum speed.
+                        thread::sleep(steady.sleep_hint());
+                    }
+                    let due = steady.drain_due(2);
+                    if !due.is_empty() {
+                        if stop_pl.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        let pushed = ring_pl.push_slice(&due);
+                        if pushed < due.len() {
+                            playback_diag::event(
+                                "local_ring_full",
+                                &format!("dropped_samples={}", due.len() - pushed),
+                            );
+                        }
+                        playback_diag::playout_pending(steady.pending_len());
+                        playback_diag::playout_tick(pushed);
+                        playback_diag::local_ring_fill(ring_pl.len());
                     }
                 }
             }));
@@ -338,6 +349,7 @@ impl LocalPlayer {
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _| {
+                    let _callback = crate::profile::scoped("cpal_callback");
                     if stop_cb.load(Ordering::SeqCst) {
                         data.fill(0.0);
                         return;

@@ -57,7 +57,13 @@ pub fn run_feeder_passthrough(url: &str, fanout: &Fanout, stop: &AtomicBool) -> 
         let n = match body.read(&mut buf) {
             Ok(0) => return Ok(()),
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::Interrupted
+                    || e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue
+            }
             Err(e) => return Err(e.to_string()),
         };
 
@@ -125,12 +131,29 @@ pub fn run_feeder_transcode(
     fanout: Arc<Fanout>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    // Transcoded streams (AAC/Ogg) use IcyStreamReader, unlike passthrough.
+    // Forward its titles to the shared relay state so the UI can display them
+    // while Cast plays the relay URL.
+    let (title_tx, title_rx) = mpsc::channel::<String>();
+    let title_fanout = Arc::clone(&fanout);
+    let title_stop = Arc::clone(&stop);
+    thread::spawn(move || {
+        let _worker = crate::profile::worker("relay_title");
+        while !title_stop.load(Ordering::SeqCst) {
+            match title_rx.recv_timeout(READ_POLL) {
+                Ok(title) if !title.is_empty() => title_fanout.set_title(title),
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
     let mut spectrum = SpectrumTap::new(fanout.levels());
     run_live_decode_relay_pcm(
         url,
         &stop,
         &fanout,
         &mut spectrum,
+        Some(title_tx),
         |chunk| fanout.push(chunk),
         |rate, ch| fanout.set_pcm_format(rate, ch),
     )
@@ -145,6 +168,7 @@ fn open_upstream(
     let url = url.to_string();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let _worker = crate::profile::worker("relay_open");
         let result = client.get(url).headers(headers).send();
         let _ = tx.send(result);
     });

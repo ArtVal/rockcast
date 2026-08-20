@@ -57,12 +57,13 @@ impl Telemetry {
         let ui_fps = self.frames as f64 / wall_secs;
         let cpu_pct = self.cpu.cpu_percent(wall_secs);
         let profile = profile::snapshot_line();
+        let workers = profile::worker_snapshot_line();
 
-        let profile_suffix = if profile.is_empty() {
-            String::new()
-        } else {
-            format!(" {profile}")
-        };
+        let profile_suffix = [profile, workers]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .map(|value| format!(" {value}"))
+            .collect::<String>();
 
         log::info!(
             "METRICS cpu_pct={cpu_pct:.1} ui_fps={ui_fps:.1} playing=1 eq={} relay={} local={} fast_repaint={}{profile_suffix}",

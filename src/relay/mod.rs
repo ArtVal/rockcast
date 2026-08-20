@@ -125,6 +125,7 @@ impl StreamRelay {
         let feeder_transport = transport.clone();
         let fan_done = Arc::clone(&fanout);
         let feeder = thread::spawn(move || {
+            let _worker = crate::profile::worker("relay_feeder");
             let result = match feeder_transport {
                 RelayTransport::Passthrough { .. } => {
                     run_feeder_passthrough(&upstream, &fan_feed, &stop_feed)
@@ -149,6 +150,7 @@ impl StreamRelay {
         );
 
         let accept = thread::spawn(move || {
+            let _worker = crate::profile::worker("relay_accept");
             accept_loop(listener, fan_c, transport_serve, stop_c);
         });
 
@@ -229,6 +231,7 @@ fn detach_relay_worker(join: Option<thread::JoinHandle<()>>, label: &'static str
         return;
     };
     thread::spawn(move || {
+        let _worker = crate::profile::worker("relay_join");
         let started = Instant::now();
         if let Err(payload) = join.join() {
             log::warn!("StreamRelay {label} worker panicked: {payload:?}");

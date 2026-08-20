@@ -38,6 +38,7 @@ impl IcyWatcher {
         let stop = Arc::new(AtomicBool::new(false));
         self.stop = Arc::clone(&stop);
         self.join = Some(thread::spawn(move || {
+            let _worker = crate::profile::worker("icy");
             while !stop.load(Ordering::SeqCst) {
                 if let Err(e) = listen_once(&url, &tx, &stop) {
                     log::debug!("icy: {e}");
@@ -63,6 +64,7 @@ impl IcyWatcher {
         if let Some(j) = self.join.take() {
             let (done_tx, done_rx) = mpsc::channel();
             thread::spawn(move || {
+                let _worker = crate::profile::worker("icy_join");
                 let _ = j.join();
                 let _ = done_tx.send(());
             });

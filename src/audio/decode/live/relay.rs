@@ -3,6 +3,7 @@
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 
 use ropus::{Channels as OpusChannels, DecodeMode, Decoder as OpusDecoder};
@@ -29,6 +30,7 @@ pub(super) fn relay_emit_pcm(
     pcm: &[f32],
     rate: u32,
     ch: u16,
+    fanout: &crate::relay::Fanout,
     ctx: RelayEmitCtx<'_>,
     spectrum: &mut SpectrumTap,
     on_format: &mut impl FnMut(u32, u16),
@@ -51,7 +53,9 @@ pub(super) fn relay_emit_pcm(
             ctx.pcm_bytes.extend_from_slice(&v.to_le_bytes());
         }
         ctx.smoother.push(ctx.pcm_bytes, |chunk| {
-            push(chunk);
+            if fanout.pace_pcm_chunk(chunk.len()) {
+                push(chunk);
+            }
         });
     });
 }
@@ -62,6 +66,7 @@ pub fn run_live_decode_relay_pcm(
     stop: &Arc<AtomicBool>,
     fanout: &crate::relay::Fanout,
     spectrum: &mut SpectrumTap,
+    title_tx: Option<mpsc::Sender<String>>,
     mut push: impl FnMut(&[u8]) + Send,
     mut on_format: impl FnMut(u32, u16) + Send,
 ) -> Result<(), String> {
@@ -69,7 +74,7 @@ pub fn run_live_decode_relay_pcm(
         return Err("stopped".into());
     }
 
-    let (content_type, reader, peek) = open_icy_reader(url, stop, None, true)?;
+    let (content_type, reader, peek) = open_icy_reader(url, stop, title_tx, true)?;
     let format = infer_stream_format(url, &content_type, &peek);
     let mut resampler = CastPcmResampler::new(2);
     let mut smoother = PcmSmoother::new(cast_pcm_rate(), 2);
@@ -99,6 +104,7 @@ pub fn run_live_decode_relay_pcm(
                     &pcm_f32,
                     48_000,
                     2,
+                    fanout,
                     RelayEmitCtx {
                         format_set: &mut format_set,
                         resampler: &mut resampler,

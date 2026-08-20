@@ -19,6 +19,10 @@ use super::relay::{relay_emit_pcm, RelayEmitCtx};
 use super::symphonia::SpectrumState;
 
 const MAX_PCM_SAMPLES: usize = 8192 * 2;
+/// `Decoder::fill` receives one complete ADTS frame. Accept exactly one PCM
+/// output from it: repeated `decode_frame` successes without a new input caused
+/// the FDK path to synthesize PCM faster than realtime and pin a CPU core.
+const MAX_DECODED_FRAMES_PER_INPUT: usize = 1;
 
 /// PCM output rate after SBR/PS upsampling (`sampleRate`), not core AAC rate (`aacSampleRate`).
 fn fdk_pcm_sample_rate(info: &fdk_aac::dec::StreamInfo) -> u32 {
@@ -143,11 +147,20 @@ pub(super) fn decode_fdk_adts_f32(
             Some(f) => f,
             None => return Err("eof".into()),
         };
-        if decoder.fill(&frame).is_err() {
+        let fill = crate::profile::scoped("aac_fill");
+        let fill_result = decoder.fill(&frame);
+        drop(fill);
+        if fill_result.is_err() {
             continue;
         }
-        loop {
-            match decoder.decode_frame(&mut pcm_i16) {
+        for _ in 0..MAX_DECODED_FRAMES_PER_INPUT {
+            if stop.load(Ordering::SeqCst) {
+                return Err("stopped".into());
+            }
+            let decode = crate::profile::scoped("aac_decode");
+            let decoded = decoder.decode_frame(&mut pcm_i16);
+            drop(decode);
+            match decoded {
                 Ok(()) => emit_fdk_pcm(
                     &decoder,
                     &pcm_i16,
@@ -188,11 +201,20 @@ pub(super) fn decode_fdk_adts_relay(
             Some(f) => f,
             None => return Err("eof".into()),
         };
-        if decoder.fill(&frame).is_err() {
+        let fill = crate::profile::scoped("aac_fill");
+        let fill_result = decoder.fill(&frame);
+        drop(fill);
+        if fill_result.is_err() {
             continue;
         }
-        loop {
-            match decoder.decode_frame(&mut pcm_i16) {
+        for _ in 0..MAX_DECODED_FRAMES_PER_INPUT {
+            if stop.load(Ordering::SeqCst) {
+                return Err("stopped".into());
+            }
+            let decode = crate::profile::scoped("aac_decode");
+            let decoded = decoder.decode_frame(&mut pcm_i16);
+            drop(decode);
+            match decoded {
                 Ok(()) => {
                     let info = decoder.stream_info();
                     let channels = info.numChannels.max(1) as u16;
@@ -207,6 +229,7 @@ pub(super) fn decode_fdk_adts_relay(
                         &pcm_f32,
                         sample_rate,
                         channels,
+                        fanout,
                         RelayEmitCtx {
                             format_set,
                             resampler,

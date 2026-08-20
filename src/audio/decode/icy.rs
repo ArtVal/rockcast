@@ -122,11 +122,17 @@ impl StopAwareBody {
         let (tx, rx) = mpsc::sync_channel(32);
         let stop_prod = Arc::clone(&stop);
         std::thread::spawn(move || {
+            let _dispatch_worker = crate::profile::worker("http_body_dispatch");
             let (read_tx, read_rx) = mpsc::sync_channel::<io::Result<Option<Vec<u8>>>>(2);
+            let stop_read = Arc::clone(&stop_prod);
             std::thread::spawn(move || {
+                let _read_worker = crate::profile::worker("http_body_read");
                 let mut resp = resp;
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
+                    if stop_read.load(Ordering::SeqCst) {
+                        break;
+                    }
                     match resp.read(&mut buf) {
                         Ok(0) => {
                             let _ = read_tx.send(Ok(None));
@@ -140,7 +146,13 @@ impl StopAwareBody {
                                 break;
                             }
                         }
-                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e)
+                            if e.kind() == io::ErrorKind::Interrupted
+                                || e.kind() == io::ErrorKind::WouldBlock
+                                || e.kind() == io::ErrorKind::TimedOut =>
+                        {
+                            continue
+                        }
                         Err(e) => {
                             let _ = read_tx.send(Err(e));
                             break;

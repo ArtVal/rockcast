@@ -195,6 +195,7 @@ pub(super) fn decode_symphonia_relay(
             interleaved,
             sample_rate,
             channels,
+            fanout,
             RelayEmitCtx {
                 format_set,
                 resampler,

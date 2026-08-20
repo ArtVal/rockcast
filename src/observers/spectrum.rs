@@ -48,6 +48,7 @@ impl SpectrumAnalyzer {
         self.stop = Arc::clone(&stop);
         let levels = Arc::clone(&self.levels);
         self.join = Some(thread::spawn(move || {
+            let _worker = crate::profile::worker("spectrum");
             while !stop.load(Ordering::SeqCst) {
                 if let Err(e) = analyze_direct(&url, Arc::clone(&levels), &stop, title_tx.as_ref())
                 {
@@ -81,6 +82,7 @@ impl SpectrumAnalyzer {
 fn join_observer_worker(j: thread::JoinHandle<()>, label: &str) {
     let (done_tx, done_rx) = mpsc::channel();
     thread::spawn(move || {
+        let _worker = crate::profile::worker("spectrum_join");
         let _ = j.join();
         let _ = done_tx.send(());
     });

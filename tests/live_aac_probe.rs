@@ -122,7 +122,9 @@ fn live_aac_resample_output_is_sane() {
 
     let deadline = Instant::now() + Duration::from_secs(6);
     while Instant::now() < deadline {
-        if src_rate_wait.load(Ordering::SeqCst) > 0 && ring.lock().unwrap().len() > 22050 * 2 {
+        let rate = src_rate_wait.load(Ordering::SeqCst) as usize;
+        let channels = src_ch_wait.load(Ordering::SeqCst).max(1) as usize;
+        if rate > 0 && ring.lock().unwrap().len() > rate * channels {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));

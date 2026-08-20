@@ -23,6 +23,7 @@ pub struct Fanout {
     pub written: AtomicU64,
     title: Mutex<Option<String>>,
     pcm_format: Mutex<Option<(u32, u16)>>,
+    next_pcm_emit: Mutex<std::time::Instant>,
     levels: Arc<Mutex<[f32; BANDS]>>,
 }
 
@@ -47,6 +48,7 @@ impl Fanout {
             written: AtomicU64::new(0),
             title: Mutex::new(None),
             pcm_format: Mutex::new(None),
+            next_pcm_emit: Mutex::new(std::time::Instant::now()),
             levels: Arc::new(Mutex::new([0.08; BANDS])),
         })
     }
@@ -80,6 +82,37 @@ impl Fanout {
         if self.buffered_bytes() >= RING_MAX {
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// Emit decoded PCM on its media clock. Upstream radio servers commonly
+    /// burst several seconds of AAC/Opus at once; decoding every burst
+    /// immediately burns a core and then drops the excess at the live edge.
+    /// Returning `false` means the relay was stopped while waiting.
+    pub fn pace_pcm_chunk(&self, bytes: usize) -> bool {
+        let Some((rate, channels)) = self.pcm_format() else {
+            return !self.stop.load(Ordering::SeqCst);
+        };
+        let bytes_per_second = usize::from(channels.max(1)) * rate as usize * 2;
+        if bytes == 0 || bytes_per_second == 0 {
+            return !self.stop.load(Ordering::SeqCst);
+        }
+        let duration = Duration::from_secs_f64(bytes as f64 / bytes_per_second as f64);
+        let due = {
+            let mut next = self.next_pcm_emit.lock();
+            let start = (*next).max(std::time::Instant::now());
+            *next = start + duration;
+            start
+        };
+        while std::time::Instant::now() < due {
+            if self.stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            std::thread::sleep(
+                due.saturating_duration_since(std::time::Instant::now())
+                    .min(Duration::from_millis(20)),
+            );
+        }
+        !self.stop.load(Ordering::SeqCst)
     }
 
     pub fn push(&self, data: &[u8]) {
