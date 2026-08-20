@@ -1,5 +1,7 @@
 //! Play, stop, shutdown, and observer wiring.
 
+use crate::voice::VoiceControl;
+
 use super::super::RockCastApp;
 
 impl RockCastApp {
@@ -96,6 +98,69 @@ impl RockCastApp {
         self.playing_url = None;
         self.track = self.lang.t().stopped.into();
         self.playback.stop();
+    }
+
+    pub(in crate::app) fn apply_voice_control(&mut self, control: VoiceControl) {
+        match control {
+            VoiceControl::PlayLast => self.play_last_station(),
+            VoiceControl::Stop => {
+                log::info!("voice control: stop");
+                self.stop();
+            }
+            VoiceControl::Next => self.play_relative_station(1, "next"),
+            VoiceControl::Previous => self.play_relative_station(-1, "previous"),
+        }
+    }
+
+    fn play_last_station(&mut self) {
+        let Some(station) = self.last_played_station.clone() else {
+            self.status = "Voice play music: no previously played station".into();
+            return;
+        };
+        let index = self
+            .stations
+            .iter()
+            .position(|candidate| candidate.url == station.url)
+            .unwrap_or_else(|| {
+                self.stations.insert(0, station.clone());
+                0
+            });
+        self.selected_station = Some(index);
+        self.scroll_to_station = Some(index);
+        self.voice_fallback.clear();
+        log::info!(
+            "voice control: play last station idx={index} name={:?} url={}",
+            station.name,
+            station.url
+        );
+        self.play();
+    }
+
+    fn play_relative_station(&mut self, offset: isize, command: &str) {
+        let Some(current) = self.selected_station else {
+            self.status = self.lang.t().pick_station.into();
+            return;
+        };
+        let Some(next) = current.checked_add_signed(offset) else {
+            self.status = format!("Voice {command}: no station in that direction");
+            return;
+        };
+        if next >= self.stations.len() {
+            self.status = format!("Voice {command}: no station in that direction");
+            return;
+        }
+
+        self.selected_station = Some(next);
+        self.scroll_to_station = Some(next);
+        self.voice_fallback.clear();
+        if let Some(station) = self.stations.get(next) {
+            log::info!(
+                "voice control: {command} station idx={next} name={:?} url={}",
+                station.name,
+                station.url
+            );
+        }
+        self.play();
     }
 
     pub(in crate::app) fn schedule_stream_tap(&mut self, generation: u64, tap_url: String) {

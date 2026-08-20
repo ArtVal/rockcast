@@ -8,7 +8,7 @@ use crate::i18n::{self, Lang};
 pub use catalog::{infer_codec, parse_stations_txt};
 pub use radio_browser::enrich_stations;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Station {
     pub name: String,
     pub url: String,

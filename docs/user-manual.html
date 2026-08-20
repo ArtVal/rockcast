@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RockCast — руководство пользователя</title>
+  <style>
+    :root { color-scheme: dark; --bg: #161311; --panel: #241d19; --text: #f3ece5; --muted: #c8b9ad; --accent: #e58e3b; --line: #4b3930; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    main { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 52px 0 72px; }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 30px; margin-bottom: 34px; }
+    h1, h2 { line-height: 1.15; } h1 { margin: 0 0 12px; font-size: clamp(2rem, 6vw, 3.5rem); } h2 { margin-top: 42px; color: var(--accent); }
+    p, li { max-width: 78ch; } .lead { color: var(--muted); font-size: 1.15rem; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin: 18px 0; }
+    ol, ul { padding-left: 1.4rem; } li + li { margin-top: .45rem; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid var(--line); } th { color: var(--accent); } tr:last-child td { border-bottom: 0; }
+    code { padding: .15em .35em; border-radius: 4px; background: #100d0b; color: #ffd3a4; } a { color: #ffad5e; } .note { border-left: 4px solid var(--accent); padding-left: 16px; color: var(--muted); }
+    footer { margin-top: 52px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); }
+    @media (max-width: 640px) { main { width: min(100% - 24px, 960px); padding-top: 28px; } table { font-size: .9rem; } th, td { padding: 9px; } .card { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>RockCast</h1>
+      <p class="lead">Руководство пользователя: интернет-радио на компьютере и Google Cast-устройствах.</p>
+    </header>
+
+    <h2>Быстрый старт</h2>
+    <ol>
+      <li>Запустите приложение через <code>run.bat</code> в Windows или <code>./run.sh</code> в Linux.</li>
+      <li>Дождитесь загрузки списка станций. Встроенный каталог доступен сразу; Radio Browser дополняет его в фоне.</li>
+      <li>Нажмите <strong>Find</strong>, чтобы найти колонки компьютера и устройства Google Cast.</li>
+      <li>Выберите устройство вывода и станцию, затем нажмите <strong>Play</strong>.</li>
+      <li>Для остановки используйте <strong>Stop</strong>.</li>
+    </ol>
+
+    <h2>Воспроизведение</h2>
+    <div class="card">
+      <ul>
+        <li><strong>This PC</strong> выводит звук на выбранное локальное аудиоустройство.</li>
+        <li><strong>Google Cast</strong> передаёт поток на Chromecast или совместимую колонку в той же сети.</li>
+        <li><strong>Via PC</strong> нужен, если доступ к станции идёт через VPN на компьютере: RockCast получит поток и передаст его колонке по локальной сети.</li>
+        <li><strong>Spectrum</strong> включает визуализатор. При Cast он может создать дополнительное подключение к потоку.</li>
+      </ul>
+    </div>
+
+    <h2>Голосовое управление</h2>
+    <p>Включите в настройках RockServer, укажите адрес сервера и его Bearer-токен. Удерживайте кнопку <strong>Voice</strong>, произнесите команду и отпустите кнопку.</p>
+    <div class="card">
+      <p><strong>Как искать станцию голосом.</strong> Начните с действия и затем назовите станцию или стиль музыки. Говорите коротко, обычными словами: <code>Включи Радио Рокс</code>, <code>Включи классический рок</code>, <code>Поставь металл</code>, <code>Play Radio ROKS</code> или <code>Play classic rock</code>.</p>
+      <p>RockServer распознаёт речь и показывает подходящие станции в списке. Если в запросе есть «включи» или <code>play</code>, RockCast автоматически запускает лучший вариант. Если вы хотите сначала выбрать вариант сами, скажите только название или жанр, например <code>радио рокс</code> или <code>metal radio</code>, затем кликните нужную станцию.</p>
+      <p>Когда список уже показан, используйте <code>Дальше</code>/<code>Next</code> и <code>Назад</code>/<code>Previous</code>, чтобы прослушать соседние результаты. Если нужная станция выбрана неверно, произнесите более точное название; для латинских названий можно говорить русское произношение, например «радио рокс» для <code>Radio ROKS</code>.</p>
+    </div>
+    <table>
+      <thead><tr><th>Русская команда</th><th>English command</th><th>Результат</th></tr></thead>
+      <tbody>
+        <tr><td><code>Включи Радио Рокс</code></td><td><code>Play Radio ROKS</code></td><td>Ищет и запускает подходящую станцию.</td></tr>
+        <tr><td><code>Стоп</code>, <code>Останови</code>, <code>Выключи</code></td><td><code>Stop</code>, <code>Pause</code>, <code>Turn off</code></td><td>Останавливает воспроизведение.</td></tr>
+        <tr><td><code>Дальше</code>, <code>Следующая</code>, <code>Вперёд</code></td><td><code>Next</code>, <code>Next station</code>, <code>Skip</code></td><td>Запускает следующую станцию текущего списка.</td></tr>
+        <tr><td><code>Назад</code>, <code>Предыдущая</code></td><td><code>Previous</code>, <code>Previous station</code>, <code>Back</code></td><td>Запускает предыдущую станцию текущего списка.</td></tr>
+        <tr><td><code>Включи музыку</code></td><td><code>Play music</code>, <code>Play some music</code></td><td>Запускает последнюю станцию, которая успешно начала играть.</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Команды «Дальше» и «Назад» не зацикливают список. Если достигнута его граница, текущая станция не меняется. «Включи музыку» доступна после первого успешного запуска станции и сохраняется после перезапуска приложения.</p>
+
+    <h2>Если станция не запускается</h2>
+    <ul>
+      <li>Проверьте станцию локально: публичные потоки иногда возвращают 404 или закрывают соединение.</li>
+      <li>Для Cast включите <strong>Via PC</strong> и убедитесь, что компьютер и колонка находятся в одной Wi-Fi сети.</li>
+      <li>При голосовом запросе RockCast сообщит, если RockServer недоступен, токен не задан или невалиден, либо станция недоступна.</li>
+    </ul>
+
+    <h2>Где хранятся настройки</h2>
+    <div class="card">
+      <p><strong>Windows:</strong> <code>%LOCALAPPDATA%\RockCast\settings.json</code><br>
+      <strong>Linux:</strong> <code>~/.config/rockcast/settings.json</code></p>
+      <p>Там сохраняются громкость, устройство, язык, параметры RockServer и последняя успешно запущенная станция. Токен RockServer хранится локально и не добавляется в URL или журнал приложения.</p>
+    </div>
+
+    <footer>RockCast распространяется по лицензии <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3.0 или более поздней версии</a>.</footer>
+  </main>
+</body>
+</html>

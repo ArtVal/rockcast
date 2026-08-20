@@ -43,6 +43,9 @@ pub struct AppSettings {
     pub volume: u8,
     #[serde(default)]
     pub station_url: Option<String>,
+    /// Most recently started station, used by the voice command "play music".
+    #[serde(default)]
+    pub last_played_station: Option<crate::stations::Station>,
     #[serde(default)]
     pub device_id: Option<String>,
     /// Parallel stream analysis for the visualizer (extra traffic).

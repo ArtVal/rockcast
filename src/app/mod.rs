@@ -39,6 +39,7 @@ pub struct RockCastApp {
     pub(super) selected_device: Option<usize>,
     pub(super) status: String,
     pub(super) station_now: String,
+    pub(super) last_played_station: Option<Station>,
     pub(super) track: String,
     pub(super) volume: u8,
     pub(super) loading_stations: bool,
@@ -109,6 +110,7 @@ impl RockCastApp {
         let rockserver_url = settings.rockserver_url.clone();
         let rockserver_bearer_token = settings.rockserver_bearer_token.clone();
         let rockserver_voice_mode = settings.rockserver_voice_mode;
+        let last_played_station = settings.last_played_station.clone();
         let t = lang.t();
 
         let (ui_tx, ui_rx) = mpsc::channel();
@@ -125,6 +127,7 @@ impl RockCastApp {
             selected_device: None,
             status: t.loading.into(),
             station_now: "—".into(),
+            last_played_station,
             track: t.track_hint.into(),
             volume,
             loading_stations: false,

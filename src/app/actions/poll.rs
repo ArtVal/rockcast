@@ -51,7 +51,17 @@ impl RockCastApp {
                     self.playing_op = false;
                     self.playing = true;
                     self.playing_local = local;
-                    self.playing_url = Some(url);
+                    self.playing_url = Some(url.clone());
+                    if let Some(station) = self
+                        .stations
+                        .iter()
+                        .find(|station| station.url == url)
+                        .cloned()
+                    {
+                        self.last_played_station = Some(station.clone());
+                        self.settings.last_played_station = Some(station);
+                        self.mark_settings_dirty();
+                    }
                     self.track = self.lang.t().track_meta_hint.into();
                     if !local && !self.playback.relay_active() && self.eq_enabled {
                         if let Some(tap_url) = tap_url {
@@ -196,6 +206,10 @@ impl RockCastApp {
                     self.voice_recording = None;
                     match result {
                         Ok(result) => {
+                            if let Some(control) = result.control {
+                                self.apply_voice_control(control);
+                                continue;
+                            }
                             let stations = result.stations;
                             log::info!("voice candidates received: count={}", stations.len());
                             let first = stations[0].clone();

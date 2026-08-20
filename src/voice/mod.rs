@@ -22,6 +22,15 @@ const MIN_VOICE_CANDIDATE_SCORE: f64 = 0.35;
 pub struct VoiceSearchResult {
     pub stations: Vec<Station>,
     pub auto_play: bool,
+    pub control: Option<VoiceControl>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceControl {
+    Stop,
+    Next,
+    Previous,
+    PlayLast,
 }
 
 #[derive(Debug)]
@@ -213,6 +222,10 @@ fn receive_voice_result(
                 ..
             } => {
                 log::info!("voice transcript: final={is_final} text={transcript:?}");
+                if is_final && let Some(control) = classify_voice_control(&transcript) {
+                    log::info!("voice control recognized from final transcript: {control:?}");
+                    return Ok(voice_control_result(control));
+                }
             }
             VoiceEvent::Result {
                 transcript,
@@ -224,6 +237,10 @@ fn receive_voice_result(
                     "voice result: transcript={transcript:?} candidates={}",
                     stations.len()
                 );
+                if let Some(control) = classify_voice_control(&transcript) {
+                    log::info!("voice control recognized from result transcript: {control:?}");
+                    return Ok(voice_control_result(control));
+                }
                 for (index, station) in stations.iter().enumerate() {
                     log::info!(
                         "voice candidate[{index}]: name={:?} country={:?} score={} url={}",
@@ -269,11 +286,75 @@ fn receive_voice_result(
                 return Ok(VoiceSearchResult {
                     stations,
                     auto_play: normalized_query.action == VoiceAction::Play,
+                    control: None,
                 });
             }
             VoiceEvent::Error { message, .. } => return Err(message.into()),
             _ => {}
         }
+    }
+}
+
+fn voice_control_result(control: VoiceControl) -> VoiceSearchResult {
+    VoiceSearchResult {
+        stations: Vec::new(),
+        auto_play: false,
+        control: Some(control),
+    }
+}
+
+fn classify_voice_control(transcript: &str) -> Option<VoiceControl> {
+    let normalized = transcript.to_lowercase();
+    let words: Vec<&str> = normalized
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .filter(|word| {
+            !matches!(
+                *word,
+                "\u{043f}\u{043e}\u{0436}\u{0430}\u{043b}\u{0443}\u{0439}\u{0441}\u{0442}\u{0430}"
+                    | "please"
+            )
+        })
+        .collect();
+
+    match words.as_slice() {
+        [
+            "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}",
+            "\u{043c}\u{0443}\u{0437}\u{044b}\u{043a}\u{0443}",
+        ]
+        | [
+            "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}\u{0442}\u{044c}",
+            "\u{043c}\u{0443}\u{0437}\u{044b}\u{043a}\u{0443}",
+        ]
+        | [
+            "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}",
+            "\u{043c}\u{0443}\u{0437}\u{044b}\u{043a}\u{0430}",
+        ]
+        | ["play", "music"]
+        | ["play", "some", "music"]
+        | ["turn", "on", "music"] => Some(VoiceControl::PlayLast),
+        ["\u{0441}\u{0442}\u{043e}\u{043f}"]
+        | ["\u{043e}\u{0441}\u{0442}\u{0430}\u{043d}\u{043e}\u{0432}\u{0438}"]
+        | ["\u{043e}\u{0441}\u{0442}\u{0430}\u{043d}\u{043e}\u{0432}\u{0438}\u{0442}\u{044c}"]
+        | ["\u{0432}\u{044b}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}"]
+        | ["\u{0432}\u{044b}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}\u{0442}\u{044c}"]
+        | ["stop"]
+        | ["pause"]
+        | ["turn", "off"] => Some(VoiceControl::Stop),
+        ["\u{0434}\u{0430}\u{043b}\u{044c}\u{0448}\u{0435}"]
+        | ["\u{0441}\u{043b}\u{0435}\u{0434}\u{0443}\u{044e}\u{0449}\u{0430}\u{044f}"]
+        | ["\u{0441}\u{043b}\u{0435}\u{0434}\u{0443}\u{044e}\u{0449}\u{0438}\u{0439}"]
+        | ["\u{0432}\u{043f}\u{0435}\u{0440}\u{0435}\u{0434}"]
+        | ["next"]
+        | ["next", "station"]
+        | ["skip"] => Some(VoiceControl::Next),
+        ["\u{043d}\u{0430}\u{0437}\u{0430}\u{0434}"]
+        | ["\u{043f}\u{0440}\u{0435}\u{0434}\u{044b}\u{0434}\u{0443}\u{0449}\u{0430}\u{044f}"]
+        | ["\u{043f}\u{0440}\u{0435}\u{0434}\u{044b}\u{0434}\u{0443}\u{0449}\u{0438}\u{0439}"]
+        | ["previous"]
+        | ["back"]
+        | ["previous", "station"] => Some(VoiceControl::Previous),
+        _ => None,
     }
 }
 
@@ -302,7 +383,7 @@ fn websocket_url(base: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{VoiceError, start_message};
+    use super::{VoiceControl, VoiceError, classify_voice_control, start_message};
 
     #[test]
     fn start_message_is_valid_json() {
@@ -326,5 +407,48 @@ mod tests {
             VoiceError::from("HTTP 401 Unauthorized".to_owned()),
             VoiceError::TokenInvalid
         ));
+    }
+
+    #[test]
+    fn recognizes_russian_voice_controls() {
+        assert_eq!(
+            classify_voice_control("\u{0441}\u{0442}\u{043e}\u{043f}"),
+            Some(VoiceControl::Stop)
+        );
+        assert_eq!(
+            classify_voice_control("\u{0434}\u{0430}\u{043b}\u{044c}\u{0448}\u{0435}"),
+            Some(VoiceControl::Next)
+        );
+        assert_eq!(
+            classify_voice_control("\u{043d}\u{0430}\u{0437}\u{0430}\u{0434}"),
+            Some(VoiceControl::Previous)
+        );
+    }
+
+    #[test]
+    fn recognizes_english_voice_controls() {
+        assert_eq!(classify_voice_control("stop"), Some(VoiceControl::Stop));
+        assert_eq!(
+            classify_voice_control("next station"),
+            Some(VoiceControl::Next)
+        );
+        assert_eq!(
+            classify_voice_control("previous station"),
+            Some(VoiceControl::Previous)
+        );
+    }
+
+    #[test]
+    fn recognizes_play_last_station_commands() {
+        assert_eq!(
+            classify_voice_control(
+                "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438} \u{043c}\u{0443}\u{0437}\u{044b}\u{043a}\u{0443}"
+            ),
+            Some(VoiceControl::PlayLast)
+        );
+        assert_eq!(
+            classify_voice_control("play music"),
+            Some(VoiceControl::PlayLast)
+        );
     }
 }

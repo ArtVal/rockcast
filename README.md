@@ -79,6 +79,8 @@ Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
 
 ## Using the app
 
+Detailed Russian-language instructions, including voice commands: **[docs/user-manual.html](docs/user-manual.html)**. Open the file in a browser.
+
 1. **Wait for stations** — the local catalog loads immediately; Radio Browser enrichment may follow in the background.
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
@@ -139,13 +141,26 @@ Windows: %LOCALAPPDATA%\RockCast\settings.json
 Linux:   ~/.config/rockcast/settings.json
 ```
 
-Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`, and the optional RockServer URL/token settings.
+Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq_enabled`, `cast_relay`, `language`, and the optional RockServer URL/token settings.
 
 ## RockServer and voice control
 
 RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. Enter the `ROCKSERVER_API_BEARER_TOKEN` in the masked **Токен** field. RockCast sends it as `Authorization: Bearer <token>` for both HTTP search and the voice WebSocket handshake; it never appends the credential to the server URL or writes it to the application log. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
 
 The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit, sends it to `/api/v1/voice/stream`, and plays the station selected by the server when the command requests playback. In RockServer settings, choose **Buffered (after recording)** for the compatible SpeechKit v1 request, or **Streaming (while recording)** for SpeechKit v3 partial recognition. In streaming mode RockCast opens the WebSocket before microphone capture and sends PCM chunks as they arrive; buffered mode retains the original upload-after-release behavior. The choice is saved locally and sent with each new voice session; RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials. Input-device selection/testing and cancellation after upload begins are not implemented yet.
+
+### Voice commands
+
+RockServer recognizes station requests in Russian and English. RockCast additionally recognizes these short control commands locally after receiving the transcript:
+
+| Russian | English | Action |
+| --- | --- | --- |
+| `Стоп`, `Останови`, `Выключи` | `Stop`, `Pause`, `Turn off` | Stop playback. |
+| `Дальше`, `Следующая`, `Вперёд` | `Next`, `Next station`, `Skip` | Select and play the next station in the current list. |
+| `Назад`, `Предыдущая` | `Previous`, `Previous station`, `Back` | Select and play the previous station in the current list. |
+| `Включи музыку` | `Play music`, `Play some music` | Play the last station that started successfully. The station is remembered across restarts. |
+
+At the beginning or end of a list, **Previous** or **Next** does not wrap around. If no station has played successfully yet, **Play music** leaves playback unchanged.
 
 ## Project layout
 
@@ -233,7 +248,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 
 ## License
 
-No license file is included in the repository yet. Add one if you distribute binaries or source publicly.
+RockCast is licensed under the [GNU General Public License, version 3 or later (GPL-3.0-or-later)](https://www.gnu.org/licenses/gpl-3.0.html).
 
 ## Acknowledgments
 
