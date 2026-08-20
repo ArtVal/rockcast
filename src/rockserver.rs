@@ -47,6 +47,7 @@ pub fn search(
             name: item.name,
             url: item.stream_url,
             tags: item.tags.join(", "),
+            country: item.country_code.unwrap_or_default(),
             bitrate: item.bitrate_kbps.unwrap_or(0),
             codec: item.codec.unwrap_or_default(),
         })
@@ -71,4 +72,5 @@ struct StationDto {
     tags: Vec<String>,
     bitrate_kbps: Option<u32>,
     codec: Option<String>,
+    country_code: Option<String>,
 }

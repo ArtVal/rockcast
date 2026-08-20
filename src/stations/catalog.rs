@@ -75,10 +75,12 @@ pub fn parse_stations_txt(raw: &str) -> Vec<Station> {
         let tags = parts.get(2).copied().unwrap_or("").to_string();
         let bitrate = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(128);
         let codec = parts.get(4).copied().unwrap_or("mp3").to_string();
+        let country = parts.get(5).copied().unwrap_or("").to_string();
         out.push(Station {
             name,
             url,
             tags,
+            country,
             bitrate,
             codec,
         });

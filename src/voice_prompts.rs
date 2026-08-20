@@ -8,12 +8,21 @@ static VKLYUCHAYU_RU: &[u8] = include_bytes!("../assets/vklyuchayu_ru.wav");
 static NOT_FOUND_RU: &[u8] = include_bytes!("../assets/not_found_ru.wav");
 static VKLYUCHAYU_EN: &[u8] = include_bytes!("../assets/vklyuchayu_en.wav");
 static NOT_FOUND_EN: &[u8] = include_bytes!("../assets/not_found_en.wav");
+static SERVER_UNAVAILABLE_RU: &[u8] = include_bytes!("../assets/server_unavailable_ru.wav");
+static SERVER_UNAVAILABLE_EN: &[u8] = include_bytes!("../assets/server_unavailable_en.wav");
+static TOKEN_MISSING_RU: &[u8] = include_bytes!("../assets/token_missing_ru.wav");
+static TOKEN_MISSING_EN: &[u8] = include_bytes!("../assets/token_missing_en.wav");
+static TOKEN_INVALID_RU: &[u8] = include_bytes!("../assets/token_invalid_ru.wav");
+static TOKEN_INVALID_EN: &[u8] = include_bytes!("../assets/token_invalid_en.wav");
 
 #[derive(Clone, Copy)]
 pub enum Prompt {
     Beep,
     TurningOn,
     NotFound,
+    ServerUnavailable,
+    TokenMissing,
+    TokenInvalid,
 }
 
 pub fn play(prompt: Prompt, lang: Lang) {
@@ -26,6 +35,18 @@ pub fn play(prompt: Prompt, lang: Lang) {
         Prompt::NotFound => match lang {
             Lang::Ru => NOT_FOUND_RU,
             Lang::En => NOT_FOUND_EN,
+        },
+        Prompt::ServerUnavailable => match lang {
+            Lang::Ru => SERVER_UNAVAILABLE_RU,
+            Lang::En => SERVER_UNAVAILABLE_EN,
+        },
+        Prompt::TokenMissing => match lang {
+            Lang::Ru => TOKEN_MISSING_RU,
+            Lang::En => TOKEN_MISSING_EN,
+        },
+        Prompt::TokenInvalid => match lang {
+            Lang::Ru => TOKEN_INVALID_RU,
+            Lang::En => TOKEN_INVALID_EN,
         },
     };
     std::thread::spawn(move || {

@@ -27,13 +27,58 @@ pub struct VoiceSearchResult {
     pub auto_play: bool,
 }
 
+#[derive(Debug)]
+pub enum VoiceError {
+    ServerUnavailable,
+    TokenMissing,
+    TokenInvalid,
+    Message(String),
+}
+
+impl std::fmt::Display for VoiceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ServerUnavailable => write!(f, "RockServer is unavailable"),
+            Self::TokenMissing => write!(f, "RockServer token is not configured"),
+            Self::TokenInvalid => write!(f, "RockServer token is invalid"),
+            Self::Message(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for VoiceError {
+    fn from(message: String) -> Self {
+        let normalized = message.to_lowercase();
+        if normalized.contains("401")
+            || normalized.contains("403")
+            || normalized.contains("unauthorized")
+            || normalized.contains("invalid token")
+            || normalized.contains("токен") && normalized.contains("не настроен")
+        {
+            if normalized.contains("не настроен") {
+                Self::TokenMissing
+            } else {
+                Self::TokenInvalid
+            }
+        } else {
+            Self::Message(message)
+        }
+    }
+}
+
+impl From<&str> for VoiceError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
 /// Records one short PCM16 mono command and resolves it through RockServer.
 pub fn capture_and_recognize(
     base_url: &str,
     bearer_token: &str,
     locale: &str,
     recording: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<VoiceSearchResult, String> {
+) -> Result<VoiceSearchResult, VoiceError> {
     log::info!("voice capture started: locale={locale} base_url={base_url}");
     let (audio, sample_rate) = record_default_microphone(&recording)?;
     let url = websocket_url(base_url)?;
@@ -54,12 +99,12 @@ pub fn capture_and_recognize(
     let tcp = std::net::TcpStream::connect_timeout(
         &host_port
             .to_socket_addrs()
-            .map_err(|e| format!("RockServer voice DNS: {e}"))?
+            .map_err(|_| VoiceError::ServerUnavailable)?
             .next()
             .ok_or_else(|| "RockServer voice: не удалось разрешить адрес".to_owned())?,
         Duration::from_secs(5),
     )
-    .map_err(|e| format!("RockServer voice TCP: {e}"))?;
+    .map_err(|_| VoiceError::ServerUnavailable)?;
     let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = tcp.set_write_timeout(Some(Duration::from_secs(5)));
     let ws_key = tungstenite::handshake::client::generate_key();
@@ -75,7 +120,7 @@ pub fn capture_and_recognize(
         .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
     let (mut socket, _) = tungstenite::client(request, tcp).map_err(|e| {
         log::error!("voice websocket handshake failed: {e}");
-        "Не удалось подключиться к RockServer voice".to_owned()
+        VoiceError::from(format!("RockServer voice handshake: {e}"))
     })?;
     log::info!("voice websocket connected");
     socket
@@ -171,7 +216,7 @@ pub fn capture_and_recognize(
                     auto_play: normalized_query.action == VoiceAction::Play,
                 });
             }
-            VoiceEvent::Error { message, .. } => return Err(message),
+            VoiceEvent::Error { message, .. } => return Err(message.into()),
             _ => {}
         }
     }
@@ -201,7 +246,7 @@ fn websocket_url(base: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::start_message;
+    use super::{VoiceError, start_message};
 
     #[test]
     fn start_message_is_valid_json() {
@@ -211,5 +256,17 @@ mod tests {
         assert_eq!(value["locale"], "ru-RU");
         assert_eq!(value["sample_rate_hz"], 48_000);
         assert_eq!(value["limit"], 30);
+    }
+
+    #[test]
+    fn classifies_token_errors_for_voice_prompts() {
+        assert!(matches!(
+            VoiceError::from("Токен RockServer не настроен"),
+            VoiceError::TokenMissing
+        ));
+        assert!(matches!(
+            VoiceError::from("HTTP 401 Unauthorized".to_owned()),
+            VoiceError::TokenInvalid
+        ));
     }
 }

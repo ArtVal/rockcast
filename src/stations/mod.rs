@@ -13,6 +13,7 @@ pub struct Station {
     pub name: String,
     pub url: String,
     pub tags: String,
+    pub country: String,
     pub bitrate: u32,
     pub codec: String,
 }
@@ -56,6 +57,7 @@ mod tests {
             name: "test".into(),
             url: "https://example.test/stream".into(),
             tags: String::new(),
+            country: String::new(),
             bitrate: 128,
             codec: codec.into(),
         }

@@ -52,6 +52,7 @@ impl From<StationDto> for Station {
             name: v.name,
             url: v.stream_url,
             tags: v.tags.join(", "),
+            country: v.country_code.unwrap_or_default(),
             bitrate: v.bitrate_kbps.unwrap_or(0),
             codec: v.codec.unwrap_or_default(),
         }

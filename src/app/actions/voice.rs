@@ -11,6 +11,10 @@ impl RockCastApp {
         }
         if self.rockserver_bearer_token.trim().is_empty() {
             self.rockserver_setup_open = true;
+            crate::voice_prompts::play(
+                crate::voice_prompts::Prompt::TokenMissing,
+                self.lang,
+            );
             self.status = self.lang.t().rockserver_token_required.into();
             return;
         }

@@ -36,6 +36,7 @@ impl RockCastApp {
         let scroll_h = (list_h - 72.0).max(100.0);
         let col_station = t.col_station;
         let col_tags = t.col_tags;
+        let col_country = t.col_country;
         let col_bitrate = t.col_bitrate;
         let loading_stations = t.loading_stations;
         let list_empty = t.list_empty;
@@ -43,7 +44,8 @@ impl RockCastApp {
         panel(ui, |ui| {
             let full_w = ui.available_width();
             let reserve = 24.0;
-            let available = (full_w - reserve).max(NAME_COL_MIN + TAGS_COL_MIN + META_COL_MIN);
+            let available = (full_w - reserve)
+                .max(NAME_COL_MIN + TAGS_COL_MIN + COUNTRY_COL_MIN + META_COL_MIN);
             let longest_name = self
                 .stations
                 .iter()
@@ -59,19 +61,20 @@ impl RockCastApp {
             };
             let default_name_w = default_name_w
                 .clamp(NAME_COL_MIN, NAME_COL_MAX)
-                .min(available - TAGS_COL_MIN - META_COL_MIN);
+                .min(available - TAGS_COL_MIN - COUNTRY_COL_MIN - META_COL_MIN);
             let default_tags_w = (available * 0.44)
                 .clamp(180.0, 340.0)
-                .min(available - default_name_w - META_COL_MIN);
+                .min(available - default_name_w - COUNTRY_COL_MIN - META_COL_MIN);
+            let country_w = COUNTRY_COL_MIN;
 
             let mut name_w = self.station_name_col_w.unwrap_or(default_name_w);
             let mut tags_w = self.station_tags_col_w.unwrap_or(default_tags_w);
             name_w = name_w.clamp(NAME_COL_MIN, NAME_COL_MAX);
             tags_w = tags_w.clamp(
                 TAGS_COL_MIN,
-                (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+                (available - name_w - country_w - META_COL_MIN).max(TAGS_COL_MIN),
             );
-            let mut meta_w = available - name_w - tags_w;
+            let mut meta_w = available - name_w - tags_w - country_w;
             if meta_w < META_COL_MIN {
                 let deficit = META_COL_MIN - meta_w;
                 let tags_shrink = (tags_w - TAGS_COL_MIN).min(deficit);
@@ -80,12 +83,13 @@ impl RockCastApp {
                 if remaining > 0.0 {
                     name_w = (name_w - remaining).max(NAME_COL_MIN);
                 }
-                meta_w = available - name_w - tags_w;
+                meta_w = available - name_w - tags_w - country_w;
             }
 
             let col_name_x = 8.0;
             let col_tags_x = 8.0 + name_w;
-            let col_meta_x = 8.0 + name_w + tags_w;
+            let col_country_x = 8.0 + name_w + tags_w;
+            let col_meta_x = col_country_x + country_w;
             let top = ui.cursor().top();
 
             let left_handle = Rect::from_min_max(
@@ -128,23 +132,23 @@ impl RockCastApp {
             if left_resp.dragged() {
                 let new_name = (name_w + left_resp.drag_delta().x)
                     .clamp(NAME_COL_MIN, NAME_COL_MAX)
-                    .min(available - TAGS_COL_MIN - META_COL_MIN);
+                    .min(available - TAGS_COL_MIN - COUNTRY_COL_MIN - META_COL_MIN);
                 self.station_name_col_w = Some(new_name);
                 name_w = new_name;
                 tags_w = tags_w.clamp(
                     TAGS_COL_MIN,
-                    (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+                    (available - name_w - country_w - META_COL_MIN).max(TAGS_COL_MIN),
                 );
-                meta_w = available - name_w - tags_w;
+                meta_w = available - name_w - tags_w - country_w;
             }
             if right_resp.dragged() {
                 let new_tags = (tags_w + right_resp.drag_delta().x).clamp(
                     TAGS_COL_MIN,
-                    (available - name_w - META_COL_MIN).max(TAGS_COL_MIN),
+                    (available - name_w - country_w - META_COL_MIN).max(TAGS_COL_MIN),
                 );
                 self.station_tags_col_w = Some(new_tags);
                 tags_w = new_tags;
-                meta_w = available - name_w - tags_w;
+                meta_w = available - name_w - tags_w - country_w;
             }
 
             {
@@ -169,6 +173,13 @@ impl RockCastApp {
                     Pos2::new(head_rect.left() + col_meta_x, y),
                     egui::Align2::LEFT_CENTER,
                     col_bitrate,
+                    egui::FontId::proportional(12.0),
+                    MUTED,
+                );
+                ui.painter().text(
+                    Pos2::new(head_rect.left() + col_country_x, y),
+                    egui::Align2::LEFT_CENTER,
+                    col_country,
                     egui::FontId::proportional(12.0),
                     MUTED,
                 );
@@ -222,6 +233,10 @@ impl RockCastApp {
                         let tags_limit = ((tags_w / 6.8) as usize).clamp(18, 72);
                         let meta_limit = ((meta_w / 6.4) as usize).clamp(10, 28);
                         let tags = truncate(&st.tags, tags_limit);
+                        let country = truncate(
+                            &st.country,
+                            ((country_w / 7.0) as usize).clamp(10, 18),
+                        );
                         let meta = truncate(&meta, meta_limit);
 
                         let (row_rect, resp) =
@@ -268,6 +283,13 @@ impl RockCastApp {
                                 Pos2::new(row_rect.left() + col_meta_x, y),
                                 egui::Align2::LEFT_CENTER,
                                 meta,
+                                egui::FontId::proportional(12.5),
+                                muted_color,
+                            );
+                            ui.painter().text(
+                                Pos2::new(row_rect.left() + col_country_x, y),
+                                egui::Align2::LEFT_CENTER,
+                                country,
                                 egui::FontId::proportional(12.5),
                                 muted_color,
                             );

@@ -55,6 +55,8 @@ struct RbStation {
     url: Option<String>,
     url_resolved: Option<String>,
     tags: Option<String>,
+    country: Option<String>,
+    countrycode: Option<String>,
     #[serde(default)]
     bitrate: Option<serde_json::Value>,
     codec: Option<String>,
@@ -198,6 +200,7 @@ fn normalize(raw: RbStation) -> Option<Station> {
         name,
         url,
         tags: raw.tags.unwrap_or_default(),
+        country: raw.country.or(raw.countrycode).unwrap_or_default(),
         bitrate: bitrate_u32(raw.bitrate),
         codec: raw.codec.unwrap_or_default(),
     })

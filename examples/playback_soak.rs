@@ -314,6 +314,7 @@ fn station(name: &str, url: String, codec: &str) -> Station {
         name: name.into(),
         url,
         tags: "soak".into(),
+        country: String::new(),
         bitrate: 0,
         codec: codec.into(),
     }

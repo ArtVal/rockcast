@@ -213,10 +213,21 @@ impl RockCastApp {
                             }
                         }
                         Err(error) => {
-                            crate::voice_prompts::play(
-                                crate::voice_prompts::Prompt::NotFound,
-                                self.lang,
-                            );
+                            let prompt = match error {
+                                crate::voice::VoiceError::ServerUnavailable => {
+                                    crate::voice_prompts::Prompt::ServerUnavailable
+                                }
+                                crate::voice::VoiceError::TokenMissing => {
+                                    crate::voice_prompts::Prompt::TokenMissing
+                                }
+                                crate::voice::VoiceError::TokenInvalid => {
+                                    crate::voice_prompts::Prompt::TokenInvalid
+                                }
+                                crate::voice::VoiceError::Message(_) => {
+                                    crate::voice_prompts::Prompt::NotFound
+                                }
+                            };
+                            crate::voice_prompts::play(prompt, self.lang);
                             self.status = format!("Голосовое управление: {error}");
                         }
                     }

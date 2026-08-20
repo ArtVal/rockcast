@@ -17,6 +17,7 @@ pub(crate) const NAME_COL_MIN: f32 = 120.0;
 pub(crate) const NAME_COL_MAX: f32 = 360.0;
 pub(crate) const TAGS_COL_MIN: f32 = 110.0;
 pub(crate) const META_COL_MIN: f32 = 88.0;
+pub(crate) const COUNTRY_COL_MIN: f32 = 82.0;
 /// EQ bar animation target rate (~20 FPS).
 pub(crate) const EQ_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 /// Background polling while playback/loading is active.

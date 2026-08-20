@@ -11,7 +11,7 @@ pub(crate) enum UiMsg {
     },
     DeviceFound(OutputDevice),
     DevicesFinished(String),
-    VoiceResult(Result<crate::voice::VoiceSearchResult, String>),
+    VoiceResult(Result<crate::voice::VoiceSearchResult, crate::voice::VoiceError>),
 }
 
 pub(super) fn same_output_device(left: &OutputDevice, right: &OutputDevice) -> bool {
