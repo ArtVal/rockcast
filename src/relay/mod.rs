@@ -123,22 +123,37 @@ impl StreamRelay {
         let stop_feed = Arc::clone(&stop);
         let fan_feed = Arc::clone(&fanout);
         let feeder_transport = transport.clone();
-        let fan_done = Arc::clone(&fanout);
         let feeder = thread::spawn(move || {
             let _worker = crate::profile::worker("relay_feeder");
-            let result = match feeder_transport {
-                RelayTransport::Passthrough { .. } => {
-                    run_feeder_passthrough(&upstream, &fan_feed, &stop_feed)
+            loop {
+                if stop_feed.load(Ordering::SeqCst) {
+                    break;
                 }
-                RelayTransport::WavPcm { .. } => {
-                    run_feeder_transcode(&upstream, fan_feed, stop_feed)
+                let started = Instant::now();
+                let result = match &feeder_transport {
+                    RelayTransport::Passthrough { .. } => {
+                        run_feeder_passthrough(&upstream, &fan_feed, &stop_feed)
+                    }
+                    RelayTransport::WavPcm { .. } => {
+                        run_feeder_transcode(&upstream, Arc::clone(&fan_feed), Arc::clone(&stop_feed))
+                    }
+                };
+                if stop_feed.load(Ordering::SeqCst) {
+                    break;
                 }
-            };
-            if let Err(e) = result {
-                log::warn!("StreamRelay feeder end: {e}");
-                fan_done.finish_err(e);
-            } else {
-                fan_done.finish_ok();
+                match result {
+                    Ok(()) => log::warn!("StreamRelay feeder ended; reconnecting"),
+                    Err(e) => log::warn!("StreamRelay feeder end: {e}; reconnecting"),
+                }
+                let delay = if started.elapsed() >= Duration::from_secs(30) {
+                    Duration::from_secs(1)
+                } else {
+                    Duration::from_secs(2)
+                };
+                let deadline = Instant::now() + delay;
+                while !stop_feed.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
         });
 

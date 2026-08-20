@@ -407,7 +407,17 @@ impl LocalPlayer {
             return Err(LocalError::Stream(e));
         }
         log::info!("LocalPlayer::play Ok on '{}'", device.name);
-        Ok(())
+        loop {
+            if stop.load(Ordering::SeqCst) {
+                return Err(LocalError::Stream("stopped".into()));
+            }
+            if let Some(e) = err_slot.lock().clone() {
+                log::error!("LocalPlayer::play: stream ended after start: {e}");
+                self.stop();
+                return Err(LocalError::Stream(e));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 
