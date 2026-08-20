@@ -4,12 +4,7 @@ mod dto;
 mod rank;
 mod record;
 
-use std::{
-    collections::HashSet,
-    net::ToSocketAddrs,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, net::ToSocketAddrs, sync::Arc, time::Duration};
 
 use tungstenite::Message;
 
@@ -77,6 +72,7 @@ pub fn capture_and_recognize(
     base_url: &str,
     bearer_token: &str,
     locale: &str,
+    recognizer_mode: &str,
     recording: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<VoiceSearchResult, VoiceError> {
     log::info!("voice capture started: locale={locale} base_url={base_url}");
@@ -124,7 +120,9 @@ pub fn capture_and_recognize(
     })?;
     log::info!("voice websocket connected");
     socket
-        .send(Message::Text(start_message(locale, sample_rate).into()))
+        .send(Message::Text(
+            start_message(locale, sample_rate, recognizer_mode).into(),
+        ))
         .map_err(|_| "Не удалось начать voice session".to_owned())?;
     let _ = socket
         .read()
@@ -222,11 +220,12 @@ pub fn capture_and_recognize(
     }
 }
 
-fn start_message(locale: &str, sample_rate: u32) -> String {
+fn start_message(locale: &str, sample_rate: u32, recognizer_mode: &str) -> String {
     serde_json::json!({
         "type": "start",
         "locale": locale,
         "sample_rate_hz": sample_rate,
+        "recognizer_mode": recognizer_mode,
         "limit": 30,
     })
     .to_string()
@@ -250,11 +249,13 @@ mod tests {
 
     #[test]
     fn start_message_is_valid_json() {
-        let value: serde_json::Value = serde_json::from_str(&start_message("ru-RU", 48_000))
-            .expect("start message must be valid JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&start_message("ru-RU", 48_000, "streaming_v3"))
+                .expect("start message must be valid JSON");
         assert_eq!(value["type"], "start");
         assert_eq!(value["locale"], "ru-RU");
         assert_eq!(value["sample_rate_hz"], 48_000);
+        assert_eq!(value["recognizer_mode"], "streaming_v3");
         assert_eq!(value["limit"], 30);
     }
 

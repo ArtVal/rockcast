@@ -9,6 +9,26 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Speech-recognition transport requested for RockServer voice sessions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RockServerVoiceMode {
+    /// Existing REST request submitted after recording stops.
+    #[default]
+    BufferedV1,
+    /// SpeechKit v3 receives microphone chunks while recording.
+    StreamingV3,
+}
+
+impl RockServerVoiceMode {
+    pub const fn protocol_value(self) -> &'static str {
+        match self {
+            Self::BufferedV1 => "buffered_v1",
+            Self::StreamingV3 => "streaming_v3",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SettingsError {
     #[error("serialize settings: {0}")]
@@ -42,6 +62,9 @@ pub struct AppSettings {
     /// Bearer credential sent to RockServer; it is never embedded in the URL.
     #[serde(default)]
     pub rockserver_bearer_token: String,
+    /// Recognition transport for the next RockServer voice session.
+    #[serde(default)]
+    pub rockserver_voice_mode: RockServerVoiceMode,
 }
 
 fn default_rockserver_url() -> String {
@@ -173,9 +196,25 @@ mod tests {
         assert_eq!(actual.volume, 73);
         assert!(actual.cast_relay);
         assert_eq!(actual.rockserver_bearer_token, "test-token");
+        assert_eq!(
+            actual.rockserver_voice_mode,
+            RockServerVoiceMode::BufferedV1
+        );
         fs::write(&path, b"{").unwrap();
         assert!(AppSettings::load_from(&path).is_err());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn voice_mode_uses_stable_wire_values() {
+        assert_eq!(
+            RockServerVoiceMode::BufferedV1.protocol_value(),
+            "buffered_v1"
+        );
+        assert_eq!(
+            RockServerVoiceMode::StreamingV3.protocol_value(),
+            "streaming_v3"
+        );
     }
 
     #[cfg(not(windows))]

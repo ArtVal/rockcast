@@ -15,7 +15,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
 - **Persistent settings** — volume, last station, device, language, spectrum toggle
-- **Optional RockServer mode** — server-side semantic station search and five-second SpeechKit voice command; autonomous mode remains the default
+- **Optional RockServer mode** — server-side semantic station search and a bounded SpeechKit voice command; autonomous mode remains the default
 
 ## Requirements
 
@@ -139,13 +139,13 @@ Windows: %LOCALAPPDATA%\RockCast\settings.json
 Linux:   ~/.config/rockcast/settings.json
 ```
 
-Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`.
+Typical fields: `volume`, `station_url`, `device_id`, `eq_enabled`, `cast_relay`, `language`, and the optional RockServer URL/token settings.
 
 ## RockServer and voice control
 
 RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. Enter the `ROCKSERVER_API_BEARER_TOKEN` in the masked **Токен** field. RockCast sends it as `Authorization: Bearer <token>` for both HTTP search and the voice WebSocket handshake; it never appends the credential to the server URL or writes it to the application log. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
 
-The **Voice** button records up to five seconds from the default Windows microphone, sends PCM16 mono to `/api/v1/voice/stream`, and plays the station selected by the server. RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials.
+The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit, sends it to `/api/v1/voice/stream`, and plays the station selected by the server when the command requests playback. In RockServer settings, choose **Buffered (after recording)** for the compatible SpeechKit v1 request, or **Streaming (while recording)** for SpeechKit v3 partial recognition. The choice is saved locally and sent with each new voice session; RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials. Input-device selection/testing and cancellation after upload begins are not implemented yet.
 
 ## Project layout
 

@@ -15,17 +15,17 @@ use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, Vec2};
 
 use crate::{
     i18n::Lang,
-    observers::{StreamObservers, BANDS},
+    observers::{BANDS, StreamObservers},
     output::OutputDevice,
     playback::PlaybackController,
     playback_diag,
-    settings::AppSettings,
+    settings::{AppSettings, RockServerVoiceMode},
     stations::Station,
     telemetry::{PlaybackSnapshot, Telemetry},
 };
 
 use messages::UiMsg;
-use theme::{EQ_REPAINT_INTERVAL, UI_SLOW_REPAINT_INTERVAL, ACCENT, BG, FG, MUTED, PANEL, PANEL_2};
+use theme::{ACCENT, BG, EQ_REPAINT_INTERVAL, FG, MUTED, PANEL, PANEL_2, UI_SLOW_REPAINT_INTERVAL};
 
 pub struct RockCastApp {
     pub(super) playback: PlaybackController,
@@ -70,11 +70,11 @@ pub struct RockCastApp {
     pub(super) rockserver_enabled: bool,
     pub(super) rockserver_url: String,
     pub(super) rockserver_bearer_token: String,
+    pub(super) rockserver_voice_mode: RockServerVoiceMode,
     pub(super) rockserver_setup_open: bool,
     pub(super) telemetry: Telemetry,
     pub(super) eq_repaint_next: Instant,
 }
-
 
 impl RockCastApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -108,6 +108,7 @@ impl RockCastApp {
         let rockserver_enabled = settings.rockserver_enabled;
         let rockserver_url = settings.rockserver_url.clone();
         let rockserver_bearer_token = settings.rockserver_bearer_token.clone();
+        let rockserver_voice_mode = settings.rockserver_voice_mode;
         let t = lang.t();
 
         let (ui_tx, ui_rx) = mpsc::channel();
@@ -152,6 +153,7 @@ impl RockCastApp {
             rockserver_enabled,
             rockserver_url,
             rockserver_bearer_token,
+            rockserver_voice_mode,
             rockserver_setup_open: false,
             telemetry: Telemetry::new(),
             eq_repaint_next: Instant::now(),
@@ -249,10 +251,7 @@ impl eframe::App for RockCastApp {
                             |ui| {
                                 for lang in [Lang::Ru, Lang::En] {
                                     let selected = self.lang == lang;
-                                    if ui
-                                        .selectable_label(selected, lang.native_name())
-                                        .clicked()
-                                    {
+                                    if ui.selectable_label(selected, lang.native_name()).clicked() {
                                         if self.lang != lang {
                                             self.set_language(ctx, lang);
                                         }
@@ -288,10 +287,8 @@ impl eframe::App for RockCastApp {
     }
 }
 
-
 impl Drop for RockCastApp {
     fn drop(&mut self) {
         self.shutdown_playback();
     }
 }
-

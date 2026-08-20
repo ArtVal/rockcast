@@ -1,12 +1,10 @@
 //! egui panel widgets.
 
-use eframe::egui::{
-    self, Align, Color32, Layout, RichText, Ui,
-    Vec2,
-};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Ui, Vec2};
 
-use super::super::theme::*;
 use super::super::RockCastApp;
+use super::super::theme::*;
+use crate::settings::RockServerVoiceMode;
 
 impl RockCastApp {
     pub(in crate::app) fn draw_rockserver_panel(&mut self, ui: &mut Ui) {
@@ -45,13 +43,18 @@ impl RockCastApp {
                 });
 
                 if !self.rockserver_enabled {
-                    ui.label(RichText::new(t.rockserver_autonomous).color(MUTED).size(12.0));
+                    ui.label(
+                        RichText::new(t.rockserver_autonomous)
+                            .color(MUTED)
+                            .size(12.0),
+                    );
                     return;
                 }
 
                 if !self.rockserver_setup_open {
                     let status = if token_saved {
-                        RichText::new(t.rockserver_status_ok).color(Color32::from_rgb(0x7a, 0xc9, 0x6a))
+                        RichText::new(t.rockserver_status_ok)
+                            .color(Color32::from_rgb(0x7a, 0xc9, 0x6a))
                     } else {
                         RichText::new(t.rockserver_status_need_token).color(ACCENT)
                     };
@@ -90,6 +93,30 @@ impl RockCastApp {
                     )
                     .lost_focus()
                 {
+                    self.mark_settings_dirty();
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new(t.rockserver_voice_mode).color(MUTED));
+                let previous_mode = self.rockserver_voice_mode;
+                egui::ComboBox::from_id_salt("rockserver_voice_mode")
+                    .selected_text(match self.rockserver_voice_mode {
+                        RockServerVoiceMode::BufferedV1 => t.rockserver_voice_buffered,
+                        RockServerVoiceMode::StreamingV3 => t.rockserver_voice_streaming,
+                    })
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.rockserver_voice_mode,
+                            RockServerVoiceMode::BufferedV1,
+                            t.rockserver_voice_buffered,
+                        );
+                        ui.selectable_value(
+                            &mut self.rockserver_voice_mode,
+                            RockServerVoiceMode::StreamingV3,
+                            t.rockserver_voice_streaming,
+                        );
+                    });
+                if self.rockserver_voice_mode != previous_mode {
                     self.mark_settings_dirty();
                 }
                 ui.add_space(2.0);
