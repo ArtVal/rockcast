@@ -245,12 +245,12 @@ fn wait_for_event(
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(event) = controller.try_event() {
-            if controller.apply_event(&event) && event_generation(&event) == generation {
-                if let Some(result) = done(&event) {
-                    return result;
-                }
-            }
+        if let Some(event) = controller.try_event()
+            && controller.apply_event(&event)
+            && event_generation(&event) == generation
+            && let Some(result) = done(&event)
+        {
+            return result;
         }
         thread::sleep(Duration::from_millis(20));
     }

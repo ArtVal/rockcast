@@ -59,14 +59,19 @@ impl RockCastApp {
                         .cloned()
                     {
                         self.last_played_station = Some(station.clone());
-                        self.settings.last_played_station = Some(station);
-                        self.mark_settings_dirty();
+                        if let Some(store) = self.personal_data.as_mut()
+                            && let Err(error) = store.record_play(&station)
+                        {
+                            log::warn!("failed to record playback history: {error}");
+                        }
                     }
                     self.track = self.lang.t().track_meta_hint.into();
-                    if !local && !self.playback.relay_active() && self.eq_enabled {
-                        if let Some(tap_url) = tap_url {
-                            self.schedule_stream_tap(generation, tap_url);
-                        }
+                    if !local
+                        && !self.playback.relay_active()
+                        && self.eq_enabled
+                        && let Some(tap_url) = tap_url
+                    {
+                        self.schedule_stream_tap(generation, tap_url);
                     }
                 }
                 PlaybackEvent::StopOk { .. } => {
@@ -129,6 +134,16 @@ impl RockCastApp {
                     finished,
                 } => {
                     self.stations = list;
+                    if self.personal_data.is_none() {
+                        let resolver = crate::stations::catalog_resolver();
+                        match crate::personal_data::PersonalDataStore::open(
+                            crate::personal_data::PersonalDataStore::default_path(),
+                            resolver,
+                        ) {
+                            Ok(store) => self.personal_data = Some(store),
+                            Err(error) => log::warn!("personal data disabled: {error}"),
+                        }
+                    }
                     self.source = source;
                     self.restore_station_selection();
                     self.loading_stations = !finished;

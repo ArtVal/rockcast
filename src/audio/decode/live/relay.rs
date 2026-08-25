@@ -28,6 +28,7 @@ pub(super) struct RelayEmitCtx<'a> {
     pub pcm_bytes: &'a mut Vec<u8>,
 }
 
+#[allow(clippy::too_many_arguments)] // Hot relay path keeps independently borrowed buffers and callbacks.
 pub(super) fn relay_emit_pcm(
     pcm: &[f32],
     rate: u32,

@@ -142,7 +142,7 @@ fn live_aac_resample_output_is_sane() {
     while out.len() < frames_out * out_ch {
         let need = ((read_pos.floor() as usize) + 2) * channels;
         if ring.len() < need {
-            out.extend(std::iter::repeat(0.0f32).take(out_ch));
+            out.extend(std::iter::repeat_n(0.0f32, out_ch));
             continue;
         }
         let i0 = read_pos.floor() as usize;

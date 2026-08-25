@@ -13,12 +13,14 @@ use crate::{
 
 use super::super::icy::{IcyStreamReader, StopAwareBody, open_stream_response};
 
+pub(super) type OpenedIcyReader = (String, Box<dyn Read + Send>, Vec<u8>);
+
 pub(super) fn open_icy_reader(
     url: &str,
     stop: &Arc<AtomicBool>,
     title_tx: Option<mpsc::Sender<String>>,
     interruptible_body: bool,
-) -> Result<(String, Box<dyn Read + Send>, Vec<u8>), String> {
+) -> Result<OpenedIcyReader, String> {
     let headers = stream_headers(false);
     let client = stream_client(Duration::from_secs(10), None)?;
     let resp = open_stream_response(client, url, headers, stop)?;

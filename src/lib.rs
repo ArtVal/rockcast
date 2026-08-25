@@ -8,6 +8,7 @@ pub mod local;
 pub mod net;
 pub mod observers;
 pub mod output;
+pub mod personal_data;
 pub mod playback;
 pub mod playback_diag;
 pub mod profile;

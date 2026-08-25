@@ -27,7 +27,7 @@ pub fn http_read(gap: Duration, bytes: usize) {
     }
     if gap >= Duration::from_millis(50) {
         let n = HTTP_GAP_OVER_50MS.fetch_add(1, Ordering::Relaxed) + 1;
-        if gap >= Duration::from_millis(150) && (n <= 5 || n % 15 == 0) {
+        if gap >= Duration::from_millis(150) && (n <= 5 || n.is_multiple_of(15)) {
             event(
                 "http_read_gap",
                 &format!("gap_ms={ms} bytes={bytes} count={n}"),

@@ -36,6 +36,7 @@ pub(super) enum VoiceAction {
 
 #[derive(Deserialize)]
 pub(super) struct StationDto {
+    pub id: String,
     pub name: String,
     pub stream_url: String,
     #[serde(default)]
@@ -50,12 +51,7 @@ impl From<StationDto> for Station {
     fn from(v: StationDto) -> Self {
         let url = v.stream_url;
         Self::from_primary(
-            format!(
-                "rockserver-{}",
-                url.bytes().fold(0_u64, |hash, byte| hash
-                    .wrapping_mul(109)
-                    .wrapping_add(byte as u64))
-            ),
+            v.id,
             v.name,
             url,
             v.tags.join(", "),

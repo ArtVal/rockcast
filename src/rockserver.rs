@@ -46,12 +46,7 @@ pub fn search(
         .map(|item| {
             let url = item.stream_url;
             Station::from_primary(
-                format!(
-                    "rockserver-{}",
-                    url.bytes().fold(0_u64, |hash, byte| hash
-                        .wrapping_mul(109)
-                        .wrapping_add(byte as u64))
-                ),
+                item.id,
                 item.name,
                 url,
                 item.tags.join(", "),
@@ -75,6 +70,7 @@ struct SearchResponse {
 }
 #[derive(Deserialize)]
 struct StationDto {
+    id: String,
     name: String,
     stream_url: String,
     #[serde(default)]

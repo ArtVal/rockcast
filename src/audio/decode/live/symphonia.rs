@@ -46,6 +46,7 @@ impl SpectrumState {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // PCM/spectrum outputs are separate borrow-checked sinks.
 pub(super) fn decode_symphonia_f32(
     url: &str,
     content_type: &str,
@@ -121,6 +122,7 @@ pub(super) fn decode_symphonia_f32(
     Err("stopped".into())
 }
 
+#[allow(clippy::too_many_arguments)] // Relay state is intentionally passed without heap boxing in the decode loop.
 pub(super) fn decode_symphonia_relay(
     url: &str,
     content_type: &str,
@@ -222,22 +224,20 @@ fn next_packet(
     format: &mut dyn symphonia::core::formats::FormatReader,
     stop: &Arc<AtomicBool>,
 ) -> Result<symphonia::core::formats::Packet, String> {
-    loop {
-        if stop.load(Ordering::SeqCst) {
-            return Err("stopped".into());
+    if stop.load(Ordering::SeqCst) {
+        return Err("stopped".into());
+    }
+    match format.next_packet() {
+        Ok(packet) => Ok(packet),
+        Err(SymError::ResetRequired) => Err("reset".into()),
+        Err(SymError::IoError(error))
+            if error.kind() == io::ErrorKind::UnexpectedEof
+                || error.kind() == io::ErrorKind::Interrupted =>
+        {
+            Err("eof".into())
         }
-        match format.next_packet() {
-            Ok(p) => return Ok(p),
-            Err(SymError::ResetRequired) => return Err("reset".into()),
-            Err(SymError::IoError(e))
-                if e.kind() == io::ErrorKind::UnexpectedEof
-                    || e.kind() == io::ErrorKind::Interrupted =>
-            {
-                return Err("eof".into());
-            }
-            Err(_) if stop.load(Ordering::SeqCst) => return Err("stopped".into()),
-            Err(e) => return Err(e.to_string()),
-        }
+        Err(_) if stop.load(Ordering::SeqCst) => Err("stopped".into()),
+        Err(error) => Err(error.to_string()),
     }
 }
 

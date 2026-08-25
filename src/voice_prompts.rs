@@ -142,6 +142,7 @@ fn play_wav(wav: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Audio callback format parameters are supplied separately by cpal.
 fn prompt_samples(
     output_len: usize,
     samples: &[f32],
@@ -179,6 +180,7 @@ fn prompt_samples(
     output
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_prompt(
     out: &mut [f32],
     samples: &[f32],
@@ -201,6 +203,7 @@ fn fill_prompt(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_prompt_i16(
     out: &mut [i16],
     samples: &[f32],
@@ -226,6 +229,7 @@ fn fill_prompt_i16(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_prompt_u16(
     out: &mut [u16],
     samples: &[f32],

@@ -40,6 +40,9 @@ pub struct RockCastApp {
     pub(super) status: String,
     pub(super) station_now: String,
     pub(super) last_played_station: Option<Station>,
+    pub(super) personal_data: Option<crate::personal_data::PersonalDataStore>,
+    pub(super) favourites_open: bool,
+    pub(super) history_open: bool,
     pub(super) track: String,
     pub(super) volume: u8,
     pub(super) loading_stations: bool,
@@ -128,6 +131,9 @@ impl RockCastApp {
             status: t.loading.into(),
             station_now: "—".into(),
             last_played_station,
+            personal_data: None,
+            favourites_open: false,
+            history_open: false,
             track: t.track_hint.into(),
             volume,
             loading_stations: false,
@@ -248,6 +254,54 @@ impl eframe::App for RockCastApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let history_count = self.personal_data.as_ref().map_or(0, |store| {
+                            store.history().len()
+                                + store
+                                    .profile()
+                                    .unresolved_references
+                                    .iter()
+                                    .filter(|entry| entry.source_kind == "history")
+                                    .count()
+                        });
+                        if ui.button(format!("History ({history_count})")).clicked() {
+                            self.history_open = true;
+                        }
+                        let favourites_count = self.personal_data.as_ref().map_or(0, |store| {
+                            store.favourites().len()
+                                + store
+                                    .profile()
+                                    .unresolved_references
+                                    .iter()
+                                    .filter(|entry| entry.source_kind == "favourite")
+                                    .count()
+                        });
+                        if ui
+                            .button(format!("Favourites ({favourites_count})"))
+                            .clicked()
+                        {
+                            self.favourites_open = true;
+                        }
+                        let favourite = self
+                            .selected_station
+                            .and_then(|index| self.stations.get(index))
+                            .is_some_and(|station| {
+                                self.personal_data
+                                    .as_ref()
+                                    .is_some_and(|store| store.is_favourite(&station.id))
+                            });
+                        if ui
+                            .add_enabled(
+                                self.personal_data.is_some() && self.selected_station.is_some(),
+                                egui::Button::new(if favourite {
+                                    "★ Favourite"
+                                } else {
+                                    "☆ Favourite"
+                                }),
+                            )
+                            .clicked()
+                        {
+                            self.toggle_selected_favourite();
+                        }
                         let t = self.lang.t();
                         ui.menu_button(
                             RichText::new(t.menu_language).color(MUTED).size(13.0),
@@ -279,6 +333,7 @@ impl eframe::App for RockCastApp {
                 let list_h = ui.available_height().max(120.0);
                 self.draw_station_list(ui, list_h);
             });
+        self.draw_personal_windows(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

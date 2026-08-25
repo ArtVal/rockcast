@@ -29,14 +29,23 @@ pub enum CatalogError {
     Invalid(String),
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     schema_version: u32,
     catalog_version: String,
     stations: Vec<CatalogStation>,
+    #[serde(default)]
+    tombstones: Vec<CatalogTombstone>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogTombstone {
+    id: String,
+    reason: String,
+    replacement_ids: Vec<String>,
+}
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogStation {
     id: String,
@@ -53,7 +62,7 @@ struct CatalogStation {
     favicon_url: Option<String>,
     streams: Vec<CatalogStream>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogStream {
     id: String,
@@ -72,14 +81,24 @@ struct Manifest {
 }
 
 pub(crate) fn catalog_stations() -> Vec<Station> {
+    catalog_snapshot().0
+}
+
+/// Resolver input comes only from the accepted local catalog snapshot.  TXT has
+/// no lifecycle data, so it deliberately supplies active IDs only.
+pub(crate) fn catalog_resolver() -> crate::personal_data::CatalogResolver {
+    catalog_snapshot().1
+}
+
+fn catalog_snapshot() -> (Vec<Station>, crate::personal_data::CatalogResolver) {
     for path in stations_search_paths() {
         let Ok(raw) = std::fs::read_to_string(&path) else {
             continue;
         };
-        match parse_override(&path, &raw) {
-            Ok(stations) => {
+        match parse_override_with_resolver(&path, &raw) {
+            Ok((stations, resolver)) => {
                 log::info!("station catalog override: {}", path.display());
-                return stations;
+                return (stations, resolver);
             }
             Err(error) => log::warn!(
                 "station catalog override {} rejected: {error}",
@@ -95,18 +114,56 @@ pub(crate) fn catalog_stations() -> Vec<Station> {
             log::info!("station catalog created: {}", path.display());
         }
     }
-    parse_embedded_catalog().expect("vendored RM-004 catalog must be valid")
+    let stations = parse_embedded_catalog().expect("vendored RM-004 catalog must be valid");
+    let document = parse_document(EMBEDDED_CATALOG).expect("vendored RM-004 catalog must be valid");
+    let resolver = resolver_from_document(&stations, document);
+    (stations, resolver)
 }
 
-fn parse_override(path: &Path, raw: &str) -> Result<Vec<Station>, CatalogError> {
+fn resolver_from_document(
+    stations: &[Station],
+    document: Document,
+) -> crate::personal_data::CatalogResolver {
+    let tombstones = document
+        .tombstones
+        .into_iter()
+        .filter_map(|t| {
+            let reason = match t.reason.as_str() {
+                "removed" => crate::personal_data::TombstoneReason::Removed,
+                "merged" => crate::personal_data::TombstoneReason::Merged,
+                "split" => crate::personal_data::TombstoneReason::Split,
+                _ => return None,
+            };
+            Some(crate::personal_data::Tombstone {
+                id: t.id,
+                reason,
+                replacement_ids: t.replacement_ids,
+            })
+        })
+        .collect();
+    crate::personal_data::CatalogResolver::from_stations(stations, Some(document.catalog_version))
+        .with_tombstones(tombstones)
+}
+
+fn parse_override_with_resolver(
+    path: &Path,
+    raw: &str,
+) -> Result<(Vec<Station>, crate::personal_data::CatalogResolver), CatalogError> {
     if path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
         || !raw.trim_start().starts_with('{')
     {
-        Ok(parse_stations_txt(raw))
+        let stations = parse_stations_txt(raw);
+        let resolver = crate::personal_data::CatalogResolver::from_stations(&stations, None);
+        Ok((stations, resolver))
     } else {
-        parse_stations_json(raw)
+        let document = parse_document(raw)?;
+        // Keep the public schema parser as the single station-validation path;
+        // the second parsed document carries only lifecycle metadata for profiles.
+        let stations = parse_stations_json(raw)?;
+        let resolver = resolver_from_document(&stations, document);
+        Ok((stations, resolver))
     }
 }
 

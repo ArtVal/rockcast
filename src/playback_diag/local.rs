@@ -29,7 +29,7 @@ pub fn local_underrun(missing_samples: usize) {
     let n = LOCAL_UNDERRUNS.fetch_add(1, Ordering::Relaxed) + 1;
     LOCAL_UNDERRUN_SAMPLES.fetch_add(missing_samples as u64, Ordering::Relaxed);
     let ring = LOCAL_RING.load(Ordering::Relaxed);
-    if n == 1 || n % 25 == 0 {
+    if n == 1 || n.is_multiple_of(25) {
         event(
             "local_underrun",
             &format!("count={n} ring={ring} missing={missing_samples}"),
@@ -68,7 +68,7 @@ pub fn local_pcm_queue_full() {
         return;
     }
     let n = LOCAL_PCM_Q_FULL.fetch_add(1, Ordering::Relaxed) + 1;
-    if n == 1 || n % 10 == 0 {
+    if n == 1 || n.is_multiple_of(10) {
         event("local_pcm_queue_full", &format!("count={n}"));
     }
 }

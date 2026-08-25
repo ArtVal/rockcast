@@ -39,6 +39,10 @@ impl SpscAudioRing {
         self.count()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Drop oldest samples to keep the ring near the live edge.
     pub fn drop_oldest(&self, count: usize) {
         if count == 0 {

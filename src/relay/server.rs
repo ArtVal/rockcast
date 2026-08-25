@@ -112,7 +112,7 @@ fn handle_client(
         return Err(format!("bad request: {first}"));
     }
 
-    let resolved_pcm = fanout.pcm_format().or_else(|| match transport {
+    let resolved_pcm = fanout.pcm_format().or(match transport {
         RelayTransport::WavPcm {
             sample_rate,
             channels,

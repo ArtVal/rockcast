@@ -36,7 +36,7 @@ pub fn relay_read_wait(d: Duration) {
     }
     if d >= Duration::from_millis(100) {
         let n = RELAY_READ_WAIT_SLOW.fetch_add(1, Ordering::Relaxed) + 1;
-        if n <= 3 || n % 20 == 0 {
+        if n <= 3 || n.is_multiple_of(20) {
             event(
                 "relay_read_wait",
                 &format!("wait_ms={} count={n}", d.as_millis()),

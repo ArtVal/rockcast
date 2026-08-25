@@ -81,10 +81,10 @@ impl<R: Read> AdtsStreamReader<R> {
                 if sync > 0 {
                     self.pending.drain(..sync);
                 }
-                if let Some(len) = adts_total_frame_len(&self.pending) {
-                    if self.pending.len() >= len {
-                        return Ok(Some(self.pending.drain(..len).collect()));
-                    }
+                if let Some(len) = adts_total_frame_len(&self.pending)
+                    && self.pending.len() >= len
+                {
+                    return Ok(Some(self.pending.drain(..len).collect()));
                 }
             } else if self.pending.len() > 32_768 {
                 self.pending.clear();
@@ -181,6 +181,7 @@ pub(super) fn decode_fdk_adts_f32(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Relay decode state is borrowed independently to avoid allocation in the audio loop.
 pub(super) fn decode_fdk_adts_relay(
     peek: Vec<u8>,
     reader: Box<dyn Read + Send>,
@@ -264,6 +265,6 @@ mod tests {
     fn parses_somafm_first_frame_length() {
         let data = [0xFF, 0xF9, 0x5C, 0x80, 0x5C, 0xE1, 0x8C, 0x21, 0x1B, 0x55];
         let len = adts_total_frame_len(&data).expect("adts len");
-        assert!(len >= 7 && len < 2048, "unexpected frame len {len}");
+        assert!((7..2048).contains(&len), "unexpected frame len {len}");
     }
 }

@@ -113,6 +113,20 @@ impl RockCastApp {
     }
 
     fn play_last_station(&mut self) {
+        if let Some(station_id) = self
+            .personal_data
+            .as_ref()
+            .and_then(|store| store.last_played_station_id())
+            && let Some(index) = self
+                .stations
+                .iter()
+                .position(|station| station.id == station_id)
+        {
+            self.selected_station = Some(index);
+            self.scroll_to_station = Some(index);
+            self.play();
+            return;
+        }
         let Some(station) = self.last_played_station.clone() else {
             self.status = "Voice play music: no previously played station".into();
             return;
