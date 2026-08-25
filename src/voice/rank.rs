@@ -151,14 +151,15 @@ mod tests {
     use crate::stations::Station;
 
     fn station(name: &str) -> Station {
-        Station {
-            name: name.into(),
-            url: "https://example.com/stream".into(),
-            tags: "rock".into(),
-            country: String::new(),
-            bitrate: 0,
-            codec: "mp3".into(),
-        }
+        Station::from_primary(
+            "test".into(),
+            name.into(),
+            "https://example.com/stream".into(),
+            "rock".into(),
+            String::new(),
+            0,
+            "mp3".into(),
+        )
     }
 
     #[test]

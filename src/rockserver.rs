@@ -43,13 +43,22 @@ pub fn search(
     Ok(body
         .stations
         .into_iter()
-        .map(|item| Station {
-            name: item.name,
-            url: item.stream_url,
-            tags: item.tags.join(", "),
-            country: item.country_code.unwrap_or_default(),
-            bitrate: item.bitrate_kbps.unwrap_or(0),
-            codec: item.codec.unwrap_or_default(),
+        .map(|item| {
+            let url = item.stream_url;
+            Station::from_primary(
+                format!(
+                    "rockserver-{}",
+                    url.bytes().fold(0_u64, |hash, byte| hash
+                        .wrapping_mul(109)
+                        .wrapping_add(byte as u64))
+                ),
+                item.name,
+                url,
+                item.tags.join(", "),
+                item.country_code.unwrap_or_default(),
+                item.bitrate_kbps.unwrap_or(0),
+                item.codec.unwrap_or_default(),
+            )
         })
         .collect())
 }

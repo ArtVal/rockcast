@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rockcatalog:schema:stations:v1",
+  "title": "Rock shared station catalog v1 (approved RM-004-A contract)",
+  "description": "Approved RM-004-A contract for an immutable shared baseline station catalog release; published as the RM-004-B production schema artifact.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "catalogVersion",
+    "stations",
+    "tombstones"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Structural contract version. A different value requires a different schema and explicit consumer support."
+    },
+    "catalogVersion": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[1-9][0-9]*$",
+      "description": "Immutable data-release version in YYYY.MM.N form."
+    },
+    "stations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/station"
+      },
+      "$comment": "uniqueItems only rejects byte-equivalent station objects. A catalog validator must separately enforce unique station.id, legacyIds, and normalized stream URLs."
+    },
+    "tombstones": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/tombstone"
+      },
+      "$comment": "A catalog validator must enforce unique tombstone IDs, disjoint active/tombstone IDs, valid replacement targets, and an acyclic replacement graph."
+    }
+  },
+  "additionalProperties": true,
+  "$comment": "Unknown optional properties are deliberately allowed for forward-compatible additions within schemaVersion 1. Producers use a stricter authoring validator; consumers must ignore fields they do not understand.",
+  "$defs": {
+    "stationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable, globally unique lowercase ASCII station identity. It is reviewed by a human and never derived at runtime from name or URL."
+    },
+    "streamId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 31,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable lowercase ASCII stream identity scoped to one station. The pair (station.id, stream.id) is the full identity."
+    },
+    "trimmedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "httpUrl": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 2048,
+      "format": "uri",
+      "pattern": "^https?://",
+      "description": "Absolute HTTP(S) URL. Host, credential, fragment, and canonicalization rules require the catalog validator."
+    },
+    "nullableHttpUrl": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/httpUrl"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "station": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "aliases",
+        "legacyIds",
+        "tags",
+        "countryCode",
+        "language",
+        "homepageUrl",
+        "faviconUrl",
+        "streams"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stationId"
+        },
+        "name": {
+          "$ref": "#/$defs/trimmedText"
+        },
+        "aliases": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/trimmedText"
+          },
+          "description": "Alternative display/search names, not alternative station identities."
+        },
+        "legacyIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 223,
+            "pattern": "^[a-z][a-z0-9-]{1,31}:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$"
+          },
+          "description": "Namespaced identifiers used only to migrate persisted consumer state to station.id."
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+          },
+          "description": "NFC-normalized, lowercase, sorted and deduplicated search tags. Case and ordering require the catalog validator."
+        },
+        "countryCode": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "ISO 3166-1 alpha-2 code when authoritatively known. Regex checks shape only; registry membership requires the catalog validator."
+        },
+        "language": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z]{2,3}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "ISO 639-1 lowercase alpha-2 where available, otherwise ISO 639-2/T lowercase alpha-3. Regex checks shape only."
+        },
+        "homepageUrl": {
+          "$ref": "#/$defs/nullableHttpUrl"
+        },
+        "faviconUrl": {
+          "$ref": "#/$defs/nullableHttpUrl"
+        },
+        "streams": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/stream"
+          },
+          "contains": {
+            "type": "object",
+            "required": [
+              "primary"
+            ],
+            "properties": {
+              "primary": {
+                "const": true
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1,
+          "$comment": "Draft 2020-12 expresses exactly one primary stream. The catalog validator repeats this check and separately enforces unique stream.id and normalized URL values."
+        }
+      },
+      "additionalProperties": true
+    },
+    "stream": {
+      "type": "object",
+      "required": [
+        "id",
+        "url",
+        "codec",
+        "bitrateKbps",
+        "primary"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/streamId"
+        },
+        "url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "codec": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z0-9][a-z0-9.+-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Lowercase codec token when known, for example mp3, aac, aacp, opus, vorbis, ogg, or flac."
+        },
+        "bitrateKbps": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "tombstone": {
+      "type": "object",
+      "required": [
+        "id",
+        "reason",
+        "replacementIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stationId"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "removed",
+            "merged",
+            "split"
+          ]
+        },
+        "replacementIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/stationId"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "removed"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "replacementIds": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "merged"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "replacementIds": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "split"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "replacementIds": {
+                "minItems": 2
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  },
+  "examples": [
+    {
+      "schemaVersion": 1,
+      "catalogVersion": "2026.08.1",
+      "stations": [
+        {
+          "id": "rock-antenne-heavy-metal",
+          "name": "Rock Antenne — Heavy Metal",
+          "aliases": [
+            "Rock Antenne Heavy Metal"
+          ],
+          "legacyIds": [
+            "rockmobile:rockcast-660f61c42c941373"
+          ],
+          "tags": [
+            "heavy metal",
+            "metal"
+          ],
+          "countryCode": "DE",
+          "language": "de",
+          "homepageUrl": "https://www.rockantenne.de/",
+          "faviconUrl": null,
+          "streams": [
+            {
+              "id": "main",
+              "url": "https://stream.rockantenne.de/heavy-metal/stream/mp3",
+              "codec": "mp3",
+              "bitrateKbps": 128,
+              "primary": true
+            }
+          ]
+        }
+      ],
+      "tombstones": []
+    }
+  ]
+}

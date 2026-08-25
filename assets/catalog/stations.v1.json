@@ -1,0 +1,1020 @@
+{
+  "catalogVersion": "2026.08.2",
+  "schemaVersion": 1,
+  "stations": [
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-metal-detector",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-89af54cf1a2e84d4"
+      ],
+      "name": "SomaFM — Metal Detector",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/metal-128-mp3"
+        }
+      ],
+      "tags": [
+        "heavy metal",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-heavy-metal",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-660f61c42c941373"
+      ],
+      "name": "Rock Antenne — Heavy Metal",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/heavy-metal/stream/mp3"
+        }
+      ],
+      "tags": [
+        "heavy metal",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "RU",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-caprice-heavy-metal",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-4050f61ecbbb1558"
+      ],
+      "name": "Radio Caprice — Heavy Metal",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "http://79.111.14.76:8002/heavymetal"
+        }
+      ],
+      "tags": [
+        "heavy metal",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "RU",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-caprice-nu-metal",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-00868ea7591717e0"
+      ],
+      "name": "Radio Caprice — Nu Metal",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "http://79.111.14.76:8002/numetal"
+        }
+      ],
+      "tags": [
+        "metal",
+        "nu metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "RU",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-caprice-industrial",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-c1a2ad5b9f4ed60c"
+      ],
+      "name": "Radio Caprice — Industrial",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "http://79.111.14.76:8002/industrial"
+        }
+      ],
+      "tags": [
+        "industrial",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-metal-madness",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-455782bf21330fa6"
+      ],
+      "name": "GotRadio — Metal Madness",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6016_128.mp3"
+        }
+      ],
+      "tags": [
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-metal-frontier",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-94e353bf74b7c923"
+      ],
+      "name": "GotRadio — Metal Frontier",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6022_128.mp3"
+        }
+      ],
+      "tags": [
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "CA",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "metal-rock-radio",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-d89b07dce3283690"
+      ],
+      "name": "Metal Rock Radio",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://kathy.torontocast.com:2800/stream"
+        }
+      ],
+      "tags": [
+        "hard rock",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "CH",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "1-fm-high-voltage",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-235c957b2de5b4ac"
+      ],
+      "name": "1.FM — High Voltage",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://strm112.1.fm/highvoltage_mobile_mp3"
+        }
+      ],
+      "tags": [
+        "hard rock",
+        "metal"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-hair-band",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-18fd84500325144b"
+      ],
+      "name": "181.FM — Hair Band",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-hairband_128k.mp3"
+        }
+      ],
+      "tags": [
+        "hair metal",
+        "hard rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-d69fa8ad3a26c125"
+      ],
+      "name": "Rock Antenne",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/rockantenne/stream/mp3"
+        }
+      ],
+      "tags": [
+        "hard rock",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-classic-perlen",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-c16b2935b0241a1f"
+      ],
+      "name": "Rock Antenne — Classic Perlen",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/classic-perlen/stream/mp3"
+        }
+      ],
+      "tags": [
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-soft-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-38cdec5ff92c4389"
+      ],
+      "name": "Rock Antenne — Soft Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/soft-rock/stream/mp3"
+        }
+      ],
+      "tags": [
+        "rock",
+        "soft rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-80er-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-841adb39a76ec9bc"
+      ],
+      "name": "Rock Antenne — 80er Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/80er-rock/stream/mp3"
+        }
+      ],
+      "tags": [
+        "80s",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-modern-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-3387327b7305179b"
+      ],
+      "name": "Rock Antenne — Modern Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/modern-rock/stream/mp3"
+        }
+      ],
+      "tags": [
+        "modern rock",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-deutschrock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-8022c1d5cdc58cf9"
+      ],
+      "name": "Rock Antenne — Deutschrock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/deutschrock/stream/mp3"
+        }
+      ],
+      "tags": [
+        "deutschrock",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-symphonic",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-01f0963667a438a5"
+      ],
+      "name": "Rock Antenne — Symphonic",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/symphonic-rock/stream/mp3"
+        }
+      ],
+      "tags": [
+        "symphonic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "hit-radio-ffh-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-3b741683c4e18d7e"
+      ],
+      "name": "hit Radio FFH — Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://mp3.ffh.de/ffhchannels/hqrock.mp3"
+        }
+      ],
+      "tags": [
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-hard-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-91545370e0b017c3"
+      ],
+      "name": "GotRadio — Hard Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6015_128.mp3"
+        }
+      ],
+      "tags": [
+        "hard rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-classic-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-107c9fc8fbbf7a05"
+      ],
+      "name": "GotRadio — Classic Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6014_128.mp3"
+        }
+      ],
+      "tags": [
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "CH",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "1-fm-classic-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-5170cbd28ad453d3"
+      ],
+      "name": "1.FM — Classic Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://strm112.1.fm/crock_mobile_mp3"
+        }
+      ],
+      "tags": [
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-the-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-f83698c1400bfa67"
+      ],
+      "name": "181.FM — The Rock!",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-rock_128k.mp3"
+        }
+      ],
+      "tags": [
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-hard-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-3ad5d4218373f86a"
+      ],
+      "name": "181.FM — Hard Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-hardrock_128k.mp3"
+        }
+      ],
+      "tags": [
+        "hard rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-rock-40",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-eba61c6cfb1f0248"
+      ],
+      "name": "181.FM — Rock 40",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-rock40_128k.mp3"
+        }
+      ],
+      "tags": [
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-the-highway",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-6ada660ee508fb6f"
+      ],
+      "name": "181.FM — The Highway",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-highway_128k.mp3"
+        }
+      ],
+      "tags": [
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-power",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-07e9613a0bce1cad"
+      ],
+      "name": "181.FM — Power",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-power_128k.mp3"
+        }
+      ],
+      "tags": [
+        "power rock",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "181-fm-classic-buzz",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-29bb3a43076e355b"
+      ],
+      "name": "181.FM — Classic Buzz",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.181fm.com/181-classicbuzz_128k.mp3"
+        }
+      ],
+      "tags": [
+        "alternative",
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "DE",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "rock-antenne-alternative",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-265038082a082f67"
+      ],
+      "name": "Rock Antenne — Alternative",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.rockantenne.de/alternative/stream/mp3"
+        }
+      ],
+      "tags": [
+        "alternative",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-alternative",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-8b022a82e7669ccf"
+      ],
+      "name": "GotRadio — Alternative",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6017_128.mp3"
+        }
+      ],
+      "tags": [
+        "alternative",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "gotradio-punk-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-95c2ec1b9063214e"
+      ],
+      "name": "GotRadio — Punk Rock",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "http://pureplay.cdnstream1.com/6021_128.mp3"
+        }
+      ],
+      "tags": [
+        "punk",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "punk-rock-demonstration",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-f594849972cb007a"
+      ],
+      "name": "Punk Rock Demonstration",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://listen.punkrockdemo.com/stream"
+        }
+      ],
+      "tags": [
+        "punk",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-indie-pop-rocks",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-9ded56005c3235e7"
+      ],
+      "name": "SomaFM — Indie Pop Rocks!",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/indiepop-128-mp3"
+        }
+      ],
+      "tags": [
+        "indie",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-poptron",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-f2e6c9fb3d3ab01d"
+      ],
+      "name": "SomaFM — PopTron",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/poptron-128-mp3"
+        }
+      ],
+      "tags": [
+        "electropop",
+        "indie",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-cover-song-army",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-2c616e18144b2c36"
+      ],
+      "name": "SomaFM — Cover Song Army",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/covers-128-mp3"
+        }
+      ],
+      "tags": [
+        "covers",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-left-coast-70s",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-6f290eeb1ed38d09"
+      ],
+      "name": "SomaFM — Left Coast 70s",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/seventies-128-mp3"
+        }
+      ],
+      "tags": [
+        "70s",
+        "classic rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-underground-80s",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-3502fde6ee33c6c0"
+      ],
+      "name": "SomaFM — Underground 80s",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/u80s-128-mp3"
+        }
+      ],
+      "tags": [
+        "80s",
+        "new wave",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "somafm-boot-liquor",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-d3084039845c88dd"
+      ],
+      "name": "SomaFM — Boot Liquor",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://ice6.somafm.com/bootliquor-128-mp3"
+        }
+      ],
+      "tags": [
+        "americana",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "US",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-paradise-rock-mix",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-0c33e3886583efa7"
+      ],
+      "name": "Radio Paradise — Rock Mix",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "https://stream.radioparadise.com/rock-128"
+        }
+      ],
+      "tags": [
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "RU",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-record-rock",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-bd08861bf5c8137e"
+      ],
+      "name": "Radio Record — Rock",
+      "streams": [
+        {
+          "bitrateKbps": 96,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "https://radiorecord.hostingradio.ru/rock96.aacp"
+        }
+      ],
+      "tags": [
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "GB",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-x-uk",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-e30916884d116ee4"
+      ],
+      "name": "Radio X UK",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "aac",
+          "id": "main",
+          "primary": true,
+          "url": "https://media-ssl.musicradio.com/RadioXUK"
+        }
+      ],
+      "tags": [
+        "alternative",
+        "rock"
+      ]
+    },
+    {
+      "aliases": [],
+      "countryCode": "GB",
+      "faviconUrl": null,
+      "homepageUrl": null,
+      "id": "radio-x-uk-mp3",
+      "language": null,
+      "legacyIds": [
+        "rockmobile:rockcast-71da474ae7d87567"
+      ],
+      "name": "Radio X UK (MP3)",
+      "streams": [
+        {
+          "bitrateKbps": 128,
+          "codec": "mp3",
+          "id": "main",
+          "primary": true,
+          "url": "https://media-ice.musicradio.com/RadioXUKMP3"
+        }
+      ],
+      "tags": [
+        "alternative",
+        "rock"
+      ]
+    }
+  ],
+  "tombstones": []
+}

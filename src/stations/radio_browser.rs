@@ -196,14 +196,21 @@ fn normalize(raw: RbStation) -> Option<Station> {
         .flatten()
         .map(|u| u.trim().to_string())
         .find(|u| (u.starts_with("http://") || u.starts_with("https://")) && !is_playlist(u))?;
-    Some(Station {
+    let bitrate = bitrate_u32(raw.bitrate);
+    Some(Station::from_primary(
+        format!(
+            "radio-browser-{}",
+            url.bytes().fold(0_u64, |hash, byte| hash
+                .wrapping_mul(109)
+                .wrapping_add(byte as u64))
+        ),
         name,
         url,
-        tags: raw.tags.unwrap_or_default(),
-        country: raw.country.or(raw.countrycode).unwrap_or_default(),
-        bitrate: bitrate_u32(raw.bitrate),
-        codec: raw.codec.unwrap_or_default(),
-    })
+        raw.tags.unwrap_or_default(),
+        raw.country.or(raw.countrycode).unwrap_or_default(),
+        bitrate,
+        raw.codec.unwrap_or_default(),
+    ))
 }
 
 fn fetch_tag(host: &str, tag: &str, limit: u32) -> Result<Vec<Station>, String> {

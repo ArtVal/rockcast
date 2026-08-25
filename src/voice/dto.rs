@@ -48,13 +48,20 @@ pub(super) struct StationDto {
 
 impl From<StationDto> for Station {
     fn from(v: StationDto) -> Self {
-        Self {
-            name: v.name,
-            url: v.stream_url,
-            tags: v.tags.join(", "),
-            country: v.country_code.unwrap_or_default(),
-            bitrate: v.bitrate_kbps.unwrap_or(0),
-            codec: v.codec.unwrap_or_default(),
-        }
+        let url = v.stream_url;
+        Self::from_primary(
+            format!(
+                "rockserver-{}",
+                url.bytes().fold(0_u64, |hash, byte| hash
+                    .wrapping_mul(109)
+                    .wrapping_add(byte as u64))
+            ),
+            v.name,
+            url,
+            v.tags.join(", "),
+            v.country_code.unwrap_or_default(),
+            v.bitrate_kbps.unwrap_or(0),
+            v.codec.unwrap_or_default(),
+        )
     }
 }

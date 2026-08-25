@@ -88,12 +88,15 @@ fn main() -> eframe::Result<()> {
 
     let settings = AppSettings::load();
     let title = settings.language.t().window_title;
+    let app_icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon.png"))
+        .expect("embedded RockCast app icon must be a valid PNG");
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([940.0, 740.0])
             .with_min_inner_size([820.0, 640.0])
-            .with_title(title),
+            .with_title(title)
+            .with_icon(app_icon),
         ..Default::default()
     };
 

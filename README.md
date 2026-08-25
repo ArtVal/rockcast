@@ -10,7 +10,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
 - **Via PC relay** — optional: PC fetches the station (e.g. through VPN) and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
-- **Station catalog** — bundled `stations.txt` plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
+- **Station catalog** — pinned schema-v1 JSON snapshot plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
 - **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
@@ -106,7 +106,31 @@ Detailed Russian-language instructions, including voice commands: **[docs/user-m
 
 ## Station catalog
 
-### Format (`stations.txt`)
+### Bundled schema-v1 release
+
+RockCast ships the approved offline snapshot in
+`assets/catalog/stations.v1.json`: catalogVersion **2026.08.2**,
+SHA-256 **3fa20dca94fc059bd433a47b9fba9bb6d5e5e1aa2957a5ffb58b2a7b20b1d74d**.
+Its embedded manifest, version, and canonical (UTF-8/LF) checksum are verified before parsing.
+The selected playback URL is each station's exactly-one primary stream; additional streams remain
+available in metadata. No catalog download occurs at build or startup.
+
+### Overrides
+
+Use the same schema-v1 JSON document for custom overrides. Overrides are explicitly user-owned,
+un-pinned full-catalog authority: before replacing one, keep a local backup; remove or rename it to
+return immediately to the checksum-verified bundled baseline. Search precedence remains:
+
+1. `ROCKCAST_STATIONS` environment variable (full path; JSON or legacy TXT)
+2. `stations.v1.json`, then `stations.txt`, next to the executable
+3. `stations.v1.json`, then `stations.txt`, in the current working directory
+4. `stations.v1.json`, then `stations.txt`, in app data
+
+If no override exists, RockCast creates an editable `stations.v1.json` app-data copy from the
+vendored snapshot. JSON overrides accept forward-compatible unknown optional fields but require
+schemaVersion 1, unique stable IDs, valid HTTP(S) streams, and exactly one primary stream.
+
+### Legacy TXT transition
 
 ```text
 # name | url | tags | bitrate | codec | country
@@ -117,16 +141,10 @@ SomaFM — Metal Detector | https://ice6.somafm.com/metal-128-mp3 | metal,heavy 
 - At least `name` and `url` are required (`http://` or `https://`).
 - Playlist URLs (`.m3u`, `.pls`, …) from Radio Browser are skipped.
 
-### Where the file is loaded from
-
-Search order:
-
-1. `ROCKCAST_STATIONS` environment variable (full path)
-2. `stations.txt` next to the executable
-3. `stations.txt` in the current working directory
-4. App data dir `stations.txt` (created from the embedded catalog if missing):
-   - Windows: `%LOCALAPPDATA%\RockCast\stations.txt`
-   - Linux: `$XDG_CONFIG_HOME/rockcast/stations.txt` or `~/.config/rockcast/stations.txt`
+Existing `stations.txt` overrides retain their current behavior for one release cycle. This is a
+documented legacy exception owned by the RockCast maintainers to protect offline user overrides;
+it has a removal date of **2026-10-31** and must not be extended silently. App-data locations are Windows
+`%LOCALAPPDATA%\RockCast` and Linux `$XDG_CONFIG_HOME/rockcast` (or `~/.config/rockcast`).
 
 ### Radio Browser
 
@@ -167,7 +185,7 @@ At the beginning or end of a list, **Previous** or **Next** does not wrap around
 ```text
 rockcast/
 ├── Cargo.toml
-├── stations.txt          # bundled rock/metal catalog
+├── assets/catalog/       # checksum-pinned schema-v1 baseline release
 ├── run.bat               # Windows release launcher
 ├── run.sh                # Linux release launcher
 ├── docs/                 # architecture & agent-oriented code docs

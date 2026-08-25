@@ -310,14 +310,15 @@ fn stations() -> Vec<Station> {
 }
 
 fn station(name: &str, url: String, codec: &str) -> Station {
-    Station {
-        name: name.into(),
+    Station::from_primary(
+        format!("soak-{}", codec),
+        name.into(),
         url,
-        tags: "soak".into(),
-        country: String::new(),
-        bitrate: 0,
-        codec: codec.into(),
-    }
+        "soak".into(),
+        String::new(),
+        0,
+        codec.into(),
+    )
 }
 
 fn parse_args() -> Result<Config, String> {

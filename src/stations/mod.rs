@@ -10,15 +10,72 @@ pub use radio_browser::enrich_stations;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Station {
+    /// Stable schema-v1 ID. Transitional/ad-hoc sources use a deterministic local ID.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub url: String,
     pub tags: String,
     pub country: String,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[serde(default)]
+    pub favicon_url: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub legacy_ids: Vec<String>,
     pub bitrate: u32,
     pub codec: String,
+    /// Includes primary and alternatives; url/codec/bitrate remain the primary playback fields.
+    #[serde(default)]
+    pub streams: Vec<StationStream>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StationStream {
+    pub id: String,
+    pub url: String,
+    pub codec: String,
+    pub bitrate: u32,
+    pub primary: bool,
 }
 
 impl Station {
+    pub fn from_primary(
+        id: String,
+        name: String,
+        url: String,
+        tags: String,
+        country: String,
+        bitrate: u32,
+        codec: String,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            url: url.clone(),
+            tags,
+            country,
+            language: None,
+            homepage_url: None,
+            favicon_url: None,
+            aliases: Vec::new(),
+            legacy_ids: Vec::new(),
+            bitrate,
+            codec: codec.clone(),
+            streams: vec![StationStream {
+                id: "main".into(),
+                url,
+                codec,
+                bitrate,
+                primary: true,
+            }],
+        }
+    }
+
     pub fn content_type(&self) -> &'static str {
         let c = self.effective_codec();
         if matches!(c.as_str(), "aac" | "aac+" | "he-aac" | "aacp") {
@@ -53,14 +110,15 @@ mod tests {
     use super::Station;
 
     fn station(codec: &str) -> Station {
-        Station {
-            name: "test".into(),
-            url: "https://example.test/stream".into(),
-            tags: String::new(),
-            country: String::new(),
-            bitrate: 128,
-            codec: codec.into(),
-        }
+        Station::from_primary(
+            "test".into(),
+            "test".into(),
+            "https://example.test/stream".into(),
+            String::new(),
+            String::new(),
+            128,
+            codec.into(),
+        )
     }
 
     #[test]
