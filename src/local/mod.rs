@@ -126,6 +126,7 @@ impl LocalPlayer {
         spectrum_enabled: bool,
         title_tx: Option<mpsc::Sender<String>>,
         on_status: impl Fn(&str),
+        on_started: impl FnOnce(),
     ) -> Result<(), LocalError> {
         log::info!(
             "LocalPlayer::play begin device='{}' cpal={:?} vol={volume:.2} url={url}",
@@ -397,6 +398,7 @@ impl LocalPlayer {
             return Err(LocalError::Stream("stopped".into()));
         }
         self.state.lock().stream = Some(SendStream(stream));
+        on_started();
 
         on_status(&format!("Playing locally: «{}»", device.name));
         thread::sleep(Duration::from_millis(100));

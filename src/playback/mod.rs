@@ -249,20 +249,23 @@ impl PlaybackController {
                             });
                         }
                     },
+                    || {
+                        if play_generation.load(Ordering::Acquire) == generation {
+                            let _ = tx.send(PlaybackEvent::PlayOk {
+                                url: station.url.clone(),
+                                tap_url: Some(station.url.clone()),
+                                generation,
+                                local: true,
+                            });
+                        }
+                    },
                 );
                 if play_generation.load(Ordering::Acquire) != generation {
                     // Never stop here: a newer local session may already own LocalPlayer.
                     return;
                 }
                 match result {
-                    Ok(()) => {
-                        let _ = tx.send(PlaybackEvent::PlayOk {
-                            url: station.url.clone(),
-                            tap_url: Some(station.url),
-                            generation,
-                            local: true,
-                        });
-                    }
+                    Ok(()) => {}
                     Err(e) => {
                         let _ = tx.send(PlaybackEvent::Error {
                             message: e.to_string(),

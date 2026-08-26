@@ -161,7 +161,9 @@ fn record_microphone(
 }
 
 fn validate_sample_rate(rate: u32) -> Result<u32, String> {
-    if matches!(rate, 8_000 | 16_000 | 24_000 | 48_000) {
+    // Device rate is resampled to 16 kHz before sending to RockServer.
+    // Accept common capture rates (including 44.1 kHz on Linux / PulseAudio).
+    if (8_000..=192_000).contains(&rate) {
         Ok(rate)
     } else {
         Err(format!(
@@ -196,7 +198,7 @@ fn push_mono_i16(target: &Mutex<Vec<i16>>, input: &[i16], channels: usize) {
 mod tests {
     use std::sync::Mutex;
 
-    use super::push_mono_i16;
+    use super::{push_mono_i16, validate_sample_rate};
 
     #[test]
     fn buffered_capture_keeps_every_mixed_frame() {
@@ -205,5 +207,13 @@ mod tests {
         push_mono_i16(&samples, &[100, 300, -100, 100, 200, 400], 2);
 
         assert_eq!(*samples.lock().unwrap(), [200, 0, 300]);
+    }
+
+    #[test]
+    fn accepts_cd_quality_and_rejects_nonsense_rates() {
+        assert_eq!(validate_sample_rate(44_100).unwrap(), 44_100);
+        assert_eq!(validate_sample_rate(48_000).unwrap(), 48_000);
+        assert!(validate_sample_rate(7_999).is_err());
+        assert!(validate_sample_rate(192_001).is_err());
     }
 }
