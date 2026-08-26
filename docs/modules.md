@@ -17,6 +17,7 @@ src/
       playback.rs      play/stop/shutdown, observer wiring
       poll.rs          PlaybackEvent + UiMsg dispatch
       catalog.rs       Station/device refresh, bootstrap
+      icons.rs         Schedule direct station icon jobs
       voice.rs         RockServer mic capture
       eq.rs            Spectrum bar animation
     ui/                egui panel draw impls
@@ -45,6 +46,7 @@ src/
     mod.rs             Station type + load API
     catalog.rs         Parse bundled stations.txt
     radio_browser.rs   Optional HTTPS enrichment
+  station_icons.rs     bounded direct favicon/logo fetch, decode, and cache
   settings.rs          app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
   i18n.rs              Lang::Ru | En string tables
   relay/               StreamRelay — LAN HTTP proxy (PC→Cast, VPN-friendly)

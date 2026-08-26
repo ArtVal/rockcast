@@ -11,6 +11,10 @@ pub(crate) enum UiMsg {
     },
     DeviceFound(OutputDevice),
     DevicesFinished(String),
+    StationIcon {
+        request_key: String,
+        image: Option<crate::station_icons::StationIconImage>,
+    },
     VoiceResult(Result<crate::voice::VoiceSearchResult, crate::voice::VoiceError>),
 }
 

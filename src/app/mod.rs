@@ -6,12 +6,12 @@ mod theme;
 mod ui;
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, atomic::AtomicBool, mpsc},
     time::{Duration, Instant},
 };
 
-use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, Vec2};
+use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, TextureHandle, Vec2};
 
 use crate::{
     i18n::Lang,
@@ -78,6 +78,12 @@ pub struct RockCastApp {
     pub(super) rockserver_setup_open: bool,
     pub(super) telemetry: Telemetry,
     pub(super) eq_repaint_next: Instant,
+    /// UI-owned decoded textures. Fetch/decode stays in the BackgroundRuntime.
+    pub(super) station_icons: HashMap<String, TextureHandle>,
+    /// Request identities already attempted this app session, including failures.
+    pub(super) station_icon_requests: HashSet<String>,
+    /// Jobs still expected to send a StationIcon message, used to wake egui.
+    pub(super) station_icons_pending: usize,
 }
 
 impl RockCastApp {
@@ -166,6 +172,9 @@ impl RockCastApp {
             rockserver_setup_open: false,
             telemetry: Telemetry::new(),
             eq_repaint_next: Instant::now(),
+            station_icons: HashMap::new(),
+            station_icon_requests: HashSet::new(),
+            station_icons_pending: 0,
         }
     }
     pub(in crate::app) fn can_start_play(&self) -> bool {
@@ -179,7 +188,7 @@ impl RockCastApp {
 impl eframe::App for RockCastApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.bootstrap();
-        self.poll_messages();
+        self.poll_messages(ctx);
         self.apply_volume_if_needed();
         if self.playing
             && self.playback.relay_active()
@@ -203,6 +212,7 @@ impl eframe::App for RockCastApp {
             || self.playing_op
             || self.loading_stations
             || self.loading_devices
+            || self.station_icons_pending > 0
             || self.settings_dirty
             || self.voice_busy;
         let snap = PlaybackSnapshot {

@@ -45,7 +45,7 @@ pub fn search(
         .into_iter()
         .map(|item| {
             let url = item.stream_url;
-            Station::from_primary(
+            let mut station = Station::from_primary(
                 item.id,
                 item.name,
                 url,
@@ -53,7 +53,10 @@ pub fn search(
                 item.country_code.unwrap_or_default(),
                 item.bitrate_kbps.unwrap_or(0),
                 item.codec.unwrap_or_default(),
-            )
+            );
+            station.homepage_url = item.homepage_url;
+            station.favicon_url = item.favicon_url;
+            station
         })
         .collect())
 }
@@ -78,4 +81,8 @@ struct StationDto {
     bitrate_kbps: Option<u32>,
     codec: Option<String>,
     country_code: Option<String>,
+    #[serde(default, alias = "homepageUrl")]
+    homepage_url: Option<String>,
+    #[serde(default, alias = "faviconUrl")]
+    favicon_url: Option<String>,
 }

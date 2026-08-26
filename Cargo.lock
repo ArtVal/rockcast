@@ -2016,6 +2016,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3417,6 +3419,7 @@ dependencies = [
  "env_logger",
  "fdk-aac",
  "if-addrs",
+ "image",
  "log",
  "mdns-sd",
  "ogg",

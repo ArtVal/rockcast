@@ -11,6 +11,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **Via PC relay** — optional: PC fetches the station (e.g. through VPN) and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
 - **Station catalog** — pinned schema-v1 JSON snapshot plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
+- **Station icons (MVP)** — direct, bounded favicon/logo loading from station metadata with a local cache; RockServer-hosted icons are planned
 - **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
@@ -145,6 +146,18 @@ Existing `stations.txt` overrides retain their current behavior for one release 
 documented legacy exception owned by the RockCast maintainers to protect offline user overrides;
 it has a removal date of **2026-10-31** and must not be extended silently. App-data locations are Windows
 `%LOCALAPPDATA%\RockCast` and Linux `$XDG_CONFIG_HOME/rockcast` (or `~/.config/rockcast`).
+
+### Station icons (MVP)
+
+When a station has a valid `faviconUrl`, RockCast downloads and decodes that
+image in a background worker. If it has no explicit favicon URL but does have a
+valid official `homepageUrl`, RockCast tries only that site's conventional
+`/favicon.ico` path; it does not fetch or parse homepage HTML. Network
+responses are bounded and invalid images are ignored. Successful thumbnails are
+cached under the RockCast app-data directory, and a failed request is not
+repeated on every UI redraw. The embedded catalog currently leaves these
+metadata fields empty, so icons appear as metadata is supplied by a catalog or
+RockServer response.
 
 ### Radio Browser
 

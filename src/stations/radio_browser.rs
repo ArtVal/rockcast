@@ -57,6 +57,10 @@ struct RbStation {
     tags: Option<String>,
     country: Option<String>,
     countrycode: Option<String>,
+    #[serde(rename = "homepage")]
+    homepage_url: Option<String>,
+    #[serde(rename = "favicon")]
+    favicon_url: Option<String>,
     #[serde(default)]
     bitrate: Option<serde_json::Value>,
     codec: Option<String>,
@@ -197,7 +201,7 @@ fn normalize(raw: RbStation) -> Option<Station> {
         .map(|u| u.trim().to_string())
         .find(|u| (u.starts_with("http://") || u.starts_with("https://")) && !is_playlist(u))?;
     let bitrate = bitrate_u32(raw.bitrate);
-    Some(Station::from_primary(
+    let mut station = Station::from_primary(
         format!(
             "radio-browser-{}",
             url.bytes().fold(0_u64, |hash, byte| hash
@@ -210,7 +214,10 @@ fn normalize(raw: RbStation) -> Option<Station> {
         raw.country.or(raw.countrycode).unwrap_or_default(),
         bitrate,
         raw.codec.unwrap_or_default(),
-    ))
+    );
+    station.homepage_url = raw.homepage_url;
+    station.favicon_url = raw.favicon_url;
+    Some(station)
 }
 
 fn fetch_tag(host: &str, tag: &str, limit: u32) -> Result<Vec<Station>, String> {

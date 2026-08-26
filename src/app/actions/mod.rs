@@ -2,6 +2,7 @@
 
 mod catalog;
 mod eq;
+mod icons;
 mod playback;
 mod poll;
 mod settings;

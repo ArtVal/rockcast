@@ -17,6 +17,7 @@ pub mod relay;
 pub mod rockserver;
 pub mod runtime;
 pub mod settings;
+pub mod station_icons;
 pub mod stations;
 pub mod telemetry;
 /// Microphone capture and RockServer voice transport.

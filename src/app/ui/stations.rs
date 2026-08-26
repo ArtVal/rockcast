@@ -85,7 +85,10 @@ impl RockCastApp {
                 meta_w = available - name_w - tags_w - country_w;
             }
 
-            let col_name_x = 8.0;
+            // Reserve a small leading slot for a station icon when one is
+            // available. Missing/failed icons intentionally leave this slot
+            // empty and keep the existing text-only placeholder behavior.
+            let col_name_x = 38.0;
             let col_tags_x = 8.0 + name_w;
             let col_country_x = 8.0 + name_w + tags_w;
             let col_meta_x = col_country_x + country_w;
@@ -261,6 +264,22 @@ impl RockCastApp {
                                 MUTED
                             };
                             let y = row_rect.center().y;
+
+                            if let Some(source) = crate::station_icons::source_url(st) {
+                                let request_key = crate::station_icons::request_key(st, &source);
+                                if let Some(texture) = self.station_icons.get(&request_key) {
+                                    let icon_rect = Rect::from_center_size(
+                                        Pos2::new(row_rect.left() + 20.0, y),
+                                        Vec2::splat(24.0),
+                                    );
+                                    ui.painter().image(
+                                        texture.id(),
+                                        icon_rect,
+                                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                        Color32::WHITE,
+                                    );
+                                }
+                            }
 
                             ui.painter().text(
                                 Pos2::new(row_rect.left() + col_name_x, y),

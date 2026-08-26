@@ -1,6 +1,7 @@
 //! Poll playback events and background UiMsg queue.
 
 use crate::{i18n, playback::PlaybackEvent};
+use eframe::egui;
 
 use super::super::{
     RockCastApp,
@@ -24,7 +25,7 @@ fn is_station_unavailable_error(message: &str) -> bool {
 }
 
 impl RockCastApp {
-    pub(in crate::app) fn poll_messages(&mut self) {
+    pub(in crate::app) fn poll_messages(&mut self, ctx: &egui::Context) {
         let relay_url = self.playback.relay_public_url();
         for title in self.observers.poll(
             self.playback.current_generation(),
@@ -134,6 +135,7 @@ impl RockCastApp {
                     finished,
                 } => {
                     self.stations = list;
+                    self.queue_station_icons(&self.stations.clone());
                     if self.personal_data.is_none() {
                         let resolver = crate::stations::catalog_resolver();
                         match crate::personal_data::PersonalDataStore::open(
@@ -148,6 +150,23 @@ impl RockCastApp {
                     self.restore_station_selection();
                     self.loading_stations = !finished;
                     self.status = i18n::fmt1(self.lang.t().stations_count, self.stations.len());
+                }
+                UiMsg::StationIcon { request_key, image } => {
+                    self.station_icons_pending = self.station_icons_pending.saturating_sub(1);
+                    if let Some(image) = image
+                        && self.station_icon_requests.contains(&request_key)
+                    {
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width, image.height],
+                            &image.rgba,
+                        );
+                        let texture = ctx.load_texture(
+                            format!("station-icon-{request_key}"),
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.station_icons.insert(request_key, texture);
+                    }
                 }
                 UiMsg::DeviceFound(device) => {
                     let selected_id = self
@@ -231,6 +250,7 @@ impl RockCastApp {
                             self.voice_fallback = stations.iter().skip(1).cloned().collect();
                             self.station_now = first.name.clone();
                             self.stations = stations;
+                            self.queue_station_icons(&self.stations.clone());
                             self.source = format!("RockServer · голос · {}", self.stations.len());
                             self.selected_station = Some(0);
                             self.scroll_to_station = Some(0);

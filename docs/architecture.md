@@ -37,6 +37,7 @@ Windows release builds set `#![windows_subsystem = "windows"]` (no console). Log
 | UI (`eframe`) | Draw, handle clicks, adapt controller events | Block on HTTP, Cast handshake, `cpal` stream drop |
 | `PlaybackController` | Own generation/state and submit Cast/local/relay operations | Depend on egui |
 | `BackgroundRuntime` | Execute a bounded number of blocking app jobs, propagate shutdown | Create a thread per UI action |
+| `station_icons` jobs | Fetch/decode bounded station icons and write the local cache | Perform HTTP, decode images, or touch egui from the UI thread |
 | Play worker | Call `CastService::play` or `LocalPlayer::play`, send `PlaybackEvent` | Call `local.stop()` after being superseded |
 | Stop / shutdown worker | `local.stop()`, `cast.stop()` | Hold UI |
 | Local decode | HTTP + symphonia → ring + FFT levels | Touch egui |
@@ -101,3 +102,19 @@ Exit → shutdown_playback (local.stop + timed cast.stop) → process::exit(0)
 | Cast | `observers::IcyWatcher` HTTP tap after PlayOk | `observers::SpectrumAnalyzer` separate HTTP tap |
 
 Both taps are stopped on station change / stop / error.
+
+## Station icon flow (MVP)
+
+```text
+Station metadata
+  → explicit favicon_url, or homepage_url + /favicon.ico
+  → bounded BackgroundRuntime job
+  → HTTP(S) response limit + image dimension limit
+  → versioned app-data cache
+  → UiMsg::StationIcon (decoded RGBA)
+  → egui TextureHandle in station list
+```
+
+The UI keeps request identities for the session, so a missing or failed icon
+does not trigger a new download on every redraw. The future RockServer-hosted
+icon endpoint will replace the direct source without changing the UI contract.
