@@ -21,7 +21,6 @@ src/
       voice.rs         RockServer mic capture
       eq.rs            Spectrum bar animation
     ui/                egui panel draw impls
-      rockserver.rs    RockServer toggle + token UI
       devices.rs       Output device list
       stations.rs      Station catalog table
       controls.rs      Transport + volume + spectrum toggles
@@ -93,7 +92,7 @@ src/
     record.rs          Microphone capture
     rank.rs            Station reranking
   voice_prompts.rs     Embedded beep / prompt playback
-  rockserver.rs        Optional RockServer HTTP search client
+  rockserver.rs        Public RockServer runtime config + HTTP search client
   playback_diag/       Playback diagnostics (`ROCKCAST_PROFILE=1`)
     mod.rs             maybe_log summary, enabled gate
     local.rs           cpal ring / underrun counters

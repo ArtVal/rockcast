@@ -16,7 +16,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
 - **Persistent settings** — volume, last station, device, language, spectrum toggle
-- **Optional RockServer mode** — server-side semantic station search and a bounded SpeechKit voice command; autonomous mode remains the default
+- **RockServer-assisted search and voice** — official releases use the public production service automatically, while local catalog/playback remain available offline
 
 ## Requirements
 
@@ -172,13 +172,15 @@ Windows: %LOCALAPPDATA%\RockCast\settings.json
 Linux:   ~/.config/rockcast/settings.json
 ```
 
-Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq_enabled`, `cast_relay`, `language`, and the optional RockServer URL/token settings.
+Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq_enabled`, `cast_relay`, and `language`. RockServer endpoint and credentials are not user settings.
 
 ## RockServer and voice control
 
-RockCast starts in autonomous mode and continues to use its local catalog plus Radio Browser exactly as before. Enable **RockServer (search and voice)** in the window only when a local or LAN RockServer is running; the default URL is `http://127.0.0.1:3000` and is saved locally. Enter the `ROCKSERVER_API_BEARER_TOKEN` in the masked **Токен** field. RockCast sends it as `Authorization: Bearer <token>` for both HTTP search and the voice WebSocket handshake; it never appends the credential to the server URL or writes it to the application log. The query box uses `/v1/search`. If the server is unavailable or returns an error, RockCast falls back to the autonomous catalog.
+Official RockCast releases use the production RockServer at `https://alex.vault57.ru` automatically. Public station search calls `POST /v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast publishes its embedded local catalog first; if the public API is unavailable, it continues with the same local catalog plus Radio Browser fallback and playback remains independent of RockServer.
 
-The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit, sends it to `/api/v1/voice/stream`, and plays the station selected by the server when the command requests playback. In RockServer settings, choose **Buffered (after recording)** for the compatible SpeechKit v1 request, or **Streaming (while recording)** for SpeechKit v3 partial recognition. In streaming mode RockCast opens the WebSocket before microphone capture and sends PCM chunks as they arrive; buffered mode retains the original upload-after-release behavior. The choice is saved locally and sent with each new voice session; RockServer must be configured with the local Yandex SpeechKit credentials. RockCast never stores or sends SpeechKit credentials. Input-device selection/testing and cancellation after upload begins are not implemented yet.
+The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit and connects to public `wss://alex.vault57.ru/v1/voice/stream` without Bearer authorization. HTTPS is always upgraded to WSS, preserving TLS. The official runtime uses the compatible buffered SpeechKit v1 request. Input-device selection/testing and cancellation after upload begins are not implemented yet.
+
+For local development and tests, debug builds alone accept `ROCKCAST_DEV_ROCKSERVER_URL`. A Bearer-protected development server can additionally use `ROCKCAST_DEV_ROCKSERVER_BEARER_TOKEN`, and `ROCKCAST_DEV_ROCKSERVER_VOICE_MODE=streaming_v3` selects streaming capture. These runtime-only overrides are ignored by release builds, never written to settings, never shown in the UI, and their values are not logged.
 
 ### Voice commands
 

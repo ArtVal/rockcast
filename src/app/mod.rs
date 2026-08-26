@@ -19,7 +19,8 @@ use crate::{
     output::OutputDevice,
     playback::PlaybackController,
     playback_diag,
-    settings::{AppSettings, RockServerVoiceMode},
+    rockserver::RuntimeConfig,
+    settings::AppSettings,
     stations::Station,
     telemetry::{PlaybackSnapshot, Telemetry},
 };
@@ -71,11 +72,7 @@ pub struct RockCastApp {
     pub(super) shutting_down: bool,
     pub(super) bootstrapped: bool,
     pub(super) lang: Lang,
-    pub(super) rockserver_enabled: bool,
-    pub(super) rockserver_url: String,
-    pub(super) rockserver_bearer_token: String,
-    pub(super) rockserver_voice_mode: RockServerVoiceMode,
-    pub(super) rockserver_setup_open: bool,
+    pub(super) rockserver: RuntimeConfig,
     pub(super) telemetry: Telemetry,
     pub(super) eq_repaint_next: Instant,
     /// UI-owned decoded textures. Fetch/decode stays in the BackgroundRuntime.
@@ -115,10 +112,8 @@ impl RockCastApp {
         let eq_enabled = settings.eq_enabled;
         let cast_relay = settings.cast_relay;
         let lang = settings.language;
-        let rockserver_enabled = settings.rockserver_enabled;
-        let rockserver_url = settings.rockserver_url.clone();
-        let rockserver_bearer_token = settings.rockserver_bearer_token.clone();
-        let rockserver_voice_mode = settings.rockserver_voice_mode;
+        let rockserver = RuntimeConfig::for_app();
+        log::info!("RockServer base URL: {}", rockserver.base_url());
         let last_played_station = settings.last_played_station.clone();
         let t = lang.t();
 
@@ -165,11 +160,7 @@ impl RockCastApp {
             shutting_down: false,
             bootstrapped: false,
             lang,
-            rockserver_enabled,
-            rockserver_url,
-            rockserver_bearer_token,
-            rockserver_voice_mode,
-            rockserver_setup_open: false,
+            rockserver,
             telemetry: Telemetry::new(),
             eq_repaint_next: Instant::now(),
             station_icons: HashMap::new(),
@@ -335,8 +326,6 @@ impl eframe::App for RockCastApp {
                         .color(MUTED),
                 );
                 ui.add_space(8.0);
-                self.draw_rockserver_panel(ui);
-                ui.add_space(6.0);
                 self.draw_device_row(ui);
                 ui.add_space(6.0);
 

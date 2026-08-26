@@ -70,19 +70,6 @@ pub struct Strings {
     pub cast_relay_note: &'static str,
     pub cast_relay_restart_on: &'static str,
     pub cast_relay_restart_off: &'static str,
-    pub rockserver: &'static str,
-    pub rockserver_autonomous: &'static str,
-    pub rockserver_configure: &'static str,
-    pub rockserver_hide: &'static str,
-    pub rockserver_url: &'static str,
-    pub rockserver_token: &'static str,
-    pub rockserver_token_hint: &'static str,
-    pub rockserver_voice_mode: &'static str,
-    pub rockserver_voice_buffered: &'static str,
-    pub rockserver_voice_streaming: &'static str,
-    pub rockserver_status_ok: &'static str,
-    pub rockserver_status_need_token: &'static str,
-    pub rockserver_token_required: &'static str,
 }
 
 pub static RU: Strings = Strings {
@@ -129,19 +116,6 @@ pub static RU: Strings = Strings {
     cast_relay_note: "ПК -> колонка по Wi‑Fi (если станции нужны через VPN)",
     cast_relay_restart_on: "Включаю трансляцию через ПК…",
     cast_relay_restart_off: "Прямой Cast без ретранслятора…",
-    rockserver: "RockServer (поиск и голос)",
-    rockserver_autonomous: "Автономный режим: локальный каталог и Radio Browser",
-    rockserver_configure: "Настроить",
-    rockserver_hide: "Скрыть",
-    rockserver_url: "URL",
-    rockserver_token: "Токен",
-    rockserver_token_hint: "Токен сохраняется только в локальных настройках RockCast.",
-    rockserver_voice_mode: "Распознавание голоса",
-    rockserver_voice_buffered: "Обычное (после записи)",
-    rockserver_voice_streaming: "Потоковое (во время записи)",
-    rockserver_status_ok: "Токен сохранён",
-    rockserver_status_need_token: "Нужен токен для поиска и голоса",
-    rockserver_token_required: "Укажите токен RockServer в настройках.",
 };
 
 pub static EN: Strings = Strings {
@@ -188,19 +162,6 @@ pub static EN: Strings = Strings {
     cast_relay_note: "PC -> speaker on Wi-Fi (when stations need VPN)",
     cast_relay_restart_on: "Switching to Via PC relay…",
     cast_relay_restart_off: "Switching to direct Cast…",
-    rockserver: "RockServer (search & voice)",
-    rockserver_autonomous: "Standalone: local catalog and Radio Browser",
-    rockserver_configure: "Configure",
-    rockserver_hide: "Hide",
-    rockserver_url: "URL",
-    rockserver_token: "Token",
-    rockserver_token_hint: "The token is stored only in RockCast local settings.",
-    rockserver_voice_mode: "Voice recognition",
-    rockserver_voice_buffered: "Buffered (after recording)",
-    rockserver_voice_streaming: "Streaming (while recording)",
-    rockserver_status_ok: "Token saved",
-    rockserver_status_need_token: "Token required for search and voice",
-    rockserver_token_required: "Set the RockServer token in settings.",
 };
 
 /// Simple `{}` placeholder replace (one or more, left-to-right).

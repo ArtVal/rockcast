@@ -1,0 +1,16 @@
+---
+description: Use Graphify only when it provides material value
+alwaysApply: true
+---
+
+# Graphify usage
+
+- Use `rg` and targeted file reading for routine code search, roadmap/status questions, concrete
+  bugs, and normal single-repository work.
+- Run Graphify only when the user explicitly writes `/graphify`, or for a genuinely large
+  cross-repository architecture investigation where relationship traversal materially helps.
+- Do not run Graphify just because `graphify-out/` exists or has uncommitted files. Do not run
+  `graphify update .` after ordinary changes.
+- After every Graphify run, identify its Python processes by command line, stop only positively
+  identified Graphify-owned processes if they remain, and verify they exited. Never stop an
+  unrelated Python process.

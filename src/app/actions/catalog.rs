@@ -28,9 +28,7 @@ impl RockCastApp {
         self.status = self.lang.t().loading_stations_status.into();
         let tx = self.ui_tx.clone();
         let lang = self.lang;
-        let rockserver_enabled = self.rockserver_enabled;
-        let rockserver_url = self.rockserver_url.clone();
-        let rockserver_token = self.rockserver_bearer_token.clone();
+        let rockserver = self.rockserver.clone();
         let _ = self.playback.spawn_job(move |cancel| {
             if cancel.is_cancelled() {
                 return;
@@ -41,27 +39,25 @@ impl RockCastApp {
                 source,
                 finished: false,
             });
-            if rockserver_enabled && !rockserver_token.trim().is_empty() {
-                let locale = match lang {
-                    Lang::Ru => "ru",
-                    Lang::En => "en",
-                };
-                match crate::rockserver::search(&rockserver_url, &rockserver_token, "", locale) {
-                    Ok(stations) if !stations.is_empty() => {
-                        if cancel.is_cancelled() {
-                            return;
-                        }
-                        let n = stations.len();
-                        let _ = tx.send(UiMsg::Stations {
-                            list: stations,
-                            source: format!("RockServer · {n}"),
-                            finished: true,
-                        });
+            let locale = match lang {
+                Lang::Ru => "ru",
+                Lang::En => "en",
+            };
+            match crate::rockserver::search(&rockserver, "", locale) {
+                Ok(stations) if !stations.is_empty() => {
+                    if cancel.is_cancelled() {
                         return;
                     }
-                    Ok(_) => log::info!("RockServer returned empty station list, falling back"),
-                    Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
+                    let n = stations.len();
+                    let _ = tx.send(UiMsg::Stations {
+                        list: stations,
+                        source: format!("RockServer · {n}"),
+                        finished: true,
+                    });
+                    return;
                 }
+                Ok(_) => log::info!("RockServer returned empty station list, falling back"),
+                Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
             }
             let (merged, source) = enrich_stations(catalog, lang);
             if cancel.is_cancelled() {

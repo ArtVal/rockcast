@@ -9,36 +9,25 @@ use super::super::{RockCastApp, messages::UiMsg};
 
 impl RockCastApp {
     pub(in crate::app) fn start_voice(&mut self) {
-        if !self.rockserver_enabled || self.voice_busy {
-            return;
-        }
-        if self.rockserver_bearer_token.trim().is_empty() {
-            self.rockserver_setup_open = true;
-            crate::voice_prompts::play(crate::voice_prompts::Prompt::TokenMissing, self.lang);
-            self.status = self.lang.t().rockserver_token_required.into();
+        if self.voice_busy {
             return;
         }
         self.voice_busy = true;
         crate::voice_prompts::play(crate::voice_prompts::Prompt::Beep, self.lang);
-        log::info!(
-            "voice button pressed: locale=ru-RU rockserver_url={}",
-            self.rockserver_url
-        );
+        log::info!("voice button pressed: locale=ru-RU");
         self.status = "Слушаю, пока удерживается кнопка…".into();
         let recording = Arc::new(AtomicBool::new(true));
         self.voice_recording = Some(Arc::clone(&recording));
         let tx = self.ui_tx.clone();
-        let url = self.rockserver_url.clone();
-        let bearer_token = self.rockserver_bearer_token.clone();
-        let recognizer_mode = self.rockserver_voice_mode.protocol_value();
+        let rockserver = self.rockserver.clone();
         // Voice commands are currently Russian regardless of UI translation.
         let locale = "ru-RU".to_owned();
         let _ = self.playback.spawn_job(move |_| {
             let _ = tx.send(UiMsg::VoiceResult(crate::voice::capture_and_recognize(
-                &url,
-                &bearer_token,
+                rockserver.base_url(),
+                rockserver.bearer_token(),
                 &locale,
-                recognizer_mode,
+                rockserver.recognizer_mode(),
                 recording,
             )));
         });

@@ -87,18 +87,18 @@ impl From<&str> for VoiceError {
 /// Records one short PCM16 mono command and resolves it through RockServer.
 pub fn capture_and_recognize(
     base_url: &str,
-    bearer_token: &str,
+    bearer_token: Option<&str>,
     locale: &str,
     recognizer_mode: &str,
     recording: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<VoiceSearchResult, VoiceError> {
-    log::info!("voice capture started: locale={locale} base_url={base_url}");
+    log::info!("voice capture started: locale={locale}");
     if recognizer_mode == "streaming_v3" {
         return capture_and_recognize_streaming(base_url, bearer_token, locale, recording);
     }
     let (audio, sample_rate) = record_default_microphone(&recording)?;
     log::info!(
-        "voice capture finished: bytes={} sample_rate_hz={} server={base_url}",
+        "voice capture finished: bytes={} sample_rate_hz={}",
         audio.len(),
         sample_rate
     );
@@ -129,7 +129,7 @@ pub fn capture_and_recognize(
 
 fn capture_and_recognize_streaming(
     base_url: &str,
-    bearer_token: &str,
+    bearer_token: Option<&str>,
     locale: &str,
     recording: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<VoiceSearchResult, VoiceError> {
@@ -167,13 +167,9 @@ fn capture_and_recognize_streaming(
 
 fn connect_voice_socket(
     base_url: &str,
-    bearer_token: &str,
+    bearer_token: Option<&str>,
 ) -> Result<tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>, VoiceError> {
     let url = websocket_url(base_url)?;
-    let bearer_token = bearer_token.trim();
-    if bearer_token.is_empty() {
-        return Err("Токен RockServer не настроен".into());
-    }
     let (host, port, host_header) = voice_socket_endpoint(&url)?;
     let addresses = (host.as_str(), port)
         .to_socket_addrs()
@@ -202,22 +198,38 @@ fn connect_voice_socket(
     let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = tcp.set_write_timeout(Some(Duration::from_secs(5)));
     let ws_key = tungstenite::handshake::client::generate_key();
-    let request = tungstenite::http::Request::builder()
-        .uri(&url)
-        .header("Host", host_header)
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Sec-WebSocket-Version", "13")
-        .header("Sec-WebSocket-Key", &ws_key)
-        .header("Authorization", format!("Bearer {bearer_token}"))
-        .body(())
-        .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
+    let request = voice_handshake_request(&url, &host_header, &ws_key, bearer_token)?;
     let (socket, _) = client_tls(request, tcp).map_err(|e| {
         log::error!("voice websocket handshake failed: {e}");
         VoiceError::from(format!("RockServer voice handshake: {e}"))
     })?;
     log::info!("voice websocket connected");
     Ok(socket)
+}
+
+fn voice_handshake_request(
+    url: &str,
+    host_header: &str,
+    ws_key: &str,
+    bearer_token: Option<&str>,
+) -> Result<tungstenite::http::Request<()>, VoiceError> {
+    let mut request = tungstenite::http::Request::builder()
+        .uri(url)
+        .header("Host", host_header)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", ws_key);
+    if let Some(token) = bearer_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let request = request
+        .body(())
+        .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
+    Ok(request)
 }
 
 fn receive_voice_result<S: Read + Write>(
@@ -395,7 +407,7 @@ fn websocket_url(base: &str) -> Result<String, String> {
     } else {
         return Err("RockServer URL must start with http:// or https://".into());
     };
-    Ok(format!("{scheme}/api/v1/voice/stream"))
+    Ok(format!("{scheme}/v1/voice/stream"))
 }
 
 /// Extracts the TCP endpoint from a WebSocket URL, supplying the standard port
@@ -422,8 +434,8 @@ fn voice_socket_endpoint(url: &str) -> Result<(String, u16, String), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        VoiceControl, VoiceError, classify_voice_control, start_message, voice_socket_endpoint,
-        websocket_url,
+        VoiceControl, VoiceError, classify_voice_control, start_message, voice_handshake_request,
+        voice_socket_endpoint, websocket_url,
     };
 
     #[test]
@@ -441,6 +453,7 @@ mod tests {
     #[test]
     fn voice_websocket_endpoint_uses_default_ports() {
         let secure_url = websocket_url("https://alex.vault57.ru").unwrap();
+        assert_eq!(secure_url, "wss://alex.vault57.ru/v1/voice/stream");
         assert_eq!(
             voice_socket_endpoint(&secure_url).unwrap(),
             (
@@ -451,6 +464,7 @@ mod tests {
         );
 
         let plain_url = websocket_url("http://rockserver.local").unwrap();
+        assert_eq!(plain_url, "ws://rockserver.local/v1/voice/stream");
         assert_eq!(
             voice_socket_endpoint(&plain_url).unwrap(),
             (
@@ -459,6 +473,32 @@ mod tests {
                 "rockserver.local".to_owned()
             )
         );
+    }
+
+    #[test]
+    fn public_voice_handshake_has_no_authorization_header() {
+        let request = voice_handshake_request(
+            "wss://alex.vault57.ru/v1/voice/stream",
+            "alex.vault57.ru",
+            "test-websocket-key",
+            None,
+        )
+        .unwrap();
+        assert_eq!(request.uri().scheme_str(), Some("wss"));
+        assert_eq!(request.uri().path(), "/v1/voice/stream");
+        assert!(request.headers().get("Authorization").is_none());
+    }
+
+    #[test]
+    fn developer_voice_override_can_add_bearer() {
+        let request = voice_handshake_request(
+            "ws://127.0.0.1:3000/v1/voice/stream",
+            "127.0.0.1:3000",
+            "test-websocket-key",
+            Some("dev-test-token"),
+        )
+        .unwrap();
+        assert_eq!(request.headers()["Authorization"], "Bearer dev-test-token");
     }
 
     #[test]

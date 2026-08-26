@@ -73,46 +73,44 @@ impl RockCastApp {
             );
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if self.rockserver_enabled {
-                    let time = ui.input(|input| input.time) as f32;
-                    let microphone_active = self.voice_recording.is_some();
-                    let voice_color = if microphone_active {
-                        let hue = (time * 0.35).fract();
-                        Color32::from(egui::ecolor::Hsva::new(hue, 0.92, 1.0, 1.0))
-                    } else {
-                        PANEL_2
-                    };
-                    let caption = if self.voice_recording.is_some() {
-                        "Слушаю…"
-                    } else if self.voice_busy {
-                        "Распознаю…"
-                    } else {
-                        "Голос"
-                    };
-                    let voice =
-                        egui::Button::new(RichText::new(caption).strong().color(Color32::WHITE))
-                            .min_size(Vec2::new(68.0, 28.0))
-                            .fill(voice_color)
-                            .stroke(Stroke::new(2.0, voice_color.gamma_multiply(0.65)));
-                    let response = ui.add(voice).on_hover_text(
-                        "Удерживайте кнопку и говорите; отпустите для распознавания",
-                    );
-                    let pressed_on_button = response.is_pointer_button_down_on();
-                    let primary_button_down = ui.input(|input| input.pointer.primary_down());
-                    if pressed_on_button && !self.voice_busy {
-                        self.start_voice();
-                    }
-                    // Once capture has started, track the physical mouse button globally.
-                    // Widget hover/active state can change during animation and must not
-                    // terminate a recording while the user still holds the button.
-                    if !primary_button_down && self.voice_recording.is_some() {
-                        self.stop_voice_recording();
-                    }
-                    if pressed_on_button || microphone_active {
-                        ui.ctx().request_repaint_after(Duration::from_millis(16));
-                    }
-                    ui.add_space(6.0);
+                let time = ui.input(|input| input.time) as f32;
+                let microphone_active = self.voice_recording.is_some();
+                let voice_color = if microphone_active {
+                    let hue = (time * 0.35).fract();
+                    Color32::from(egui::ecolor::Hsva::new(hue, 0.92, 1.0, 1.0))
+                } else {
+                    PANEL_2
+                };
+                let caption = if self.voice_recording.is_some() {
+                    "Слушаю…"
+                } else if self.voice_busy {
+                    "Распознаю…"
+                } else {
+                    "Голос"
+                };
+                let voice =
+                    egui::Button::new(RichText::new(caption).strong().color(Color32::WHITE))
+                        .min_size(Vec2::new(68.0, 28.0))
+                        .fill(voice_color)
+                        .stroke(Stroke::new(2.0, voice_color.gamma_multiply(0.65)));
+                let response = ui
+                    .add(voice)
+                    .on_hover_text("Удерживайте кнопку и говорите; отпустите для распознавания");
+                let pressed_on_button = response.is_pointer_button_down_on();
+                let primary_button_down = ui.input(|input| input.pointer.primary_down());
+                if pressed_on_button && !self.voice_busy {
+                    self.start_voice();
                 }
+                // Once capture has started, track the physical mouse button globally.
+                // Widget hover/active state can change during animation and must not
+                // terminate a recording while the user still holds the button.
+                if !primary_button_down && self.voice_recording.is_some() {
+                    self.stop_voice_recording();
+                }
+                if pressed_on_button || microphone_active {
+                    ui.ctx().request_repaint_after(Duration::from_millis(16));
+                }
+                ui.add_space(6.0);
                 let stop = egui::Button::new(RichText::new("Stop").color(FG))
                     .min_size(Vec2::new(68.0, 28.0))
                     .fill(PANEL_2);

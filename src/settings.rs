@@ -9,26 +9,6 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Speech-recognition transport requested for RockServer voice sessions.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RockServerVoiceMode {
-    /// Existing REST request submitted after recording stops.
-    #[default]
-    BufferedV1,
-    /// SpeechKit v3 receives microphone chunks while recording.
-    StreamingV3,
-}
-
-impl RockServerVoiceMode {
-    pub const fn protocol_value(self) -> &'static str {
-        match self {
-            Self::BufferedV1 => "buffered_v1",
-            Self::StreamingV3 => "streaming_v3",
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum SettingsError {
     #[error("serialize settings: {0}")]
@@ -56,22 +36,6 @@ pub struct AppSettings {
     pub cast_relay: bool,
     #[serde(default)]
     pub language: crate::i18n::Lang,
-    /// Enables RockServer search and voice control; false preserves autonomous behavior.
-    #[serde(default)]
-    pub rockserver_enabled: bool,
-    /// Local or LAN RockServer base URL, never a credential-bearing URL.
-    #[serde(default = "default_rockserver_url")]
-    pub rockserver_url: String,
-    /// Bearer credential sent to RockServer; it is never embedded in the URL.
-    #[serde(default)]
-    pub rockserver_bearer_token: String,
-    /// Recognition transport for the next RockServer voice session.
-    #[serde(default)]
-    pub rockserver_voice_mode: RockServerVoiceMode,
-}
-
-fn default_rockserver_url() -> String {
-    "http://127.0.0.1:3000".to_owned()
 }
 
 fn default_volume() -> u8 {
@@ -99,7 +63,22 @@ impl AppSettings {
 
     fn load_from(path: &Path) -> Result<Self, SettingsError> {
         let raw = fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&raw)?)
+        let raw_value: serde_json::Value = serde_json::from_str(&raw)?;
+        let has_legacy_rockserver_settings = raw_value.as_object().is_some_and(|settings| {
+            [
+                "rockserver_enabled",
+                "rockserver_url",
+                "rockserver_bearer_token",
+                "rockserver_voice_mode",
+            ]
+            .iter()
+            .any(|key| settings.contains_key(*key))
+        });
+        let value: Self = serde_json::from_value(raw_value)?;
+        if has_legacy_rockserver_settings && let Err(error) = value.save_to(path) {
+            log::warn!("failed to remove legacy RockServer settings: {error}");
+        }
+        Ok(value)
     }
 
     fn save_to(&self, path: &Path) -> Result<(), SettingsError> {
@@ -191,33 +170,37 @@ mod tests {
         let expected = AppSettings {
             volume: 73,
             cast_relay: true,
-            rockserver_bearer_token: "test-token".to_owned(),
             ..Default::default()
         };
         expected.save_to(&path).unwrap();
         let actual = AppSettings::load_from(&path).unwrap();
         assert_eq!(actual.volume, 73);
         assert!(actual.cast_relay);
-        assert_eq!(actual.rockserver_bearer_token, "test-token");
-        assert_eq!(
-            actual.rockserver_voice_mode,
-            RockServerVoiceMode::BufferedV1
-        );
         fs::write(&path, b"{").unwrap();
         assert!(AppSettings::load_from(&path).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn voice_mode_uses_stable_wire_values() {
-        assert_eq!(
-            RockServerVoiceMode::BufferedV1.protocol_value(),
-            "buffered_v1"
-        );
-        assert_eq!(
-            RockServerVoiceMode::StreamingV3.protocol_value(),
-            "streaming_v3"
-        );
+    fn legacy_rockserver_credentials_are_not_loaded_or_saved() {
+        let dir =
+            std::env::temp_dir().join(format!("rockcast-legacy-settings-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = r#"{
+            "volume": 61,
+            "rockserver_enabled": true,
+            "rockserver_url": "http://127.0.0.1:3000",
+            "rockserver_bearer_token": "must-not-survive",
+            "rockserver_voice_mode": "streaming_v3"
+        }"#;
+        fs::write(&path, legacy).unwrap();
+        let settings = AppSettings::load_from(&path).unwrap();
+        assert_eq!(settings.volume, 61);
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("rockserver"));
+        assert!(!saved.contains("must-not-survive"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[cfg(not(windows))]
