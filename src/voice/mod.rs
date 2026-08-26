@@ -4,9 +4,15 @@ mod dto;
 mod rank;
 mod record;
 
-use std::{collections::HashSet, net::ToSocketAddrs, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    io::{Read, Write},
+    net::ToSocketAddrs,
+    sync::Arc,
+    time::Duration,
+};
 
-use tungstenite::Message;
+use tungstenite::{Message, client_tls, stream::MaybeTlsStream};
 
 use crate::stations::Station;
 
@@ -162,7 +168,7 @@ fn capture_and_recognize_streaming(
 fn connect_voice_socket(
     base_url: &str,
     bearer_token: &str,
-) -> Result<tungstenite::WebSocket<std::net::TcpStream>, VoiceError> {
+) -> Result<tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>, VoiceError> {
     let url = websocket_url(base_url)?;
     let bearer_token = bearer_token.trim();
     if bearer_token.is_empty() {
@@ -195,7 +201,7 @@ fn connect_voice_socket(
         .header("Authorization", format!("Bearer {bearer_token}"))
         .body(())
         .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
-    let (socket, _) = tungstenite::client(request, tcp).map_err(|e| {
+    let (socket, _) = client_tls(request, tcp).map_err(|e| {
         log::error!("voice websocket handshake failed: {e}");
         VoiceError::from(format!("RockServer voice handshake: {e}"))
     })?;
@@ -203,8 +209,8 @@ fn connect_voice_socket(
     Ok(socket)
 }
 
-fn receive_voice_result(
-    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+fn receive_voice_result<S: Read + Write>(
+    socket: &mut tungstenite::WebSocket<S>,
 ) -> Result<VoiceSearchResult, VoiceError> {
     loop {
         let Message::Text(text) = socket
