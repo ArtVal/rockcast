@@ -174,26 +174,37 @@ fn connect_voice_socket(
     if bearer_token.is_empty() {
         return Err("Токен RockServer не настроен".into());
     }
-    let host_port = url
-        .strip_prefix("ws://")
-        .or_else(|| url.strip_prefix("wss://"))
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or("127.0.0.1:3000");
-    let tcp = std::net::TcpStream::connect_timeout(
-        &host_port
-            .to_socket_addrs()
-            .map_err(|_| VoiceError::ServerUnavailable)?
-            .next()
-            .ok_or_else(|| "RockServer voice: не удалось разрешить адрес".to_owned())?,
-        Duration::from_secs(5),
-    )
-    .map_err(|_| VoiceError::ServerUnavailable)?;
+    let (host, port, host_header) = voice_socket_endpoint(&url)?;
+    let addresses = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|error| VoiceError::from(format!("RockServer voice DNS {host}:{port}: {error}")))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err("RockServer voice: не удалось разрешить адрес".into());
+    }
+    let mut last_error = None;
+    let mut tcp = None;
+    for address in addresses {
+        match std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)) {
+            Ok(stream) => {
+                tcp = Some(stream);
+                break;
+            }
+            Err(error) => last_error = Some(format!("{address}: {error}")),
+        }
+    }
+    let tcp = tcp.ok_or_else(|| {
+        VoiceError::from(format!(
+            "RockServer voice TCP connect {host}:{port}: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_owned())
+        ))
+    })?;
     let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = tcp.set_write_timeout(Some(Duration::from_secs(5)));
     let ws_key = tungstenite::handshake::client::generate_key();
     let request = tungstenite::http::Request::builder()
         .uri(&url)
-        .header("Host", host_port)
+        .header("Host", host_header)
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")
@@ -387,9 +398,33 @@ fn websocket_url(base: &str) -> Result<String, String> {
     Ok(format!("{scheme}/api/v1/voice/stream"))
 }
 
+/// Extracts the TCP endpoint from a WebSocket URL, supplying the standard port
+/// when the configured RockServer URL does not explicitly contain one.
+fn voice_socket_endpoint(url: &str) -> Result<(String, u16, String), String> {
+    let uri = url
+        .parse::<tungstenite::http::Uri>()
+        .map_err(|_| "Invalid RockServer voice WebSocket URL".to_owned())?;
+    let authority = uri
+        .authority()
+        .ok_or_else(|| "RockServer voice WebSocket URL has no host".to_owned())?;
+    let port = authority.port_u16().unwrap_or(match uri.scheme_str() {
+        Some("wss") => 443,
+        Some("ws") => 80,
+        _ => return Err("RockServer voice WebSocket URL has an unsupported scheme".to_owned()),
+    });
+    Ok((
+        authority.host().to_owned(),
+        port,
+        authority.as_str().to_owned(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{VoiceControl, VoiceError, classify_voice_control, start_message};
+    use super::{
+        VoiceControl, VoiceError, classify_voice_control, start_message, voice_socket_endpoint,
+        websocket_url,
+    };
 
     #[test]
     fn start_message_is_valid_json() {
@@ -401,6 +436,42 @@ mod tests {
         assert_eq!(value["sample_rate_hz"], 48_000);
         assert_eq!(value["recognizer_mode"], "streaming_v3");
         assert_eq!(value["limit"], 30);
+    }
+
+    #[test]
+    fn voice_websocket_endpoint_uses_default_ports() {
+        let secure_url = websocket_url("https://alex.vault57.ru").unwrap();
+        assert_eq!(
+            voice_socket_endpoint(&secure_url).unwrap(),
+            (
+                "alex.vault57.ru".to_owned(),
+                443,
+                "alex.vault57.ru".to_owned()
+            )
+        );
+
+        let plain_url = websocket_url("http://rockserver.local").unwrap();
+        assert_eq!(
+            voice_socket_endpoint(&plain_url).unwrap(),
+            (
+                "rockserver.local".to_owned(),
+                80,
+                "rockserver.local".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn voice_websocket_endpoint_preserves_explicit_port() {
+        let url = websocket_url("https://alex.vault57.ru:8443").unwrap();
+        assert_eq!(
+            voice_socket_endpoint(&url).unwrap(),
+            (
+                "alex.vault57.ru".to_owned(),
+                8443,
+                "alex.vault57.ru:8443".to_owned()
+            )
+        );
     }
 
     #[test]
