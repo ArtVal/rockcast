@@ -3,7 +3,7 @@
 use crate::stations::Station;
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum VoiceEvent {
     Ready {},
@@ -22,19 +22,19 @@ pub(super) enum VoiceEvent {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(super) struct NormalizedQueryDto {
     pub action: VoiceAction,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum VoiceAction {
     Play,
     Show,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(super) struct StationDto {
     pub id: String,
     pub name: String,

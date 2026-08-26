@@ -284,21 +284,24 @@ impl RockCastApp {
                             }
                         }
                         Err(error) => {
-                            let prompt = match error {
+                            let prompt = match &error {
                                 crate::voice::VoiceError::ServerUnavailable => {
-                                    crate::voice_prompts::Prompt::ServerUnavailable
+                                    Some(crate::voice_prompts::Prompt::ServerUnavailable)
                                 }
                                 crate::voice::VoiceError::TokenMissing => {
-                                    crate::voice_prompts::Prompt::TokenMissing
+                                    Some(crate::voice_prompts::Prompt::TokenMissing)
                                 }
                                 crate::voice::VoiceError::TokenInvalid => {
-                                    crate::voice_prompts::Prompt::TokenInvalid
+                                    Some(crate::voice_prompts::Prompt::TokenInvalid)
                                 }
-                                crate::voice::VoiceError::Message(_) => {
-                                    crate::voice_prompts::Prompt::NotFound
+                                crate::voice::VoiceError::NotFound => {
+                                    Some(crate::voice_prompts::Prompt::NotFound)
                                 }
+                                crate::voice::VoiceError::Message(_) => None,
                             };
-                            crate::voice_prompts::play(prompt, self.lang);
+                            if let Some(prompt) = prompt {
+                                crate::voice_prompts::play(prompt, self.lang);
+                            }
                             self.status = format!("Голосовое управление: {error}");
                         }
                     }

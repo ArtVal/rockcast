@@ -3,6 +3,7 @@
 mod dto;
 mod rank;
 mod record;
+mod resample;
 
 use std::{
     collections::HashSet,
@@ -20,6 +21,10 @@ use dto::{VoiceAction, VoiceEvent};
 use rank::rerank_voice_candidates;
 use record::{
     default_microphone_sample_rate, record_default_microphone, stream_default_microphone,
+};
+use resample::{
+    MonoPcm16Resampler, VOICE_SAMPLE_RATE_HZ, pcm16_bytes_to_samples, pcm16_samples_to_bytes,
+    resample_pcm16_mono,
 };
 
 const MAX_CHUNK: usize = 32 * 1024;
@@ -44,6 +49,9 @@ pub enum VoiceError {
     ServerUnavailable,
     TokenMissing,
     TokenInvalid,
+    /// Recognition succeeded but no playable station matched the command.
+    NotFound,
+    /// Protocol / session / transport failure (must not be voiced as "not found").
     Message(String),
 }
 
@@ -53,6 +61,7 @@ impl std::fmt::Display for VoiceError {
             Self::ServerUnavailable => write!(f, "RockServer is unavailable"),
             Self::TokenMissing => write!(f, "RockServer token is not configured"),
             Self::TokenInvalid => write!(f, "RockServer token is invalid"),
+            Self::NotFound => write!(f, "RockServer не нашёл станцию для команды"),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -96,21 +105,24 @@ pub fn capture_and_recognize(
     if recognizer_mode == "streaming_v3" {
         return capture_and_recognize_streaming(base_url, bearer_token, locale, recording);
     }
-    let (audio, sample_rate) = record_default_microphone(&recording)?;
+    let (audio, device_rate) = record_default_microphone(&recording)?;
+    let samples = pcm16_bytes_to_samples(&audio);
+    let audio = pcm16_samples_to_bytes(&resample_pcm16_mono(
+        &samples,
+        device_rate,
+        VOICE_SAMPLE_RATE_HZ,
+    ));
     log::info!(
-        "voice capture finished: bytes={} sample_rate_hz={}",
-        audio.len(),
-        sample_rate
+        "voice capture finished: device_hz={device_rate} send_hz={VOICE_SAMPLE_RATE_HZ} bytes={}",
+        audio.len()
     );
     let mut socket = connect_voice_socket(base_url, bearer_token)?;
     socket
         .send(Message::Text(
-            start_message(locale, sample_rate, recognizer_mode).into(),
+            start_message(locale, VOICE_SAMPLE_RATE_HZ, recognizer_mode).into(),
         ))
         .map_err(|_| "Не удалось начать voice session".to_owned())?;
-    let _ = socket
-        .read()
-        .map_err(|_| "RockServer не подтвердил voice session".to_owned())?;
+    wait_for_voice_ready(&mut socket)?;
     for chunk in audio.chunks(MAX_CHUNK) {
         socket
             .send(Message::Binary(chunk.to_vec().into()))
@@ -133,21 +145,27 @@ fn capture_and_recognize_streaming(
     locale: &str,
     recording: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<VoiceSearchResult, VoiceError> {
-    let sample_rate = default_microphone_sample_rate()?;
+    let device_rate = default_microphone_sample_rate()?;
     let mut socket = connect_voice_socket(base_url, bearer_token)?;
     socket
         .send(Message::Text(
-            start_message(locale, sample_rate, "streaming_v3").into(),
+            start_message(locale, VOICE_SAMPLE_RATE_HZ, "streaming_v3").into(),
         ))
         .map_err(|_| "Не удалось начать voice session".to_owned())?;
-    let _ = socket
-        .read()
-        .map_err(|_| "RockServer не подтвердил voice session".to_owned())?;
-    log::info!("voice websocket connected before microphone capture");
+    wait_for_voice_ready(&mut socket)?;
+    log::info!(
+        "voice session ready before microphone capture: device_hz={device_rate} send_hz={VOICE_SAMPLE_RATE_HZ}"
+    );
+    let mut resampler = MonoPcm16Resampler::new(device_rate, VOICE_SAMPLE_RATE_HZ);
     let mut sent_bytes = 0usize;
     let mut sent_chunks = 0usize;
-    let recorded_rate = stream_default_microphone(&recording, |audio| {
-        for chunk in audio.chunks(MAX_CHUNK) {
+    let _recorded_rate = stream_default_microphone(&recording, |audio| {
+        let samples = pcm16_bytes_to_samples(audio);
+        let resampled = pcm16_samples_to_bytes(&resampler.push(&samples));
+        for chunk in resampled.chunks(MAX_CHUNK) {
+            if chunk.is_empty() {
+                continue;
+            }
             socket
                 .send(Message::Binary(chunk.to_vec().into()))
                 .map_err(|_| "Не удалось отправить потоковое аудио".to_owned())?;
@@ -160,7 +178,7 @@ fn capture_and_recognize_streaming(
         .send(Message::Text(r#"{"type":"commit"}"#.into()))
         .map_err(|_| "Не удалось завершить voice session".to_owned())?;
     log::info!(
-        "streaming voice audio committed: bytes={sent_bytes} chunks={sent_chunks} sample_rate_hz={recorded_rate}"
+        "streaming voice audio committed: bytes={sent_bytes} chunks={sent_chunks} sample_rate_hz={VOICE_SAMPLE_RATE_HZ}"
     );
     receive_voice_result(&mut socket)
 }
@@ -230,6 +248,34 @@ fn voice_handshake_request(
         .body(())
         .map_err(|_| "Некорректный URL RockServer voice".to_owned())?;
     Ok(request)
+}
+
+fn wait_for_voice_ready<S: Read + Write>(
+    socket: &mut tungstenite::WebSocket<S>,
+) -> Result<(), VoiceError> {
+    loop {
+        let Message::Text(text) = socket
+            .read()
+            .map_err(|_| "RockServer не подтвердил voice session".to_owned())?
+        else {
+            continue;
+        };
+        let event: VoiceEvent = serde_json::from_str(&text)
+            .map_err(|_| "RockServer вернул некорректный voice ответ".to_owned())?;
+        match event {
+            VoiceEvent::Ready {} => {
+                log::info!("voice session ready");
+                return Ok(());
+            }
+            VoiceEvent::Error { message, .. } => {
+                log::warn!("voice session rejected before audio: {message}");
+                return Err(message.into());
+            }
+            other => {
+                log::warn!("voice session ignored unexpected event before ready: {other:?}");
+            }
+        }
+    }
 }
 
 fn receive_voice_result<S: Read + Write>(
@@ -310,7 +356,7 @@ fn receive_voice_result<S: Read + Write>(
                 // but we further bias ordering towards words from the transcript.
                 rerank_voice_candidates(&transcript, &mut stations);
                 if stations.is_empty() {
-                    return Err("RockServer не нашёл станцию для команды".into());
+                    return Err(VoiceError::NotFound);
                 }
                 return Ok(VoiceSearchResult {
                     stations,
@@ -434,18 +480,18 @@ fn voice_socket_endpoint(url: &str) -> Result<(String, u16, String), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        VoiceControl, VoiceError, classify_voice_control, start_message, voice_handshake_request,
-        voice_socket_endpoint, websocket_url,
+        VOICE_SAMPLE_RATE_HZ, VoiceControl, VoiceError, classify_voice_control, start_message,
+        voice_handshake_request, voice_socket_endpoint, websocket_url,
     };
 
     #[test]
     fn start_message_is_valid_json() {
         let value: serde_json::Value =
-            serde_json::from_str(&start_message("ru-RU", 48_000, "streaming_v3"))
+            serde_json::from_str(&start_message("ru-RU", VOICE_SAMPLE_RATE_HZ, "streaming_v3"))
                 .expect("start message must be valid JSON");
         assert_eq!(value["type"], "start");
         assert_eq!(value["locale"], "ru-RU");
-        assert_eq!(value["sample_rate_hz"], 48_000);
+        assert_eq!(value["sample_rate_hz"], 16_000);
         assert_eq!(value["recognizer_mode"], "streaming_v3");
         assert_eq!(value["limit"], 30);
     }
@@ -524,6 +570,22 @@ mod tests {
             VoiceError::from("HTTP 401 Unauthorized".to_owned()),
             VoiceError::TokenInvalid
         ));
+    }
+
+    #[test]
+    fn protocol_sample_rate_errors_stay_as_message() {
+        assert!(matches!(
+            VoiceError::from("sample_rate_hz must be 16000 for /v1/voice/stream".to_owned()),
+            VoiceError::Message(_)
+        ));
+    }
+
+    #[test]
+    fn empty_station_miss_is_not_found() {
+        assert_eq!(
+            VoiceError::NotFound.to_string(),
+            "RockServer не нашёл станцию для команды"
+        );
     }
 
     #[test]
