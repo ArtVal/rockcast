@@ -213,6 +213,10 @@ impl DeviceControlClient {
     pub(crate) fn has_queued_commands(&self) -> bool {
         !self.inner.commands.lock().queued.is_empty()
     }
+
+    pub(crate) fn is_registered(&self) -> bool {
+        self.inner.authenticated_device_id.lock().is_some()
+    }
 }
 
 impl Drop for DeviceControlClient {

@@ -20,7 +20,7 @@ pub(crate) enum UiMsg {
         request_key: String,
         image: Option<crate::station_icons::StationIconImage>,
     },
-    VoiceResult(Result<crate::voice::VoiceSearchResult, crate::voice::VoiceError>),
+    VoiceResult(Result<crate::voice::VoiceOutcome, crate::voice::VoiceError>),
     PairingResult {
         request_id: String,
         result: Result<crate::session::AccountProfile, crate::session::PairingPoll>,

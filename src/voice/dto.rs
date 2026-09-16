@@ -3,6 +3,45 @@
 use crate::stations::Station;
 use serde::Deserialize;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceCommandStatus {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceStreamErrorCode {
+    ProtocolError,
+    ValidationFailed,
+    SpeechProviderUnavailable,
+    SpeechProviderError,
+    SpeechTimeout,
+    SpeechNotRecognized,
+    VoiceTimeout,
+    AudioChunkInvalid,
+    AudioTooLarge,
+    Cancelled,
+    IntentResolutionFailed,
+    UnsupportedIntent,
+    ClarificationRequired,
+    StationNotFound,
+    SearchTimeout,
+    SearchUnavailable,
+    TargetOffline,
+    CapabilityNotSupported,
+    Forbidden,
+    InvalidPayload,
+    CommandTimeout,
+    DuplicateCommand,
+    TooManyInFlight,
+    PersistenceUnavailable,
+    InternalError,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum VoiceEvent {
@@ -12,13 +51,24 @@ pub(super) enum VoiceEvent {
         is_final: bool,
     },
     Result {
-        transcript: String,
-        normalized_query: NormalizedQueryDto,
+        #[serde(default)]
+        request_id: Option<String>,
+        #[serde(default)]
+        status: Option<VoiceCommandStatus>,
+        #[serde(default)]
+        transcript: Option<String>,
+        #[serde(default)]
+        normalized_query: Option<NormalizedQueryDto>,
         #[serde(default)]
         stations: Vec<StationDto>,
     },
     Error {
+        #[serde(default)]
+        code: Option<VoiceStreamErrorCode>,
         message: String,
+        #[allow(dead_code)]
+        #[serde(default)]
+        request_id: Option<String>,
     },
 }
 

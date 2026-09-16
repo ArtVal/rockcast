@@ -17,7 +17,8 @@ use tungstenite::{Message, client_tls, stream::MaybeTlsStream};
 
 use crate::stations::Station;
 
-use dto::{VoiceAction, VoiceEvent};
+pub use dto::{VoiceCommandStatus, VoiceStreamErrorCode};
+use dto::{NormalizedQueryDto, VoiceAction, VoiceEvent};
 use rank::rerank_voice_candidates;
 use record::{
     default_microphone_sample_rate, record_default_microphone, stream_default_microphone,
@@ -29,6 +30,14 @@ use resample::{
 
 const MAX_CHUNK: usize = 32 * 1024;
 const MIN_VOICE_CANDIDATE_SCORE: f64 = 0.35;
+
+pub enum VoiceOutcome {
+    Legacy(VoiceSearchResult),
+    DeviceCommand {
+        request_id: String,
+        status: VoiceCommandStatus,
+    },
+}
 
 pub struct VoiceSearchResult {
     pub stations: Vec<Station>,
@@ -51,6 +60,11 @@ pub enum VoiceError {
     TokenInvalid,
     /// Recognition succeeded but no playable station matched the command.
     NotFound,
+    /// Structured stream error with known error code from RockServer.
+    StreamError {
+        code: VoiceStreamErrorCode,
+        message: String,
+    },
     /// Protocol / session / transport failure (must not be voiced as "not found").
     Message(String),
 }
@@ -62,6 +76,34 @@ impl std::fmt::Display for VoiceError {
             Self::TokenMissing => write!(f, "RockServer token is not configured"),
             Self::TokenInvalid => write!(f, "RockServer token is invalid"),
             Self::NotFound => write!(f, "RockServer не нашёл станцию для команды"),
+            Self::StreamError { code, message } => {
+                let friendly = match code {
+                    VoiceStreamErrorCode::ClarificationRequired => "Команда требует уточнения",
+                    VoiceStreamErrorCode::UnsupportedIntent => "Команда не поддерживается",
+                    VoiceStreamErrorCode::TargetOffline => "Устройство не в сети",
+                    VoiceStreamErrorCode::SpeechNotRecognized => "Речь не распознана",
+                    VoiceStreamErrorCode::SpeechTimeout => "Превышено время ожидания речи",
+                    VoiceStreamErrorCode::VoiceTimeout => "Превышено время ожидания голосовой сессии",
+                    VoiceStreamErrorCode::SearchTimeout => "Время поиска станции истекло",
+                    VoiceStreamErrorCode::CommandTimeout => "Время выполнения команды истекло",
+                    VoiceStreamErrorCode::Cancelled => "Голосовая команда отменена",
+                    VoiceStreamErrorCode::StationNotFound => "Станция не найдена",
+                    VoiceStreamErrorCode::IntentResolutionFailed => "Не удалось определить команду",
+                    VoiceStreamErrorCode::CapabilityNotSupported => {
+                        "Команда не поддерживается устройством"
+                    }
+                    VoiceStreamErrorCode::SpeechProviderUnavailable => {
+                        "Сервис распознавания недоступен"
+                    }
+                    VoiceStreamErrorCode::SpeechProviderError => "Ошибка сервиса распознавания",
+                    VoiceStreamErrorCode::PersistenceUnavailable => {
+                        "Состояние команд временно недоступно"
+                    }
+                    VoiceStreamErrorCode::TooManyInFlight => "Слишком много активных команд",
+                    _ => message.as_str(),
+                };
+                write!(f, "{friendly}")
+            }
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -99,11 +141,18 @@ pub fn capture_and_recognize(
     bearer_token: Option<&str>,
     locale: &str,
     recognizer_mode: &str,
+    surface_id: Option<&str>,
     recording: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<VoiceSearchResult, VoiceError> {
+) -> Result<VoiceOutcome, VoiceError> {
     log::info!("voice capture started: locale={locale}");
     if recognizer_mode == "streaming_v3" {
-        return capture_and_recognize_streaming(base_url, bearer_token, locale, recording);
+        return capture_and_recognize_streaming(
+            base_url,
+            bearer_token,
+            locale,
+            surface_id,
+            recording,
+        );
     }
     let (audio, device_rate) = record_default_microphone(&recording)?;
     let samples = pcm16_bytes_to_samples(&audio);
@@ -119,7 +168,7 @@ pub fn capture_and_recognize(
     let mut socket = connect_voice_socket(base_url, bearer_token)?;
     socket
         .send(Message::Text(
-            start_message(locale, VOICE_SAMPLE_RATE_HZ, recognizer_mode).into(),
+            start_message(locale, VOICE_SAMPLE_RATE_HZ, recognizer_mode, surface_id).into(),
         ))
         .map_err(|_| "Не удалось начать voice session".to_owned())?;
     wait_for_voice_ready(&mut socket)?;
@@ -136,20 +185,21 @@ pub fn capture_and_recognize(
         audio.len(),
         audio.len().div_ceil(MAX_CHUNK)
     );
-    receive_voice_result(&mut socket)
+    receive_voice_result(&mut socket, surface_id)
 }
 
 fn capture_and_recognize_streaming(
     base_url: &str,
     bearer_token: Option<&str>,
     locale: &str,
+    surface_id: Option<&str>,
     recording: Arc<std::sync::atomic::AtomicBool>,
-) -> Result<VoiceSearchResult, VoiceError> {
+) -> Result<VoiceOutcome, VoiceError> {
     let device_rate = default_microphone_sample_rate()?;
     let mut socket = connect_voice_socket(base_url, bearer_token)?;
     socket
         .send(Message::Text(
-            start_message(locale, VOICE_SAMPLE_RATE_HZ, "streaming_v3").into(),
+            start_message(locale, VOICE_SAMPLE_RATE_HZ, "streaming_v3", surface_id).into(),
         ))
         .map_err(|_| "Не удалось начать voice session".to_owned())?;
     wait_for_voice_ready(&mut socket)?;
@@ -180,7 +230,7 @@ fn capture_and_recognize_streaming(
     log::info!(
         "streaming voice audio committed: bytes={sent_bytes} chunks={sent_chunks} sample_rate_hz={VOICE_SAMPLE_RATE_HZ}"
     );
-    receive_voice_result(&mut socket)
+    receive_voice_result(&mut socket, surface_id)
 }
 
 fn connect_voice_socket(
@@ -267,8 +317,11 @@ fn wait_for_voice_ready<S: Read + Write>(
                 log::info!("voice session ready");
                 return Ok(());
             }
-            VoiceEvent::Error { message, .. } => {
+            VoiceEvent::Error { code, message, .. } => {
                 log::warn!("voice session rejected before audio: {message}");
+                if let Some(code) = code {
+                    return Err(VoiceError::StreamError { code, message });
+                }
                 return Err(message.into());
             }
             other => {
@@ -280,7 +333,8 @@ fn wait_for_voice_ready<S: Read + Write>(
 
 fn receive_voice_result<S: Read + Write>(
     socket: &mut tungstenite::WebSocket<S>,
-) -> Result<VoiceSearchResult, VoiceError> {
+    surface_id: Option<&str>,
+) -> Result<VoiceOutcome, VoiceError> {
     loop {
         let Message::Text(text) = socket
             .read()
@@ -296,25 +350,37 @@ fn receive_voice_result<S: Read + Write>(
                 is_final,
                 ..
             } => {
-                log::info!("voice transcript: final={is_final} text={transcript:?}");
-                if is_final && let Some(control) = classify_voice_control(&transcript) {
+                log::info!("voice transcript received: final={is_final}");
+                if surface_id.is_none() && is_final && let Some(control) = classify_voice_control(&transcript) {
                     log::info!("voice control recognized from final transcript: {control:?}");
-                    return Ok(voice_control_result(control));
+                    return Ok(VoiceOutcome::Legacy(voice_control_result(control)));
                 }
             }
             VoiceEvent::Result {
+                request_id,
+                status,
                 transcript,
                 normalized_query,
                 stations,
-                ..
             } => {
+                if let Some(status) = status {
+                    log::info!("voice device command result received: status={:?}", status);
+                    return Ok(VoiceOutcome::DeviceCommand {
+                        request_id: request_id.unwrap_or_default(),
+                        status,
+                    });
+                }
+                let transcript = transcript.unwrap_or_default();
+                let normalized_query = normalized_query.unwrap_or(NormalizedQueryDto {
+                    action: VoiceAction::Play,
+                });
                 log::info!(
-                    "voice result: transcript={transcript:?} candidates={}",
+                    "voice legacy result candidates: count={}",
                     stations.len()
                 );
                 if let Some(control) = classify_voice_control(&transcript) {
                     log::info!("voice control recognized from result transcript: {control:?}");
-                    return Ok(voice_control_result(control));
+                    return Ok(VoiceOutcome::Legacy(voice_control_result(control)));
                 }
                 for (index, station) in stations.iter().enumerate() {
                     log::info!(
@@ -358,13 +424,18 @@ fn receive_voice_result<S: Read + Write>(
                 if stations.is_empty() {
                     return Err(VoiceError::NotFound);
                 }
-                return Ok(VoiceSearchResult {
+                return Ok(VoiceOutcome::Legacy(VoiceSearchResult {
                     stations,
                     auto_play: normalized_query.action == VoiceAction::Play,
                     control: None,
-                });
+                }));
             }
-            VoiceEvent::Error { message, .. } => return Err(message.into()),
+            VoiceEvent::Error { code, message, .. } => {
+                if let Some(code) = code {
+                    return Err(VoiceError::StreamError { code, message });
+                }
+                return Err(message.into());
+            }
             _ => {}
         }
     }
@@ -433,15 +504,23 @@ fn classify_voice_control(transcript: &str) -> Option<VoiceControl> {
     }
 }
 
-fn start_message(locale: &str, sample_rate: u32, recognizer_mode: &str) -> String {
-    serde_json::json!({
+fn start_message(
+    locale: &str,
+    sample_rate: u32,
+    recognizer_mode: &str,
+    surface_id: Option<&str>,
+) -> String {
+    let mut message = serde_json::json!({
         "type": "start",
         "locale": locale,
         "sample_rate_hz": sample_rate,
         "recognizer_mode": recognizer_mode,
         "limit": 30,
-    })
-    .to_string()
+    });
+    if let Some(surface_id) = surface_id {
+        message["surface_id"] = serde_json::Value::String(surface_id.to_owned());
+    }
+    message.to_string()
 }
 
 fn websocket_url(base: &str) -> Result<String, String> {
@@ -480,8 +559,9 @@ fn voice_socket_endpoint(url: &str) -> Result<(String, u16, String), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        VOICE_SAMPLE_RATE_HZ, VoiceControl, VoiceError, classify_voice_control, start_message,
-        voice_handshake_request, voice_socket_endpoint, websocket_url,
+        VOICE_SAMPLE_RATE_HZ, VoiceCommandStatus, VoiceControl, VoiceError, VoiceEvent,
+        VoiceStreamErrorCode, classify_voice_control, start_message, voice_handshake_request,
+        voice_socket_endpoint, websocket_url,
     };
 
     #[test]
@@ -490,6 +570,7 @@ mod tests {
             "ru-RU",
             VOICE_SAMPLE_RATE_HZ,
             "streaming_v3",
+            None,
         ))
         .expect("start message must be valid JSON");
         assert_eq!(value["type"], "start");
@@ -497,6 +578,135 @@ mod tests {
         assert_eq!(value["sample_rate_hz"], 16_000);
         assert_eq!(value["recognizer_mode"], "streaming_v3");
         assert_eq!(value["limit"], 30);
+        assert!(value.get("surface_id").is_none());
+    }
+
+    #[test]
+    fn start_message_includes_surface_id_for_device_flow() {
+        let value: serde_json::Value = serde_json::from_str(&start_message(
+            "ru-RU",
+            VOICE_SAMPLE_RATE_HZ,
+            "buffered_v1",
+            Some("voice.main"),
+        ))
+        .expect("start message must be valid JSON");
+        assert_eq!(value["type"], "start");
+        assert_eq!(value["locale"], "ru-RU");
+        assert_eq!(value["sample_rate_hz"], 16_000);
+        assert_eq!(value["surface_id"], "voice.main");
+    }
+
+    #[test]
+    fn parses_voice_device_command_result_succeeded() {
+        let json = r#"{"type":"result","request_id":"req-42","status":"succeeded"}"#;
+        let event: VoiceEvent = serde_json::from_str(json).unwrap();
+        match event {
+            VoiceEvent::Result {
+                request_id, status, ..
+            } => {
+                assert_eq!(request_id.as_deref(), Some("req-42"));
+                assert_eq!(status, Some(VoiceCommandStatus::Succeeded));
+            }
+            _ => panic!("expected Result"),
+        }
+    }
+
+    #[test]
+    fn parses_voice_device_command_result_failed() {
+        let json = r#"{"type":"result","request_id":"req-43","status":"failed"}"#;
+        let event: VoiceEvent = serde_json::from_str(json).unwrap();
+        match event {
+            VoiceEvent::Result {
+                request_id, status, ..
+            } => {
+                assert_eq!(request_id.as_deref(), Some("req-43"));
+                assert_eq!(status, Some(VoiceCommandStatus::Failed));
+            }
+            _ => panic!("expected Result"),
+        }
+    }
+
+    #[test]
+    fn parses_voice_stream_error_codes_and_formats_human_messages() {
+        let error_cases = [
+            (
+                "clarification_required",
+                VoiceStreamErrorCode::ClarificationRequired,
+                "Команда требует уточнения",
+            ),
+            (
+                "unsupported_intent",
+                VoiceStreamErrorCode::UnsupportedIntent,
+                "Команда не поддерживается",
+            ),
+            (
+                "target_offline",
+                VoiceStreamErrorCode::TargetOffline,
+                "Устройство не в сети",
+            ),
+            (
+                "speech_not_recognized",
+                VoiceStreamErrorCode::SpeechNotRecognized,
+                "Речь не распознана",
+            ),
+            (
+                "search_timeout",
+                VoiceStreamErrorCode::SearchTimeout,
+                "Время поиска станции истекло",
+            ),
+            (
+                "command_timeout",
+                VoiceStreamErrorCode::CommandTimeout,
+                "Время выполнения команды истекло",
+            ),
+            (
+                "cancelled",
+                VoiceStreamErrorCode::Cancelled,
+                "Голосовая команда отменена",
+            ),
+            (
+                "station_not_found",
+                VoiceStreamErrorCode::StationNotFound,
+                "Станция не найдена",
+            ),
+        ];
+        for (code_str, expected_enum, expected_text) in error_cases {
+            let json = format!(
+                r#"{{"type":"error","code":"{code_str}","message":"server message","request_id":"req-err","details":{{}}}}"#
+            );
+            let event: VoiceEvent = serde_json::from_str(&json).unwrap();
+            match event {
+                VoiceEvent::Error {
+                    code: Some(code),
+                    message,
+                    ..
+                } => {
+                    assert_eq!(code, expected_enum);
+                    let err = VoiceError::StreamError { code, message };
+                    assert_eq!(err.to_string(), expected_text);
+                }
+                _ => panic!("expected Error with code for {code_str}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parses_legacy_voice_result() {
+        let json = r#"{"type":"result","transcript":"rock","normalized_query":{"action":"play"},"stations":[]}"#;
+        let event: VoiceEvent = serde_json::from_str(json).unwrap();
+        match event {
+            VoiceEvent::Result {
+                status,
+                transcript,
+                stations,
+                ..
+            } => {
+                assert!(status.is_none());
+                assert_eq!(transcript.as_deref(), Some("rock"));
+                assert!(stations.is_empty());
+            }
+            _ => panic!("expected legacy Result"),
+        }
     }
 
     #[test]

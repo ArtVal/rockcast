@@ -121,19 +121,27 @@ struct OutputRuntimeState {
     receiver_id: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+pub(crate) struct Surface {
+    pub(crate) surface_id: &'static str,
+    pub(crate) kind: &'static str,
+    pub(crate) display_name: &'static str,
+    pub(crate) views: [&'static str; 0],
+}
+
 #[derive(Serialize)]
 pub(crate) struct DeviceManifest {
     manifest_revision: u8,
-    roles: [&'static str; 1],
+    roles: [&'static str; 2],
     capabilities: CapabilityManifest,
     entities: [(); 0],
-    surfaces: [(); 0],
+    surfaces: [Surface; 1],
 }
 
 #[derive(Serialize)]
 struct CapabilityManifest {
     revision: u8,
-    items: [Capability; 5],
+    items: [Capability; 6],
 }
 
 #[derive(Serialize)]
@@ -168,6 +176,11 @@ enum Capability {
         version: u8,
         actions: [&'static str; 3],
         modes: [&'static str; 1],
+    },
+    #[serde(rename = "voice.input")]
+    VoiceInput {
+        version: u8,
+        formats: [&'static str; 1],
     },
 }
 
@@ -724,7 +737,7 @@ pub(super) fn control_endpoint(base: &str) -> String {
 pub(super) fn manifest() -> DeviceManifest {
     DeviceManifest {
         manifest_revision: 2,
-        roles: ["player"],
+        roles: ["player", "voice_endpoint"],
         capabilities: CapabilityManifest {
             revision: 2,
             items: [
@@ -753,10 +766,19 @@ pub(super) fn manifest() -> DeviceManifest {
                     actions: ["start", "stop", "set_mode"],
                     modes: ["via_pc"],
                 },
+                Capability::VoiceInput {
+                    version: 1,
+                    formats: ["pcm16_mono_16000"],
+                },
             ],
         },
         entities: [],
-        surfaces: [],
+        surfaces: [Surface {
+            surface_id: "voice.main",
+            kind: "voice",
+            display_name: "RockCast voice",
+            views: [],
+        }],
     }
 }
 

@@ -287,7 +287,18 @@ impl RockCastApp {
                     self.voice_busy = false;
                     self.voice_recording = None;
                     match result {
-                        Ok(result) => {
+                        Ok(crate::voice::VoiceOutcome::DeviceCommand { status, .. }) => {
+                            match status {
+                                crate::voice::VoiceCommandStatus::Succeeded => {
+                                    self.status = "Голосовая команда исполнена".into();
+                                }
+                                crate::voice::VoiceCommandStatus::Failed => {
+                                    self.status =
+                                        "Голосовое управление: команда не выполнена".into();
+                                }
+                            }
+                        }
+                        Ok(crate::voice::VoiceOutcome::Legacy(result)) => {
                             if let Some(control) = result.control {
                                 self.apply_voice_control(control);
                                 continue;
@@ -345,7 +356,11 @@ impl RockCastApp {
                                 crate::voice::VoiceError::NotFound => {
                                     Some(crate::voice_prompts::Prompt::NotFound)
                                 }
-                                crate::voice::VoiceError::Message(_) => None,
+                                crate::voice::VoiceError::StreamError {
+                                    code: crate::voice::VoiceStreamErrorCode::StationNotFound,
+                                    ..
+                                } => Some(crate::voice_prompts::Prompt::NotFound),
+                                _ => None,
                             };
                             if let Some(prompt) = prompt {
                                 crate::voice_prompts::play(prompt, self.lang);

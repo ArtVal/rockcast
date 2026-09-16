@@ -35,7 +35,7 @@ fn message(kind: &str) -> Inbound {
 #[test]
 fn manifest_and_state_advertise_only_the_implemented_output_actions() {
     let manifest = serde_json::to_value(super::protocol::manifest()).unwrap();
-    assert_eq!(manifest["roles"], json!(["player"]));
+    assert_eq!(manifest["roles"], json!(["player", "voice_endpoint"]));
     let items = manifest["capabilities"]["items"].as_array().unwrap();
     assert!(items.iter().any(|item| {
         item == &json!({
@@ -50,6 +50,21 @@ fn manifest_and_state_advertise_only_the_implemented_output_actions() {
             "actions": ["start", "stop", "set_mode"], "modes": ["via_pc"],
         })
     }));
+    assert!(items.iter().any(|item| {
+        item == &json!({
+            "name": "voice.input", "version": 1,
+            "formats": ["pcm16_mono_16000"],
+        })
+    }));
+    assert_eq!(
+        manifest["surfaces"],
+        json!([{
+            "surface_id": "voice.main",
+            "kind": "voice",
+            "display_name": "RockCast voice",
+            "views": []
+        }])
+    );
     assert_eq!(
         serde_json::to_value(PlayerState::idle(63).runtime_state()).unwrap()["volume"],
         json!({"level":63,"muted":false})
