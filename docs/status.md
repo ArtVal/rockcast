@@ -22,7 +22,11 @@ The display object is not published as device state and does not change the
 exact `station_id` sent to RockServer. Checks: `cargo fmt --check`, strict
 all-target/all-feature Clippy, and `cargo test` (131 unit + 2 integration
 passed; live-network tests ignored by their explicit gates). Physical
-RockMobile acceptance with the new server delivery remains pending.
+RockMobile acceptance with the new server delivery remains pending. **Rollout
+note:** RockServer `509ea0c` was deployed on 2026-09-17 by explicit
+server-only request before this local commit is installed on the Windows target.
+Do not issue a new catalog selection from RockMobile until this RC-4b build is
+launched; the old strict parser rejects the new `station` field.
 
 ## RC-4a — server-delivered `station.play_stream` acceptance (fixed, 2026-09-17)
 

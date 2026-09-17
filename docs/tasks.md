@@ -18,7 +18,9 @@
 - Checks: `cargo fmt --check`; `cargo clippy --all-targets --all-features --
   -D warnings`; `cargo test` — 131 unit + 2 integration passed, 0 failed;
   `git diff --check`. Physical USB-phone acceptance after server deployment is
-  still pending.
+  still pending. Server commit `509ea0c` is already deployed by explicit
+  server-only request, so installing/restarting RC-4b is now the mandatory
+  next step before another mobile catalog-selection test.
 
 ## RC-4a — accept the server-delivered `station.play_stream` (fixed, 2026-09-17)
 
