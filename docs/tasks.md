@@ -1,5 +1,42 @@
 # RockCast tasks
 
+## RC-4 — publish truthful playback and volume state for RockMobile (2026-09-17)
+
+- Goal: publish the owned player's complete revisioned state — exact catalog
+  `station_id`, truthful playback status and volume — after
+  registration/resync and after every real local/remote fact change, so a
+  succeeded command result is never mistaken for playback confirmation.
+- Scope: map `PlaybackPhase` one-to-one onto the wire statuses
+  (`Opening`→buffering, `Playing`→playing, `Stopping`/post-playback
+  `Idle`→stopped, `Failed`→error, pristine `Idle`→idle; `paused` never
+  published); bind the exact station ID of each start lifecycle in `play()`
+  so it survives error/stopped (§4.5); extract the deduplicating
+  revision-advancing publisher step as a testable pure function. No manifest,
+  transport, endpoint or capability change; pause/mute remain rejected.
+- Result: fake-socket tests prove the lifecycle idle → buffering(A) →
+  playing(A) → volume echo → error(A) with kept station → stopped(A) with kept
+  station → buffering(B), one revision per changed fact and none for
+  duplicates, the registration/reconnect/resync full snapshot at the current
+  revision, and restart resumption at the persisted revision + 1.
+- Checks: `cargo fmt --check`, `cargo clippy --all-targets --all-features
+  -- -D warnings`, `cargo test` (129 unit + 2 integration passed; live-network
+  tests remain ignored), `git diff --check`. `cargo fmt` also reflowed
+  `src/voice/mod.rs`, which was committed unformatted for the current
+  toolchain.
+- Status: local implementation complete per live-control Phase 1 (RC-4).
+  Physical USB-phone acceptance (Phase 4) is not performed and remains open,
+  as does the RockMobile state-driven UI (Phase 3).
+
+## RC-3 — restore live Windows control acceptance (2026-09-17)
+
+- Root cause: an already-persisted revision-2 manifest differed from the current
+  RockCast declaration, so RockServer correctly returned `registration_rejected`.
+- Fix: publish revision 4 and lifecycle diagnostics; omit unrouteable relay/Cast
+  capabilities until RS-7. Focused `cargo test device_control --lib` passed (17/17)
+  and the release binary was rebuilt.
+- Live acceptance: a USB-connected RockMobile selected the now-online target and its
+  one standard `playback.stop` ended with confirmed player state.
+
 ## DC-016 — idle command wake-up and live E2E acceptance (2026-09-07)
 
 - Fixed the missing UI wake-up after the control worker enqueues a server-delivered command. The

@@ -126,7 +126,7 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 | `RockCastApp` | `app` | egui view state and event adapter |
 | `UiMsg` | `app::messages` | Background → UI messages |
 | `PlaybackController` | `playback` | Playback state machine and orchestration |
-| `PlaybackPhase` | `playback::phase` | Idle / starting / playing / error |
+| `PlaybackPhase` | `playback::phase` | Idle / Opening / Playing / Stopping / Failed (drives device-control statuses) |
 | `BackgroundRuntime` | `runtime` | Bounded app-level blocking jobs |
 | `StreamObservers` | `observers` | ICY/spectrum lifecycle |
 | `OutputDevice` | `output` | `Local(LocalDeviceInfo)` \| `Cast(CastDeviceInfo)` |

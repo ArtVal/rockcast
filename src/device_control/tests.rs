@@ -35,21 +35,11 @@ fn message(kind: &str) -> Inbound {
 #[test]
 fn manifest_and_state_advertise_only_the_implemented_output_actions() {
     let manifest = serde_json::to_value(super::protocol::manifest()).unwrap();
+    assert_eq!(manifest["manifest_revision"], json!(4));
     assert_eq!(manifest["roles"], json!(["player", "voice_endpoint"]));
     let items = manifest["capabilities"]["items"].as_array().unwrap();
-    assert!(items.iter().any(|item| {
-        item == &json!({
-            "name": "media.chromecast", "version": 1,
-            "actions": ["discover", "connect", "disconnect"],
-            "discovery_ttl_seconds": 60,
-        })
-    }));
-    assert!(items.iter().any(|item| {
-        item == &json!({
-            "name": "media.relay", "version": 1,
-            "actions": ["start", "stop", "set_mode"], "modes": ["via_pc"],
-        })
-    }));
+    assert!(!items.iter().any(|item| item["name"] == "media.chromecast"));
+    assert!(!items.iter().any(|item| item["name"] == "media.relay"));
     assert!(items.iter().any(|item| {
         item == &json!({
             "name": "voice.input", "version": 1,
@@ -89,6 +79,12 @@ fn protocol_parser_rejects_malformed_and_oversized_frames() {
         inbound_type(&"x".repeat(protocol::MAX_FRAME_BYTES + 1)),
         Err(ControlError::Protocol)
     );
+    let error = r#"{"protocol_version":1,"type":"protocol.error","payload":{"error":{"code":"invalid_message"}}}"#;
+    assert_eq!(
+        protocol_error_code(error).as_deref(),
+        Some("invalid_message")
+    );
+    assert!(!is_auth_error(error));
 }
 
 fn command_frame(command_id: &str, device_id: &str, body: Value) -> String {
@@ -253,8 +249,8 @@ fn unsupported_local_capabilities_never_reach_the_ui() {
     assert!(!command_is_advertised(&PlayerCommand::SetMute {
         muted: true
     }));
-    assert!(command_is_advertised(&PlayerCommand::ChromecastDiscover));
-    assert!(command_is_advertised(&PlayerCommand::RelaySetMode {
+    assert!(!command_is_advertised(&PlayerCommand::ChromecastDiscover));
+    assert!(!command_is_advertised(&PlayerCommand::RelaySetMode {
         mode: "via_pc".into()
     }));
 }
@@ -564,4 +560,195 @@ impl DeviceControlAuth for CountingAuth {
         }
         Ok(None)
     }
+}
+
+fn player_state(status: &'static str, station_id: Option<&str>, volume: u8) -> PlayerState {
+    PlayerState {
+        playback_status: status,
+        station_id: station_id.map(str::to_owned),
+        volume,
+        output_mode: "local",
+        receiver_id: None,
+    }
+}
+
+fn inner_with_state(state: Mutex<Option<PublishedState>>) -> ClientInner {
+    ClientInner {
+        config: RuntimeConfig::for_test("http://127.0.0.1".into(), None),
+        auth: Arc::new(FakeAuth),
+        transport: Arc::new(FakeTransport),
+        state,
+        authenticated_device_id: Mutex::new(None),
+        commands: Mutex::new(CommandBook::new()),
+        wake_ui: Arc::new(|| {}),
+        stopped: AtomicBool::new(false),
+        running: AtomicBool::new(false),
+        worker: Mutex::new(None),
+    }
+}
+
+#[test]
+fn playback_statuses_follow_the_phase_and_keep_station_context() {
+    assert_eq!(playback_status(PlaybackPhase::Idle, None), "idle");
+    // A station chosen earlier keeps its context through terminal Idle (§4.5);
+    // the mapping has no input that could fabricate `paused`.
+    assert_eq!(
+        playback_status(PlaybackPhase::Idle, Some("somafm-metal-detector")),
+        "stopped"
+    );
+    assert_eq!(
+        playback_status(
+            PlaybackPhase::Opening {
+                generation: 1,
+                local: true,
+            },
+            Some("somafm-metal-detector"),
+        ),
+        "buffering"
+    );
+    assert_eq!(
+        playback_status(
+            PlaybackPhase::Playing {
+                generation: 1,
+                local: false,
+            },
+            Some("somafm-metal-detector"),
+        ),
+        "playing"
+    );
+    assert_eq!(
+        playback_status(PlaybackPhase::Stopping { generation: 2 }, Some("station-a")),
+        "stopped"
+    );
+    assert_eq!(
+        playback_status(PlaybackPhase::Failed { generation: 3 }, Some("station-a")),
+        "error"
+    );
+}
+
+#[test]
+fn truthful_publisher_lifecycle_is_deduplicated_monotonic_and_resyncable() {
+    let slot = Mutex::new(Some(PublishedState {
+        revision: 40,
+        observed_at: String::new(),
+        state: PlayerState::idle(62),
+    }));
+    // Startup: the first observed snapshot always advances the persisted
+    // revision instead of replaying the previous process's value.
+    assert_eq!(
+        advance_published_state(&slot, player_state("idle", None, 62)),
+        Some(41)
+    );
+    // The registration-time snapshot is the complete idle fact: no station
+    // chosen yet, factual volume, no fabricated playback value.
+    {
+        let current = slot.lock();
+        let runtime =
+            serde_json::to_value(current.as_ref().unwrap().state.runtime_state()).unwrap();
+        assert_eq!(
+            runtime["playback"],
+            json!({"status": "idle", "station_id": null})
+        );
+        assert_eq!(runtime["volume"]["level"], json!(62));
+    }
+    // An accepted station A begins loading: buffering with the exact ID (§4.3).
+    assert_eq!(
+        advance_published_state(&slot, player_state("buffering", Some("station-a"), 62)),
+        Some(42)
+    );
+    // A duplicate fact republishes nothing and bumps no revision (§4.3).
+    assert_eq!(
+        advance_published_state(&slot, player_state("buffering", Some("station-a"), 62)),
+        None
+    );
+    // Confirmed playback, then a local volume change echoed at the new level.
+    assert_eq!(
+        advance_published_state(&slot, player_state("playing", Some("station-a"), 62)),
+        Some(43)
+    );
+    assert_eq!(
+        advance_published_state(&slot, player_state("playing", Some("station-a"), 71)),
+        Some(44)
+    );
+    // A failed start keeps the station context instead of nulling it (§4.5).
+    assert_eq!(
+        advance_published_state(&slot, player_state("error", Some("station-a"), 71)),
+        Some(45)
+    );
+    // Stop keeps the last station until a new choice is made (§4.5).
+    assert_eq!(
+        advance_published_state(&slot, player_state("stopped", Some("station-a"), 71)),
+        Some(46)
+    );
+    // Choosing station B starts its own lifecycle with B's exact ID.
+    assert_eq!(
+        advance_published_state(&slot, player_state("buffering", Some("station-b"), 71)),
+        Some(47)
+    );
+
+    let inner = inner_with_state(slot);
+    let mut socket = FakeSocket {
+        inbound: VecDeque::from([message("protocol.welcome"), message("device.registered")]),
+        sent: vec![],
+    };
+    let deadline = Instant::now() + Duration::from_secs(1);
+    wait_for(&mut socket, deadline, "protocol.welcome", &inner).unwrap();
+    wait_for(&mut socket, deadline, "device.registered", &inner).unwrap();
+    // Registration always publishes the complete current snapshot (§4.3).
+    let sent_revision = send_full(&mut socket, &inner, 0).unwrap();
+    assert_eq!(sent_revision, 47);
+    let snapshot = &socket.sent.last().unwrap()["payload"]["snapshot"];
+    assert_eq!(snapshot["state_revision"], json!(47));
+    assert!(
+        snapshot["observed_at"]
+            .as_str()
+            .is_some_and(|at| !at.is_empty())
+    );
+    assert_eq!(
+        snapshot["state"]["playback"],
+        json!({"status": "buffering", "station_id": "station-b"})
+    );
+    assert_eq!(
+        snapshot["state"]["volume"],
+        json!({"level": 71, "muted": false})
+    );
+    assert_eq!(snapshot["state"]["output"], json!({"mode": "local"}));
+    // Without a newer fact the live connection sends nothing more.
+    assert!(!state_is_newer_than(&inner.state, sent_revision));
+    // A reconnect or server resync resends the same complete snapshot.
+    assert_eq!(send_full(&mut socket, &inner, 0).unwrap(), 47);
+    assert_eq!(
+        socket
+            .sent
+            .iter()
+            .filter(|frame| frame["type"] == "device.state_full")
+            .count(),
+        2
+    );
+    // A newer fact on the live slot is delivered as the next full snapshot.
+    assert_eq!(
+        advance_published_state(&inner.state, player_state("playing", Some("station-b"), 71)),
+        Some(48)
+    );
+    assert!(state_is_newer_than(&inner.state, sent_revision));
+    assert_eq!(send_full(&mut socket, &inner, sent_revision).unwrap(), 48);
+}
+
+#[test]
+fn restarted_client_resumes_the_persisted_revision_without_rollback() {
+    let client = DeviceControlClient::with_parts(
+        RuntimeConfig::for_test("http://127.0.0.1".into(), None),
+        41,
+        Arc::new(FakeAuth),
+        Arc::new(FakeTransport),
+    );
+    // AppSettings seeded 41, so the first snapshot of the new process is 42
+    // and equal facts still do not bump it further.
+    assert_eq!(client.publish(PlayerState::idle(50)), Some(42));
+    assert_eq!(client.publish(PlayerState::idle(50)), None);
+    assert_eq!(
+        client.publish(player_state("playing", Some("station-a"), 50)),
+        Some(43)
+    );
+    client.shutdown();
 }

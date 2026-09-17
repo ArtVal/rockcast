@@ -141,7 +141,7 @@ pub(crate) struct DeviceManifest {
 #[derive(Serialize)]
 struct CapabilityManifest {
     revision: u8,
-    items: [Capability; 6],
+    items: [Capability; 4],
 }
 
 #[derive(Serialize)]
@@ -164,18 +164,6 @@ enum Capability {
         maximum: u8,
         step: u8,
         mute: bool,
-    },
-    #[serde(rename = "media.chromecast")]
-    Chromecast {
-        version: u8,
-        actions: [&'static str; 3],
-        discovery_ttl_seconds: u16,
-    },
-    #[serde(rename = "media.relay")]
-    Relay {
-        version: u8,
-        actions: [&'static str; 3],
-        modes: [&'static str; 1],
     },
     #[serde(rename = "voice.input")]
     VoiceInput {
@@ -709,14 +697,16 @@ impl CommandResult {
 }
 
 pub(super) fn is_auth_error(frame: &str) -> bool {
+    matches!(
+        protocol_error_code(frame).as_deref(),
+        Some("authentication_required" | "forbidden")
+    )
+}
+
+pub(super) fn protocol_error_code(frame: &str) -> Option<String> {
     serde_json::from_str::<ErrorEnvelope>(frame)
         .ok()
-        .is_some_and(|envelope| {
-            matches!(
-                envelope.payload.error.code.as_str(),
-                "authentication_required" | "forbidden"
-            )
-        })
+        .map(|envelope| envelope.payload.error.code)
 }
 
 pub(super) fn registered_device_id(frame: &str) -> Option<String> {
@@ -736,10 +726,10 @@ pub(super) fn control_endpoint(base: &str) -> String {
 
 pub(super) fn manifest() -> DeviceManifest {
     DeviceManifest {
-        manifest_revision: 2,
+        manifest_revision: 4,
         roles: ["player", "voice_endpoint"],
         capabilities: CapabilityManifest {
-            revision: 2,
+            revision: 3,
             items: [
                 Capability::Playback {
                     version: 1,
@@ -755,16 +745,6 @@ pub(super) fn manifest() -> DeviceManifest {
                     maximum: 100,
                     step: 1,
                     mute: false,
-                },
-                Capability::Chromecast {
-                    version: 1,
-                    actions: ["discover", "connect", "disconnect"],
-                    discovery_ttl_seconds: 60,
-                },
-                Capability::Relay {
-                    version: 1,
-                    actions: ["start", "stop", "set_mode"],
-                    modes: ["via_pc"],
                 },
                 Capability::VoiceInput {
                     version: 1,

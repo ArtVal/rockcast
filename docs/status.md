@@ -1,5 +1,61 @@
 # RockCast status
 
+## RC-4 — truthful runtime-state publisher (implemented locally, 2026-09-17)
+
+RockCast now publishes its owned player's actual facts for the RockServer
+directory projection (RS-8) instead of a playing-only approximation. The
+`PlaybackPhase` state machine is mapped one-to-one onto the wire status:
+`Opening` → `buffering`, `Playing` → `playing`, `Stopping` → `stopped`,
+`Failed` → `error`, and a pristine `Idle` (no station chosen this session) →
+`idle`. An `Idle` that follows a chosen station keeps `stopped`, so the stop
+fact survives until a new choice. `paused` is never produced: pause stays
+unimplemented and unadvertised, and `PlayerCommand::Pause`/`SetMute` are still
+rejected as `capability_not_supported`.
+
+`station_id` is now bound in `play()` to the exact catalog ID of the station
+chosen for that start lifecycle (local pick, voice, or server-resolved
+`station.play_station`/`station.play_stream` mapped through the local catalog);
+it is never recovered from a stream URL. It survives `buffering`, `playing`,
+`error` and `stopped` transitions per live-control §4.5 and is `null` only
+before the first choice in a session. Volume echoes both local slider changes
+and remote `volume.set_volume`/`change_volume` at the new percent level.
+
+Publication triggers are registration/reconnect/resync (full snapshot after
+every registration, unchanged) plus every real fact change: phase transitions
+(including the start of buffering), station switches, and volume changes —
+remote commands execute and publish inside one UI frame, local UI changes
+publish on the following frame; the egui loop is verified to tick after each of
+these events. Equal states stay deduplicated and do not advance the revision;
+every changed state advances the strictly monotonic revision persisted in
+`AppSettings.device_control_state_revision`, and a restarted process resumes at
+`persisted + 1` without rollback. The manifest still advertises only
+play/stop/next/previous for `media.playback`; no new transport, endpoint, or
+capability was added, and no URL, header, or credential enters state or logs.
+
+Deterministic coverage (fake socket/transport, no network, no audio): phase→
+status mapping with station context, the full lifecycle
+idle → buffering(A) → playing(A) → volume echo → error(A) → stopped(A) →
+buffering(B) with per-fact revision increments and duplicate suppression,
+registration snapshot shape (status, exact station_id, volume level, muted,
+output), reconnect/resync resending the complete snapshot at the current
+revision, and restart revision resumption. Checks: `cargo fmt --check`,
+`cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`
+(129 unit + 2 integration passed; live-network tests remain ignored), and
+`git diff --check`. Physical phone acceptance (Phase 4) and RockMobile's
+state-driven UI (Phase 3) remain open.
+
+## RC-3 — live RockMobile control accepted (2026-09-17)
+
+The offline entry was caused by `registration_rejected`, not token renewal: the
+native session and `protocol.welcome` both succeeded, but the server already stored a
+different manifest at revision 2. RockCast now advances the changed declaration to
+manifest revision 4, registers successfully, and the paired Android directory reports
+the target online. Diagnostic logs record only lifecycle stage/error codes, never
+credentials. One USB-phone `playback.stop` reached the player and RockMobile confirmed
+the resulting state. `media.chromecast` and `media.relay` are deliberately withheld
+from the manifest until their server router work (RS-7) is implemented; their local
+adapters remain unchanged.
+
 ## Single Windows instance (2026-09-08)
 
 RockCast now claims a named mutex before logging or application initialization. A second launch

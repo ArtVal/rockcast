@@ -12,6 +12,7 @@ mod tests;
 mod transport;
 
 use crate::{
+    playback::PlaybackPhase,
     rockserver::RuntimeConfig,
     session::{AccountClient, OsCredentialStore, SessionError},
 };
@@ -22,7 +23,7 @@ use protocol::{
     ControlError, HEARTBEAT, HeartbeatPayload, HelloPayload, Inbound, NO_IDENTITY_DELAY, POLL,
     PublishedState, RegisterPayload, StateFullPayload, backoff, command_accepted,
     command_from_frame, command_result, control_endpoint, inbound_type, is_auth_error,
-    registered_device_id, send, timestamp, wait_or_stop,
+    protocol_error_code, registered_device_id, send, timestamp, wait_or_stop,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -180,15 +181,7 @@ impl DeviceControlClient {
     /// Replaces a single latest-value slot; there is no unbounded state queue.
     /// Returns the durable revision the caller should save with AppSettings.
     pub(crate) fn publish(&self, state: PlayerState) -> Option<u64> {
-        let mut published = self.inner.state.lock();
-        let current = published.as_mut()?;
-        if current.state == state && !current.observed_at.is_empty() {
-            return None;
-        }
-        current.revision = current.revision.saturating_add(1).max(1);
-        current.observed_at = timestamp();
-        current.state = state;
-        Some(current.revision)
+        advance_published_state(&self.inner.state, state)
     }
 
     pub(crate) fn shutdown(&self) {
@@ -232,12 +225,22 @@ fn run_worker(inner: Arc<ClientInner>) {
     while !inner.stopped.load(Ordering::Acquire) {
         let token = match inner.auth.access_token(forced_renewal) {
             Ok(Some(token)) => token,
-            Ok(None) | Err(SessionError::Unauthorized) | Err(SessionError::Rejected) => {
+            Ok(None) => {
+                log::warn!("device control: no paired native credentials; remaining offline");
                 forced_renewal = false;
                 wait_or_stop(&inner.stopped, NO_IDENTITY_DELAY);
                 continue;
             }
-            Err(_) => {
+            Err(SessionError::Unauthorized) | Err(SessionError::Rejected) => {
+                log::warn!(
+                    "device control: native session is no longer authorized; remaining offline"
+                );
+                forced_renewal = false;
+                wait_or_stop(&inner.stopped, NO_IDENTITY_DELAY);
+                continue;
+            }
+            Err(error) => {
+                log::warn!("device control: cannot obtain native access token: {error}");
                 wait_or_stop(&inner.stopped, backoff(retry));
                 retry = retry.saturating_add(1);
                 continue;
@@ -248,18 +251,24 @@ fn run_worker(inner: Arc<ClientInner>) {
             Ok(socket) => match run_connection(&inner, socket) {
                 Ok(()) => retry = 0,
                 Err(ControlError::Authentication) => {
+                    log::warn!("device control: WebSocket authentication rejected; renewing once");
                     // A server-side auth rejection gets one renewal through the
                     // existing device-session endpoint; that endpoint owns revoke.
                     forced_renewal = true;
                     retry = 0;
                 }
-                Err(_) => {
+                Err(error) => {
+                    log::warn!("device control: connected session ended: {error:?}");
                     wait_or_stop(&inner.stopped, backoff(retry));
                     retry = retry.saturating_add(1);
                 }
             },
-            Err(ControlError::Authentication) => forced_renewal = true,
-            Err(_) => {
+            Err(ControlError::Authentication) => {
+                log::warn!("device control: WebSocket rejected credentials; renewing once");
+                forced_renewal = true;
+            }
+            Err(error) => {
+                log::warn!("device control: WebSocket connection failed: {error:?}");
                 wait_or_stop(&inner.stopped, backoff(retry));
                 retry = retry.saturating_add(1);
             }
@@ -288,6 +297,7 @@ fn run_connection(
         "device.registered",
         inner,
     )?;
+    log::info!("device control: registered; publishing authoritative state");
 
     // A full snapshot is sent for every fresh connection, even if no local
     // state changed while the socket was down.
@@ -327,6 +337,13 @@ fn run_connection(
                 Some(kind) if kind == "protocol.error" && is_auth_error(&text) => {
                     return Err(ControlError::Authentication);
                 }
+                Some(kind) if kind == "protocol.error" => {
+                    log::warn!(
+                        "device control: server protocol error: {}",
+                        protocol_error_code(&text).unwrap_or_else(|| "unknown".into())
+                    );
+                    return Err(ControlError::Protocol);
+                }
                 Some(kind) if kind == "device.command" => {
                     receive_command(&mut *socket, inner, &text)?
                 }
@@ -339,6 +356,51 @@ fn run_connection(
 fn state_is_newer_than(state: &Mutex<Option<PublishedState>>, sent_revision: u64) -> bool {
     let revision = { state.lock().as_ref().map(|current| current.revision) };
     revision.is_some_and(|revision| revision > sent_revision)
+}
+
+/// Advances the latest-value state slot by one truthful fact.
+///
+/// Equal states are deduplicated (no revision bump, `None` returned), while any
+/// changed state advances the revision strictly monotonically. The startup
+/// placeholder carries an empty `observed_at`, so the first snapshot always
+/// advances the revision persisted in `AppSettings` — a restart can never
+/// replay a stale revision.
+fn advance_published_state(slot: &Mutex<Option<PublishedState>>, next: PlayerState) -> Option<u64> {
+    let mut published = slot.lock();
+    let current = published.as_mut()?;
+    if current.state == next && !current.observed_at.is_empty() {
+        return None;
+    }
+    current.revision = current.revision.saturating_add(1).max(1);
+    current.observed_at = timestamp();
+    current.state = next;
+    Some(current.revision)
+}
+
+/// Maps the authoritative playback phase and the station chosen for the
+/// current start lifecycle onto the wire playback status
+/// (live-control §4.3/§4.5).
+///
+/// `Opening` means an accepted station is loading (`buffering`), `Stopping`
+/// is `stopped`, `Failed` is `error`. A pristine `Idle` (no station chosen in
+/// this session) stays `idle`; an `Idle` that follows a chosen station keeps
+/// `stopped` so the last station context survives until a new choice.
+/// `paused` is never returned: RockCast does not support pause and does not
+/// advertise it.
+pub(crate) fn playback_status(phase: PlaybackPhase, station_id: Option<&str>) -> &'static str {
+    match phase {
+        PlaybackPhase::Opening { .. } => "buffering",
+        PlaybackPhase::Playing { .. } => "playing",
+        PlaybackPhase::Stopping { .. } => "stopped",
+        PlaybackPhase::Failed { .. } => "error",
+        PlaybackPhase::Idle => {
+            if station_id.is_some() {
+                "stopped"
+            } else {
+                "idle"
+            }
+        }
+    }
 }
 
 fn receive_command(
@@ -413,12 +475,6 @@ fn command_is_advertised(command: &PlayerCommand) -> bool {
             | PlayerCommand::PlayStream { .. }
             | PlayerCommand::SetVolume { .. }
             | PlayerCommand::ChangeVolume { .. }
-            | PlayerCommand::ChromecastDiscover
-            | PlayerCommand::ChromecastConnect { .. }
-            | PlayerCommand::ChromecastDisconnect
-            | PlayerCommand::RelayStart
-            | PlayerCommand::RelayStop
-            | PlayerCommand::RelaySetMode { .. }
     )
 }
 
@@ -468,6 +524,13 @@ fn wait_for(
                 }
                 Some(kind) if kind == "protocol.error" && is_auth_error(&text) => {
                     return Err(ControlError::Authentication);
+                }
+                Some(kind) if kind == "protocol.error" => {
+                    log::warn!(
+                        "device control: server rejected {expected}: {}",
+                        protocol_error_code(&text).unwrap_or_else(|| "unknown".into())
+                    );
+                    return Err(ControlError::Protocol);
                 }
                 Some(_) | None => {}
             },

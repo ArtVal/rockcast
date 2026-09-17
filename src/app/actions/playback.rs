@@ -150,6 +150,11 @@ impl RockCastApp {
             return None;
         };
         let local = device.is_local();
+        // Bind the exact catalog station ID to this start lifecycle so the
+        // published buffering/playing/error/stopped states all carry the
+        // station that was actually chosen (live-control §4.5); the ID is
+        // never recovered from the stream URL.
+        self.playback_station_id = Some(station.id.clone());
         self.observers.stop();
         self.playing_url = None;
         self.playing_op = true;

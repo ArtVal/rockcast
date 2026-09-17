@@ -17,8 +17,8 @@ use tungstenite::{Message, client_tls, stream::MaybeTlsStream};
 
 use crate::stations::Station;
 
-pub use dto::{VoiceCommandStatus, VoiceStreamErrorCode};
 use dto::{NormalizedQueryDto, VoiceAction, VoiceEvent};
+pub use dto::{VoiceCommandStatus, VoiceStreamErrorCode};
 use rank::rerank_voice_candidates;
 use record::{
     default_microphone_sample_rate, record_default_microphone, stream_default_microphone,
@@ -83,7 +83,9 @@ impl std::fmt::Display for VoiceError {
                     VoiceStreamErrorCode::TargetOffline => "Устройство не в сети",
                     VoiceStreamErrorCode::SpeechNotRecognized => "Речь не распознана",
                     VoiceStreamErrorCode::SpeechTimeout => "Превышено время ожидания речи",
-                    VoiceStreamErrorCode::VoiceTimeout => "Превышено время ожидания голосовой сессии",
+                    VoiceStreamErrorCode::VoiceTimeout => {
+                        "Превышено время ожидания голосовой сессии"
+                    }
                     VoiceStreamErrorCode::SearchTimeout => "Время поиска станции истекло",
                     VoiceStreamErrorCode::CommandTimeout => "Время выполнения команды истекло",
                     VoiceStreamErrorCode::Cancelled => "Голосовая команда отменена",
@@ -351,7 +353,10 @@ fn receive_voice_result<S: Read + Write>(
                 ..
             } => {
                 log::info!("voice transcript received: final={is_final}");
-                if surface_id.is_none() && is_final && let Some(control) = classify_voice_control(&transcript) {
+                if surface_id.is_none()
+                    && is_final
+                    && let Some(control) = classify_voice_control(&transcript)
+                {
                     log::info!("voice control recognized from final transcript: {control:?}");
                     return Ok(VoiceOutcome::Legacy(voice_control_result(control)));
                 }
@@ -374,10 +379,7 @@ fn receive_voice_result<S: Read + Write>(
                 let normalized_query = normalized_query.unwrap_or(NormalizedQueryDto {
                     action: VoiceAction::Play,
                 });
-                log::info!(
-                    "voice legacy result candidates: count={}",
-                    stations.len()
-                );
+                log::info!("voice legacy result candidates: count={}", stations.len());
                 if let Some(control) = classify_voice_control(&transcript) {
                     log::info!("voice control recognized from result transcript: {control:?}");
                     return Ok(VoiceOutcome::Legacy(voice_control_result(control)));

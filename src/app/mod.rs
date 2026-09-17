@@ -19,7 +19,7 @@ use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, Textur
 
 use crate::{
     cast::CastDeviceInfo,
-    device_control::{DeviceControlClient, PlayerState, ReceiverCache},
+    device_control::{DeviceControlClient, PlayerState, ReceiverCache, playback_status},
     i18n::Lang,
     observers::{BANDS, StreamObservers},
     output::OutputDevice,
@@ -112,6 +112,12 @@ pub struct RockCastApp {
     pub(super) status: String,
     pub(super) station_now: String,
     pub(super) last_played_station: Option<Station>,
+    /// Exact catalog ID of the station chosen for the current playback
+    /// lifecycle (local pick or server-resolved command), bound when a start
+    /// is actually issued. It survives `error`/`stopped` transitions
+    /// (live-control §4.5) and is `None` only before the first choice in this
+    /// session; it is never recovered from a stream URL.
+    pub(super) playback_station_id: Option<String>,
     pub(super) personal_data: Option<crate::personal_data::PersonalDataStore>,
     pub(super) favourites_open: bool,
     pub(super) history_open: bool,
@@ -226,6 +232,7 @@ impl RockCastApp {
             status: t.loading.into(),
             station_now: "—".into(),
             last_played_station,
+            playback_station_id: None,
             personal_data: None,
             favourites_open: false,
             history_open: false,
@@ -474,27 +481,18 @@ impl Drop for RockCastApp {
 }
 
 impl RockCastApp {
+    /// Publishes the owned player's current facts to the device-control slot.
+    ///
+    /// The phase machine is the single source of playback status (§4.3) and
+    /// the station chosen for the current lifecycle supplies `station_id`
+    /// through buffering, playing, error and stopped (§4.5). Equal states are
+    /// deduplicated by [`DeviceControlClient::publish`]; only a changed fact
+    /// advances the persisted revision.
     fn sync_device_control_state(&mut self) {
-        let playback_status = if self.playing {
-            "playing"
-        } else if matches!(
-            self.playback.phase(),
-            crate::playback::PlaybackPhase::Failed { .. }
-        ) {
-            "error"
-        } else {
-            "idle"
-        };
+        let station_id = self.playback_station_id.clone();
         let state = PlayerState {
-            playback_status,
-            station_id: self
-                .playing
-                .then(|| {
-                    self.last_played_station
-                        .as_ref()
-                        .map(|station| station.id.clone())
-                })
-                .flatten(),
+            playback_status: playback_status(self.playback.phase(), station_id.as_deref()),
+            station_id,
             volume: self.volume,
             output_mode: match &self.output {
                 RemoteOutput::Local => "local",
