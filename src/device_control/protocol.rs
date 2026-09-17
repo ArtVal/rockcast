@@ -279,6 +279,7 @@ pub(crate) enum PlayerCommand {
     },
     PlayStream {
         station_id: String,
+        station: Option<StationPresentation>,
         stream_uri: String,
     },
     SetVolume {
@@ -306,6 +307,30 @@ pub(crate) enum PlayerCommand {
 pub(crate) struct DeviceCommand {
     pub(crate) id: String,
     pub(crate) command: PlayerCommand,
+}
+
+/// Bounded catalog display data carried only with a server-resolved stream.
+///
+/// Stable `station_id` remains the playback identity. `icon_url` is currently
+/// null because RockServer does not store catalog icons yet, but accepting it
+/// now avoids another wire change when that catalog field becomes available.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StationPresentation {
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) icon_url: Option<String>,
+}
+
+impl StationPresentation {
+    fn is_valid(&self) -> bool {
+        !self.name.trim().is_empty()
+            && self.name.chars().count() <= 128
+            && self
+                .icon_url
+                .as_ref()
+                .is_none_or(|icon_url| icon_url.chars().count() <= 2_048)
+    }
 }
 
 #[derive(Deserialize)]
@@ -380,6 +405,9 @@ enum CommandBody {
         /// Catalog identity of the resolved station; the server contract requires it so
         /// the target can publish truthful state without recovering the id from the URL.
         station_id: Option<String>,
+        /// Optional target-only presentation sent by a current RockServer. The
+        /// absence case is accepted while a target rolls forward before server deployment.
+        station: Option<StationPresentation>,
         stream_uri: String,
     },
     #[serde(rename = "volume.set_volume")]
@@ -564,14 +592,19 @@ fn command_from_body(body: CommandBody) -> Option<PlayerCommand> {
         CommandBody::PlayStream {
             source: StationSource::RockserverCatalog,
             station_id,
+            station,
             stream_uri,
         } => {
             // The server contract always carries the resolved catalog id on this
             // variant; without it the player could not publish truthful state.
             let station_id = station_id.filter(|id| !id.is_empty() && id.len() <= 128)?;
+            if station.as_ref().is_some_and(|station| !station.is_valid()) {
+                return None;
+            }
             (!stream_uri.is_empty() && stream_uri.len() <= 2_048).then_some(
                 PlayerCommand::PlayStream {
                     station_id,
+                    station,
                     stream_uri,
                 },
             )

@@ -22,6 +22,7 @@ enum RemoteCommandPlan {
     /// the command and playback must not require local-catalog membership.
     PlayDelivered {
         station_id: String,
+        station: Option<crate::device_control::StationPresentation>,
         stream_uri: String,
     },
     SetVolume(u8),
@@ -34,19 +35,28 @@ enum RemoteCommandPlan {
     RelayStop,
 }
 
-/// Minimal station for a server-delivered `station.play_stream`. Identity comes from
-/// the command's catalog id, never from the stream URL (live-control §4.3); a local
-/// catalog entry with the same id would have supplied richer metadata earlier.
-fn delivered_station(station_id: &str, stream_uri: &str) -> crate::stations::Station {
-    crate::stations::Station::from_primary(
+/// Minimal station for a server-delivered `station.play_stream`.
+///
+/// Identity remains the command's catalog ID, never the stream URL. The optional
+/// presentation fixes the local UI when the station is not in RockCast's cache.
+fn delivered_station(
+    station_id: &str,
+    presentation: Option<&crate::device_control::StationPresentation>,
+    stream_uri: &str,
+) -> crate::stations::Station {
+    let mut station = crate::stations::Station::from_primary(
         station_id.to_owned(),
-        station_id.to_owned(),
+        presentation
+            .map(|station| station.name.clone())
+            .unwrap_or_else(|| station_id.to_owned()),
         stream_uri.to_owned(),
         String::new(),
         String::new(),
         0,
         String::new(),
-    )
+    );
+    station.favicon_url = presentation.and_then(|station| station.icon_url.clone());
+    station
 }
 
 fn plan_remote_command(
@@ -80,9 +90,11 @@ fn plan_remote_command(
             .ok_or_else(unavailable),
         PlayerCommand::PlayStream {
             station_id,
+            station,
             stream_uri,
         } => Ok(RemoteCommandPlan::PlayDelivered {
             station_id: station_id.clone(),
+            station: station.clone(),
             stream_uri: stream_uri.clone(),
         }),
         PlayerCommand::SetVolume { level } => Ok(RemoteCommandPlan::SetVolume(*level)),
@@ -245,6 +257,7 @@ impl RockCastApp {
                 }
                 RemoteCommandPlan::PlayDelivered {
                     station_id,
+                    station,
                     stream_uri,
                 } => {
                     // The server already validated this catalog station and resolved
@@ -261,14 +274,31 @@ impl RockCastApp {
                                 primary.url = stream_uri.clone();
                             }
                             self.stations[index].url = stream_uri;
+                            if let Some(presentation) = &station {
+                                self.stations[index].name = presentation.name.clone();
+                                if presentation.icon_url.is_some() {
+                                    self.stations[index].favicon_url =
+                                        presentation.icon_url.clone();
+                                }
+                            }
                             index
                         }
                         None => {
-                            self.stations
-                                .push(delivered_station(&station_id, &stream_uri));
+                            self.stations.push(delivered_station(
+                                &station_id,
+                                station.as_ref(),
+                                &stream_uri,
+                            ));
                             self.stations.len() - 1
                         }
                     };
+                    if station
+                        .as_ref()
+                        .is_some_and(|presentation| presentation.icon_url.is_some())
+                    {
+                        let selected = self.stations[index].clone();
+                        self.queue_station_icons(&[selected]);
+                    }
                     self.selected_station = Some(index);
                     self.scroll_to_station = Some(index);
                     self.voice_fallback.clear();
@@ -669,6 +699,13 @@ mod tests {
         )
     }
 
+    fn presentation(name: &str) -> crate::device_control::StationPresentation {
+        crate::device_control::StationPresentation {
+            name: name.into(),
+            icon_url: None,
+        }
+    }
+
     #[derive(Default)]
     struct FakePlayback {
         calls: Vec<RemoteCommandPlan>,
@@ -700,10 +737,12 @@ mod tests {
             (
                 PlayerCommand::PlayStream {
                     station_id: "first".into(),
+                    station: Some(presentation("First from server")),
                     stream_uri: "https://catalog.test/first".into(),
                 },
                 RemoteCommandPlan::PlayDelivered {
                     station_id: "first".into(),
+                    station: Some(presentation("First from server")),
                     stream_uri: "https://catalog.test/first".into(),
                 },
             ),
@@ -753,6 +792,7 @@ mod tests {
         let stations = [station("known", "https://catalog.test/known")];
         let command = PlayerCommand::PlayStream {
             station_id: "server-station".into(),
+            station: Some(presentation("Server Station")),
             stream_uri: "https://stream.test/server".into(),
         };
         let plan = plan_remote_command(&command, &stations, None, 50).unwrap();
@@ -760,8 +800,27 @@ mod tests {
             plan,
             RemoteCommandPlan::PlayDelivered {
                 station_id: "server-station".into(),
+                station: Some(presentation("Server Station")),
                 stream_uri: "https://stream.test/server".into(),
             }
+        );
+    }
+
+    #[test]
+    fn delivered_station_uses_server_name_and_future_icon_without_changing_id() {
+        let station = delivered_station(
+            "catalog-id",
+            Some(&crate::device_control::StationPresentation {
+                name: "Chosen station".into(),
+                icon_url: Some("https://images.example.test/chosen.png".into()),
+            }),
+            "https://stream.example.test/live",
+        );
+        assert_eq!(station.id, "catalog-id");
+        assert_eq!(station.name, "Chosen station");
+        assert_eq!(
+            station.favicon_url.as_deref(),
+            Some("https://images.example.test/chosen.png")
         );
     }
 }

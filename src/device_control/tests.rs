@@ -122,6 +122,26 @@ fn commands_are_strictly_bounded_and_catalog_only() {
             &command_frame(
                 command_id,
                 device_id,
+                json!({"name":"station.play_stream","source":"rockserver_catalog","station_id":"station-rock-002","station":{"name":"Future Icon","icon_url":"https://icons.example.test/future.png"},"stream_uri":"https://stream.test/future.aac"})
+            ),
+            Some(device_id),
+        )
+        .unwrap()
+        .command,
+        PlayerCommand::PlayStream {
+            station_id: "station-rock-002".into(),
+            station: Some(StationPresentation {
+                name: "Future Icon".into(),
+                icon_url: Some("https://icons.example.test/future.png".into()),
+            }),
+            stream_uri: "https://stream.test/future.aac".into(),
+        }
+    );
+    assert_eq!(
+        command_from_frame(
+            &command_frame(
+                command_id,
+                device_id,
                 json!({"name":"volume.change_volume","delta":-7})
             ),
             Some(device_id),
@@ -130,14 +150,14 @@ fn commands_are_strictly_bounded_and_catalog_only() {
         .command,
         PlayerCommand::ChangeVolume { delta: -7 }
     );
-    // The server-resolved delivery carries the catalog id next to the stream URI;
-    // without the id the player could not publish truthful playback state.
+    // The server-resolved delivery carries the catalog id and display data next to the
+    // stream URI; the ID remains state identity while the name repairs the local UI.
     assert_eq!(
         command_from_frame(
             &command_frame(
                 command_id,
                 device_id,
-                json!({"name":"station.play_stream","source":"rockserver_catalog","station_id":"station-rock-001","stream_uri":"https://stream.test/live.aac"})
+                json!({"name":"station.play_stream","source":"rockserver_catalog","station_id":"station-rock-001","station":{"name":"Server Rock","icon_url":null},"stream_uri":"https://stream.test/live.aac"})
             ),
             Some(device_id),
         )
@@ -145,6 +165,10 @@ fn commands_are_strictly_bounded_and_catalog_only() {
         .command,
         PlayerCommand::PlayStream {
             station_id: "station-rock-001".into(),
+            station: Some(StationPresentation {
+                name: "Server Rock".into(),
+                icon_url: None,
+            }),
             stream_uri: "https://stream.test/live.aac".into(),
         }
     );

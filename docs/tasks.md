@@ -1,5 +1,25 @@
 # RockCast tasks
 
+## RC-4b — render bounded server station presentation (2026-09-17)
+
+- Symptom: RC-4a can play a station selected in RockMobile even when it is
+  absent from the local RockCast catalog, but its fallback row used the exact
+  catalog ID as the title, so `Now playing` displayed a UUID.
+- Contract: accept optional target-only
+  `station: { name, icon_url }` beside server-resolved
+  `{ station_id, stream_uri }`. The ID remains identity and runtime-state
+  value; the name is presentation only. The server currently emits
+  `icon_url: null` because the catalog does not store icons. A non-null future
+  URL reuses RockCast's bounded station-icon queue; no stream URI is parsed as
+  presentation and no station list is transferred.
+- Compatibility: deploy RockCast first. It accepts a server that has not yet
+  sent `station`; the older strict RockCast parser would reject a delivery with
+  that field.
+- Checks: `cargo fmt --check`; `cargo clippy --all-targets --all-features --
+  -D warnings`; `cargo test` — 131 unit + 2 integration passed, 0 failed;
+  `git diff --check`. Physical USB-phone acceptance after server deployment is
+  still pending.
+
 ## RC-4a — accept the server-delivered `station.play_stream` (fixed, 2026-09-17)
 
 - Symptom: remote play commands from RockMobile were rejected with

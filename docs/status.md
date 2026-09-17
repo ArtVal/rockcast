@@ -1,5 +1,29 @@
 # RockCast status
 
+## RC-4b — name and future icon in a server-delivered station (implemented locally, 2026-09-17)
+
+The fallback entry introduced by RC-4a used the catalog ID as its local name.
+It was correct as identity but rendered an opaque UUID in the `Now playing`
+panel when RockCast did not already have that station in its own cache.
+
+The server-to-target `station.play_stream` contract now has a bounded optional
+`station` presentation object. `station_id` remains the exact state identity;
+`station.name` is display-only and is used for both a new fallback entry and an
+existing local entry. `station.icon_url` is retained as a nullable future field:
+the current server catalog has no stored icon, so deployed server output will
+honestly contain `icon_url: null`. If it is later present, RockCast keeps the
+URL in the existing station-icon path and queues the existing bounded image
+fetch; no catalog dump, new fetch API, or stream-URL-derived icon is added.
+
+For a non-breaking rollout, install this RockCast build before the server that
+emits `station`: this build accepts an older delivery without the object and
+falls back to the ID, whereas an older strict parser rejects the new field.
+The display object is not published as device state and does not change the
+exact `station_id` sent to RockServer. Checks: `cargo fmt --check`, strict
+all-target/all-feature Clippy, and `cargo test` (131 unit + 2 integration
+passed; live-network tests ignored by their explicit gates). Physical
+RockMobile acceptance with the new server delivery remains pending.
+
 ## RC-4a — server-delivered `station.play_stream` acceptance (fixed, 2026-09-17)
 
 Live testing showed RockCast rejecting remote play commands with

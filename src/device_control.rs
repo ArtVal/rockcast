@@ -18,7 +18,9 @@ use crate::{
 };
 pub(crate) use output::{ChromecastDiscovery, LocalChromecastDiscovery, ReceiverCache};
 use parking_lot::Mutex;
-pub(crate) use protocol::{CommandResult, DeviceCommand, PlayerCommand, PlayerState};
+pub(crate) use protocol::{
+    CommandResult, DeviceCommand, PlayerCommand, PlayerState, StationPresentation,
+};
 use protocol::{
     ControlError, HEARTBEAT, HeartbeatPayload, HelloPayload, Inbound, NO_IDENTITY_DELAY, POLL,
     PublishedState, RegisterPayload, StateFullPayload, backoff, command_accepted,
