@@ -1,5 +1,21 @@
 # RockCast tasks
 
+## RC-4a — accept the server-delivered `station.play_stream` (fixed, 2026-09-17)
+
+- Symptom: remote play commands from RockMobile were rejected with
+  `invalid_payload` ("Command cannot be applied to local playback state").
+- Root cause: the RS-3 delivery carries `{ station_id, stream_uri }`, but the
+  parser dropped `station_id` and the planner matched the URI against the
+  local station list; stations from the phone's server catalog are absent
+  there, so every such play failed the lookup.
+- Fix: parse and require `station_id` on the catalog-source delivery; map it
+  to a `PlayDelivered` plan that plays the resolved stream directly (local
+  id matches contribute metadata only, unknown ids are appended with their
+  exact catalog id per live-control §4.3).
+- Checks: `cargo fmt --check`; `cargo clippy --all-targets --all-features --
+  -D warnings`; `cargo test` — 130 unit + 2 integration passed, 0 failed;
+  `git diff --check`. Release binary rebuilt; live retest pending.
+
 ## RC-4 — publish truthful playback and volume state for RockMobile (2026-09-17)
 
 - Goal: publish the owned player's complete revisioned state — exact catalog

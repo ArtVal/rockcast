@@ -274,17 +274,32 @@ pub(crate) enum PlayerCommand {
     Stop,
     Next,
     Previous,
-    PlayStation { station_id: String },
-    PlayStream { stream_uri: String },
-    SetVolume { level: u8 },
-    ChangeVolume { delta: i8 },
-    SetMute { muted: bool },
+    PlayStation {
+        station_id: String,
+    },
+    PlayStream {
+        station_id: String,
+        stream_uri: String,
+    },
+    SetVolume {
+        level: u8,
+    },
+    ChangeVolume {
+        delta: i8,
+    },
+    SetMute {
+        muted: bool,
+    },
     ChromecastDiscover,
-    ChromecastConnect { receiver_id: String },
+    ChromecastConnect {
+        receiver_id: String,
+    },
     ChromecastDisconnect,
     RelayStart,
     RelayStop,
-    RelaySetMode { mode: String },
+    RelaySetMode {
+        mode: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -362,6 +377,9 @@ enum CommandBody {
     #[serde(rename = "station.play_stream")]
     PlayStream {
         source: StationSource,
+        /// Catalog identity of the resolved station; the server contract requires it so
+        /// the target can publish truthful state without recovering the id from the URL.
+        station_id: Option<String>,
         stream_uri: String,
     },
     #[serde(rename = "volume.set_volume")]
@@ -545,9 +563,19 @@ fn command_from_body(body: CommandBody) -> Option<PlayerCommand> {
             .then_some(PlayerCommand::PlayStation { station_id }),
         CommandBody::PlayStream {
             source: StationSource::RockserverCatalog,
+            station_id,
             stream_uri,
-        } => (!stream_uri.is_empty() && stream_uri.len() <= 2_048)
-            .then_some(PlayerCommand::PlayStream { stream_uri }),
+        } => {
+            // The server contract always carries the resolved catalog id on this
+            // variant; without it the player could not publish truthful state.
+            let station_id = station_id.filter(|id| !id.is_empty() && id.len() <= 128)?;
+            (!stream_uri.is_empty() && stream_uri.len() <= 2_048).then_some(
+                PlayerCommand::PlayStream {
+                    station_id,
+                    stream_uri,
+                },
+            )
+        }
         CommandBody::PlayStream {
             source: StationSource::DirectStream,
             ..

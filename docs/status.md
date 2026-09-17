@@ -1,5 +1,27 @@
 # RockCast status
 
+## RC-4a — server-delivered `station.play_stream` acceptance (fixed, 2026-09-17)
+
+Live testing showed RockCast rejecting remote play commands with
+`invalid_payload`: after RS-3 the server delivers the phone's
+`station.play_station` as `station.play_stream { station_id, stream_uri }`,
+but RockCast ignored the `station_id` field and instead required the stream
+URI to match some station already in its local list. Any station picked from
+the phone's larger server catalog therefore failed the lookup and the command
+was answered with a terminal failure — RockCast "did not accept play".
+
+`station.play_stream` now parses the catalog `station_id` (a catalog-source
+delivery without it is rejected as `invalid_payload`, because truthful state
+cannot be published without the id) and maps to a new `PlayDelivered` plan:
+the delivered stream plays directly, a local entry with the same id only
+reuses its metadata while the server-resolved URI stays authoritative, and a
+station unknown to the local catalog is appended as a minimal entry with its
+exact catalog id (never an id recovered from the URL, live-control §4.3).
+Verified by `cargo test` (130 unit + 2 integration, 0 failed) covering the
+wire parse with/without `station_id`, the plan mapping, and playback without
+local-catalog membership; `cargo fmt --check`, strict Clippy and
+`git diff --check` pass. A fresh release binary was rebuilt for live testing.
+
 ## RC-4 — truthful runtime-state publisher (implemented locally, 2026-09-17)
 
 RockCast now publishes its owned player's actual facts for the RockServer

@@ -18,12 +18,35 @@ enum RemoteCommandPlan {
     Stop,
     PlayRelative(isize),
     PlayStation(usize),
+    /// Server-resolved `station.play_stream`: the catalog id and stream URI come from
+    /// the command and playback must not require local-catalog membership.
+    PlayDelivered {
+        station_id: String,
+        stream_uri: String,
+    },
     SetVolume(u8),
     ChromecastDiscover,
-    ChromecastConnect { receiver_id: String },
+    ChromecastConnect {
+        receiver_id: String,
+    },
     ChromecastDisconnect,
     RelayStart,
     RelayStop,
+}
+
+/// Minimal station for a server-delivered `station.play_stream`. Identity comes from
+/// the command's catalog id, never from the stream URL (live-control §4.3); a local
+/// catalog entry with the same id would have supplied richer metadata earlier.
+fn delivered_station(station_id: &str, stream_uri: &str) -> crate::stations::Station {
+    crate::stations::Station::from_primary(
+        station_id.to_owned(),
+        station_id.to_owned(),
+        stream_uri.to_owned(),
+        String::new(),
+        String::new(),
+        0,
+        String::new(),
+    )
 }
 
 fn plan_remote_command(
@@ -55,11 +78,13 @@ fn plan_remote_command(
             .position(|station| station.id == *station_id)
             .map(RemoteCommandPlan::PlayStation)
             .ok_or_else(unavailable),
-        PlayerCommand::PlayStream { stream_uri } => stations
-            .iter()
-            .position(|station| station.url == *stream_uri)
-            .map(RemoteCommandPlan::PlayStation)
-            .ok_or_else(unavailable),
+        PlayerCommand::PlayStream {
+            station_id,
+            stream_uri,
+        } => Ok(RemoteCommandPlan::PlayDelivered {
+            station_id: station_id.clone(),
+            stream_uri: stream_uri.clone(),
+        }),
         PlayerCommand::SetVolume { level } => Ok(RemoteCommandPlan::SetVolume(*level)),
         PlayerCommand::ChangeVolume { delta } => Ok(RemoteCommandPlan::SetVolume(
             (i16::from(volume) + i16::from(*delta)).clamp(0, 100) as u8,
@@ -213,6 +238,37 @@ impl RockCastApp {
                 RemoteCommandPlan::Stop => self.stop(),
                 RemoteCommandPlan::PlayRelative(offset) => self.play_remote_relative(offset),
                 RemoteCommandPlan::PlayStation(index) => {
+                    self.selected_station = Some(index);
+                    self.scroll_to_station = Some(index);
+                    self.voice_fallback.clear();
+                    self.play()
+                }
+                RemoteCommandPlan::PlayDelivered {
+                    station_id,
+                    stream_uri,
+                } => {
+                    // The server already validated this catalog station and resolved
+                    // its stream (RS-3), so play it directly. A local id match only
+                    // reuses metadata; the delivered URI stays authoritative.
+                    let index = self.stations.iter().position(|s| s.id == station_id);
+                    let index = match index {
+                        Some(index) => {
+                            if let Some(primary) = self.stations[index]
+                                .streams
+                                .iter_mut()
+                                .find(|stream| stream.primary)
+                            {
+                                primary.url = stream_uri.clone();
+                            }
+                            self.stations[index].url = stream_uri;
+                            index
+                        }
+                        None => {
+                            self.stations
+                                .push(delivered_station(&station_id, &stream_uri));
+                            self.stations.len() - 1
+                        }
+                    };
                     self.selected_station = Some(index);
                     self.scroll_to_station = Some(index);
                     self.voice_fallback.clear();
@@ -643,9 +699,13 @@ mod tests {
             ),
             (
                 PlayerCommand::PlayStream {
+                    station_id: "first".into(),
                     stream_uri: "https://catalog.test/first".into(),
                 },
-                RemoteCommandPlan::PlayStation(0),
+                RemoteCommandPlan::PlayDelivered {
+                    station_id: "first".into(),
+                    stream_uri: "https://catalog.test/first".into(),
+                },
             ),
             (
                 PlayerCommand::SetVolume { level: 77 },
@@ -679,13 +739,29 @@ mod tests {
             PlayerCommand::PlayStation {
                 station_id: "missing".into(),
             },
-            PlayerCommand::PlayStream {
-                stream_uri: "https://untrusted.test/stream".into(),
-            },
             PlayerCommand::Pause,
             PlayerCommand::SetMute { muted: true },
         ] {
             assert!(plan_remote_command(&command, &stations, None, 50).is_err());
         }
+    }
+
+    #[test]
+    fn delivered_server_stream_plays_without_local_catalog_membership() {
+        // The phone's catalog stations are not part of RockCast's local list; the
+        // server-resolved command must still plan a direct playback start.
+        let stations = [station("known", "https://catalog.test/known")];
+        let command = PlayerCommand::PlayStream {
+            station_id: "server-station".into(),
+            stream_uri: "https://stream.test/server".into(),
+        };
+        let plan = plan_remote_command(&command, &stations, None, 50).unwrap();
+        assert_eq!(
+            plan,
+            RemoteCommandPlan::PlayDelivered {
+                station_id: "server-station".into(),
+                stream_uri: "https://stream.test/server".into(),
+            }
+        );
     }
 }

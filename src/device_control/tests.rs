@@ -130,6 +130,37 @@ fn commands_are_strictly_bounded_and_catalog_only() {
         .command,
         PlayerCommand::ChangeVolume { delta: -7 }
     );
+    // The server-resolved delivery carries the catalog id next to the stream URI;
+    // without the id the player could not publish truthful playback state.
+    assert_eq!(
+        command_from_frame(
+            &command_frame(
+                command_id,
+                device_id,
+                json!({"name":"station.play_stream","source":"rockserver_catalog","station_id":"station-rock-001","stream_uri":"https://stream.test/live.aac"})
+            ),
+            Some(device_id),
+        )
+        .unwrap()
+        .command,
+        PlayerCommand::PlayStream {
+            station_id: "station-rock-001".into(),
+            stream_uri: "https://stream.test/live.aac".into(),
+        }
+    );
+    assert_eq!(
+        command_from_frame(
+            &command_frame(
+                command_id,
+                device_id,
+                json!({"name":"station.play_stream","source":"rockserver_catalog","stream_uri":"https://stream.test/live.aac"})
+            ),
+            Some(device_id),
+        )
+        .unwrap_err()
+        .code,
+        "invalid_payload"
+    );
     assert_eq!(
         command_from_frame(
             &command_frame(command_id, device_id, json!({"name":"station.play_stream","source":"direct_stream","stream_uri":"https://unsafe.example/stream"})),
