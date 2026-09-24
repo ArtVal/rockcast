@@ -433,6 +433,7 @@ fn receive_voice_result<S: Read + Write>(
                 }));
             }
             VoiceEvent::Error { code, message, .. } => {
+                log::warn!("voice terminal error: code={code:?}");
                 if let Some(code) = code {
                     return Err(VoiceError::StreamError { code, message });
                 }

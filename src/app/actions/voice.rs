@@ -22,7 +22,6 @@ impl RockCastApp {
         let rockserver = self.rockserver.clone();
         // Voice commands are currently Russian regardless of UI translation.
         let locale = "ru-RU".to_owned();
-        let device_session_active = self.device_control.is_registered();
         if self
             .background
             .spawn(move |_| {
@@ -34,17 +33,12 @@ impl RockCastApp {
                 .ok()
                 .flatten();
                 let effective_token = bearer_token.as_deref().or(rockserver.bearer_token());
-                let surface_id = if device_session_active && effective_token.is_some() {
-                    Some("voice.main")
-                } else {
-                    None
-                };
                 let _ = tx.send(UiMsg::VoiceResult(crate::voice::capture_and_recognize(
                     rockserver.base_url(),
                     effective_token,
                     &locale,
                     rockserver.recognizer_mode(),
-                    surface_id,
+                    None,
                     recording,
                 )));
             })
