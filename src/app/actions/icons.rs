@@ -9,7 +9,8 @@ impl RockCastApp {
     pub(in crate::app) fn queue_station_icons(&mut self, stations: &[Station]) {
         let root = station_icons::cache_dir();
         for station in stations {
-            let Some(source) = station_icons::source_url(station) else {
+            let server_base = self.rockserver.base_url();
+            let Some(source) = station_icons::source_url(station, Some(server_base)) else {
                 continue;
             };
             let request_key = station_icons::request_key(station, &source);
@@ -20,11 +21,16 @@ impl RockCastApp {
             let station = station.clone();
             let request_key_for_job = request_key.clone();
             let root = root.clone();
+            let server_base_for_job = Some(server_base.to_owned());
             let result = self.background.spawn(move |cancel| {
                 if cancel.is_cancelled() {
                     return;
                 }
-                let image = match station_icons::load_or_fetch(&station, &root) {
+                let image = match station_icons::load_or_fetch(
+                    &station,
+                    &root,
+                    server_base_for_job.as_deref(),
+                ) {
                     Ok(image) => image,
                     Err(error) => {
                         // The request identity remains recorded, so a bad

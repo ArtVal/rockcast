@@ -320,7 +320,10 @@ impl RockCastApp {
                             };
                             let y = row_rect.center().y;
 
-                            if let Some(source) = crate::station_icons::source_url(st) {
+                            if let Some(source) = crate::station_icons::source_url(
+                                st,
+                                Some(self.rockserver.base_url()),
+                            ) {
                                 let request_key = crate::station_icons::request_key(st, &source);
                                 if let Some(texture) = self.station_icons.get(&request_key) {
                                     let icon_rect = Rect::from_center_size(

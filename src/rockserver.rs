@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Public RockServer used by official RockCast releases.
-pub(crate) const PRODUCTION_BASE_URL: &str = "https://alex.vault57.ru";
+pub(crate) const PRODUCTION_BASE_URL: &str = "https://rockplatform.win";
 
 /// Runtime-only server configuration. It is deliberately not serializable or
 /// printable so an override credential cannot leak into user settings or logs.
@@ -90,7 +90,7 @@ pub(crate) fn search(
         .json(&SearchRequest {
             query,
             locale,
-            limit: 50,
+            limit: 20,
         });
     if let Some(token) = config.bearer_token() {
         request = request.bearer_auth(token);
@@ -213,6 +213,6 @@ mod tests {
 
     #[test]
     fn production_endpoint_is_https() {
-        assert_eq!(PRODUCTION_BASE_URL, "https://alex.vault57.ru");
+        assert_eq!(PRODUCTION_BASE_URL, "https://rockplatform.win");
     }
 }

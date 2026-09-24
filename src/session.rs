@@ -865,8 +865,8 @@ mod tests {
             status: "pending".into(),
         };
         assert_eq!(
-            pairing.deep_link("https://alex.vault57.ru/"),
-            "https://alex.vault57.ru/?code=AB12CD34#secret=approval-secret-1234"
+            pairing.deep_link("https://rockplatform.win/"),
+            "https://rockplatform.win/?code=AB12CD34#secret=approval-secret-1234"
         );
     }
 

@@ -713,14 +713,14 @@ mod tests {
 
     #[test]
     fn voice_websocket_endpoint_uses_default_ports() {
-        let secure_url = websocket_url("https://alex.vault57.ru").unwrap();
-        assert_eq!(secure_url, "wss://alex.vault57.ru/api/v1/voice/stream");
+        let secure_url = websocket_url("https://rockplatform.win").unwrap();
+        assert_eq!(secure_url, "wss://rockplatform.win/api/v1/voice/stream");
         assert_eq!(
             voice_socket_endpoint(&secure_url).unwrap(),
             (
-                "alex.vault57.ru".to_owned(),
+                "rockplatform.win".to_owned(),
                 443,
-                "alex.vault57.ru".to_owned()
+                "rockplatform.win".to_owned()
             )
         );
 
@@ -739,8 +739,8 @@ mod tests {
     #[test]
     fn public_voice_handshake_has_no_authorization_header() {
         let request = voice_handshake_request(
-            "wss://alex.vault57.ru/api/v1/voice/stream",
-            "alex.vault57.ru",
+            "wss://rockplatform.win/api/v1/voice/stream",
+            "rockplatform.win",
             "test-websocket-key",
             None,
         )
@@ -764,13 +764,13 @@ mod tests {
 
     #[test]
     fn voice_websocket_endpoint_preserves_explicit_port() {
-        let url = websocket_url("https://alex.vault57.ru:8443").unwrap();
+        let url = websocket_url("https://rockplatform.win:8443").unwrap();
         assert_eq!(
             voice_socket_endpoint(&url).unwrap(),
             (
-                "alex.vault57.ru".to_owned(),
+                "rockplatform.win".to_owned(),
                 8443,
-                "alex.vault57.ru:8443".to_owned()
+                "rockplatform.win:8443".to_owned()
             )
         );
     }

@@ -1,10 +1,17 @@
-//! Direct station icon loading for the pre-RockServer-icon MVP.
+//! Station icon loading for server-owned icons and the offline-catalog fallback.
 //!
 //! The UI only receives decoded, bounded pixels. Network I/O, image decoding,
 //! and cache I/O all run on the existing [`BackgroundRuntime`]. The cache is a
 //! small versioned file keyed by the station id (or stream URL for legacy
 //! stations); the source URL stored in the file invalidates it when catalog
 //! metadata changes.
+//!
+//! RockServer stations carry a nullable `favicon_url` that is a same-origin
+//! path (for example `/api/v1/stations/{id}/icon`); it is resolved against the
+//! configured RockServer base URL, so those icons are fetched from RockServer
+//! only and never from the station itself. Direct homepage `/favicon.ico`
+//! fetching remains only the fallback for stations without a server icon URL
+//! (the bundled offline catalog); no homepage HTML is fetched or scraped.
 
 use std::{
     fs,
@@ -43,14 +50,32 @@ pub fn cache_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("rockcast_station_icons"))
 }
 
-/// Return the only URL that the MVP is allowed to fetch for a station.
+/// Return the only URL that icon loading may fetch for a station.
 ///
-/// An explicit favicon/logo URL wins. When it is absent, the fallback is the
-/// conventional `/favicon.ico` on the explicitly supplied official homepage;
-/// no homepage HTML is fetched or scraped.
-pub fn source_url(station: &Station) -> Option<String> {
+/// A server-owned relative path wins when a RockServer base URL is supplied:
+/// it is joined onto that base, so the icon comes from RockServer. An explicit
+/// absolute favicon/logo URL (offline-catalog stations) is used as-is. When
+/// neither exists, the fallback is the conventional `/favicon.ico` on the
+/// explicitly supplied official homepage; no homepage HTML is fetched or
+/// scraped.
+pub fn source_url(station: &Station, server_base: Option<&str>) -> Option<String> {
     if let Some(explicit) = station.favicon_url.as_deref() {
-        return valid_http_url(explicit).map(|url| url.to_string());
+        if let Some(url) = valid_http_url(explicit) {
+            return Some(url.to_string());
+        }
+        if let Some(base) = server_base.and_then(|base| {
+            let trimmed = base.trim().trim_end_matches('/');
+            valid_http_url(trimmed)
+        }) {
+            let path = explicit.trim();
+            if path.starts_with('/')
+                && !path.starts_with("//")
+                && let Ok(url) = base.join(path)
+            {
+                return Some(url.to_string());
+            }
+        }
+        return None;
     }
 
     let homepage = station.homepage_url.as_deref().and_then(valid_http_url)?;
@@ -67,8 +92,12 @@ pub fn request_key(station: &Station, source: &str) -> String {
 }
 
 /// Load a valid cached icon or fetch/decode/cache it once.
-pub fn load_or_fetch(station: &Station, root: &Path) -> Result<Option<StationIconImage>, String> {
-    let Some(source) = source_url(station) else {
+pub fn load_or_fetch(
+    station: &Station,
+    root: &Path,
+    server_base: Option<&str>,
+) -> Result<Option<StationIconImage>, String> {
+    let Some(source) = source_url(station, server_base) else {
         return Ok(None);
     };
     let cache_key = cache_stem(station);
@@ -305,9 +334,48 @@ mod tests {
         station.homepage_url = Some("https://radio.example.test/home".into());
         station.favicon_url = Some("https://cdn.example.test/logo.png?size=64".into());
         assert_eq!(
-            source_url(&station).as_deref(),
+            source_url(&station, None).as_deref(),
             Some("https://cdn.example.test/logo.png?size=64")
         );
+    }
+
+    #[test]
+    fn server_relative_favicon_path_resolves_against_the_rockserver_base() {
+        let mut station = station();
+        station.favicon_url = Some("/api/v1/stations/station-1/icon".into());
+        assert_eq!(
+            source_url(&station, Some("https://rockplatform.win")).as_deref(),
+            Some("https://rockplatform.win/api/v1/stations/station-1/icon")
+        );
+        // A trailing slash or surrounding whitespace in the base must not
+        // corrupt the joined URL.
+        assert_eq!(
+            source_url(&station, Some("https://rockplatform.win/")).as_deref(),
+            Some("https://rockplatform.win/api/v1/stations/station-1/icon")
+        );
+        // Without a server base the relative path is unusable and must not
+        // fall through to homepage scraping.
+        station.homepage_url = Some("https://radio.example.test/home".into());
+        assert!(source_url(&station, None).is_none());
+    }
+
+    #[test]
+    fn absolute_favicon_wins_over_the_server_base() {
+        let mut station = station();
+        station.favicon_url = Some("https://cdn.example.test/logo.png".into());
+        assert_eq!(
+            source_url(&station, Some("https://rockplatform.win")).as_deref(),
+            Some("https://cdn.example.test/logo.png")
+        );
+    }
+
+    #[test]
+    fn protocol_relative_and_non_path_sources_are_rejected() {
+        let mut station = station();
+        station.favicon_url = Some("//evil.example.test/icon.png".into());
+        assert!(source_url(&station, Some("https://rockplatform.win")).is_none());
+        station.favicon_url = Some("api/v1/icon".into());
+        assert!(source_url(&station, Some("https://rockplatform.win")).is_none());
     }
 
     #[test]
@@ -315,7 +383,7 @@ mod tests {
         let mut station = station();
         station.homepage_url = Some("https://radio.example.test/home?utm=ignored".into());
         assert_eq!(
-            source_url(&station).as_deref(),
+            source_url(&station, None).as_deref(),
             Some("https://radio.example.test/favicon.ico")
         );
     }
@@ -324,9 +392,9 @@ mod tests {
     fn unsafe_urls_are_rejected() {
         let mut station = station();
         station.favicon_url = Some("file:///tmp/logo.png".into());
-        assert!(source_url(&station).is_none());
+        assert!(source_url(&station, None).is_none());
         station.favicon_url = Some("https://user:secret@example.test/logo.png".into());
-        assert!(source_url(&station).is_none());
+        assert!(source_url(&station, None).is_none());
     }
 
     #[test]

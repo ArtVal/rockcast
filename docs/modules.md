@@ -45,7 +45,7 @@ src/
     mod.rs             Station type + load API
     catalog.rs         Parse bundled stations.txt
     radio_browser.rs   Optional HTTPS enrichment
-  station_icons.rs     bounded direct favicon/logo fetch, decode, and cache
+  station_icons.rs     server-resolved icon path or favicon fetch, decode, and cache
   settings.rs          app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
   i18n.rs              Lang::Ru | En string tables
   relay/               StreamRelay — LAN HTTP proxy (PC→Cast, VPN-friendly)

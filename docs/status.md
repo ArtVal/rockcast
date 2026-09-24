@@ -1,5 +1,27 @@
 # RockCast status
 
+## RC-5 — rockplatform.win domain and server-owned station icons (implemented locally, 2026-09-24)
+
+RockServer production moved to `https://rockplatform.win`, so
+`PRODUCTION_BASE_URL`, the voice/session test literals and the account
+pairing deep-link expectations now use the new domain. The server search DTO
+publishes a nullable same-origin `favicon_url` path
+(`/api/v1/stations/{id}/icon`), which the pre-server MVP icon loader would
+have rejected as a non-absolute URL.
+
+`station_icons::source_url` now resolves such relative paths against the
+configured RockServer base URL (borrowed from the runtime config in both the
+job scheduler and the station table), so RockServer stations fetch their icon
+from RockServer only — never from the station itself. Protocol-relative
+(`//host/...`) and non-rooted sources are rejected; an absolute favicon URL
+(an offline-catalog station) still wins; the homepage `/favicon.ico` fallback
+without scraping remains only for stations without a server icon URL. The
+existing bounded download/decode/file cache is unchanged, and WebP decodes
+through the same `image` limits. Checks: `cargo fmt --check`, strict
+all-target/all-feature Clippy, and `cargo test` (136 unit tests passed; live
+tests remain ignored by their gates). Not yet exercised against the live
+server from the physical target.
+
 ## RC-4b — name and future icon in a server-delivered station (implemented locally, 2026-09-17)
 
 The fallback entry introduced by RC-4a used the catalog ID as its local name.
