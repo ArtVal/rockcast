@@ -20,6 +20,7 @@ impl RockCastApp {
         self.play();
     }
 
+    #[allow(dead_code)]
     pub(in crate::app) fn toggle_selected_favourite(&mut self) {
         let Some(station) = self
             .selected_station
@@ -28,14 +29,26 @@ impl RockCastApp {
         else {
             return;
         };
+        self.toggle_station_favourite(&station);
+    }
+
+    /// Toggles favourite state for a specific station and updates the status message.
+    pub(in crate::app) fn toggle_station_favourite(&mut self, station: &crate::stations::Station) {
         let Some(store) = self.personal_data.as_mut() else {
             return;
         };
-        match store.toggle_favourite(&station) {
+        match store.toggle_favourite(station) {
             Ok(true) => self.status = format!("Added to favourites: {}", station.name),
             Ok(false) => self.status = format!("Removed from favourites: {}", station.name),
             Err(error) => self.status = format!("Favourites unavailable: {error}"),
         }
+    }
+
+    /// Checks if a station ID is saved in local favourites.
+    pub(in crate::app) fn is_station_favourite(&self, station_id: &str) -> bool {
+        self.personal_data
+            .as_ref()
+            .is_some_and(|store| store.is_favourite(station_id))
     }
 
     pub(in crate::app) fn draw_personal_windows(&mut self, ctx: &Context) {

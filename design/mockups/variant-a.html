@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>RockCast — Вариант A: отполированная таблица</title>
+<style>
+*{box-sizing:border-box;margin:0}
+:root{
+  --bg:#15110e; --panel:#201914; --panel2:#2a211b; --border:#3b2c23; --bs:#2d211a;
+  --fg:#f3eee9; --accent:#e56020; --muted:#9e8d82; --gold:#f59e0b; --green:#3ddc84;
+  --danger:#ff7b72;
+}
+body{background:#0d0a08;color:var(--fg);font:13px/1.45 "Segoe UI",system-ui,sans-serif;padding:18px 24px 48px}
+.page-head{max-width:1180px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:center;gap:16px}
+.page-head h1{font-size:16px;font-weight:600}
+.page-head p{color:var(--muted);font-size:12px;margin-top:2px}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--fg);font:600 12.5px/1 "Segoe UI",sans-serif;
+     padding:0 14px;height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{border-color:var(--accent);color:#fff}
+.btn.acc{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{background:transparent;border-color:rgba(255,123,114,.35);color:var(--danger)}
+.btn.danger:hover{background:rgba(255,123,114,.08)}
+.btn.ghost{background:transparent}
+
+/* ===== окно приложения ===== */
+.window{position:relative;width:1180px;height:800px;margin:0 auto;background:var(--bg);
+        border:1px solid #000;border-radius:10px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+.titlebar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;
+          background:#1a1411;border-bottom:1px solid var(--bs)}
+.tb-title{font-size:12px;color:var(--muted)}
+.tb-btns{color:var(--muted);font-size:12px;letter-spacing:14px;padding-right:2px}
+.page{height:calc(100% - 34px);display:flex;flex-direction:column;gap:10px;padding:14px 16px 14px}
+
+/* шапка — компактная, единая шкала шрифтов */
+.app-head{display:flex;justify-content:space-between;align-items:center}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;font-weight:700;font-size:17px;
+      display:flex;align-items:center;justify-content:center}
+.app-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.badge{font-size:10px;font-weight:600;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:2px 6px;letter-spacing:.5px}
+.sub{font-size:12px;color:var(--muted);margin-top:1px}
+.head-actions{display:flex;gap:8px}
+
+/* устройство */
+.device-row{display:flex;align-items:center;gap:10px}
+.lbl{font-size:12px;color:var(--muted);width:76px;flex:none}
+.select{flex:1;max-width:560px;height:34px;background:var(--panel);border:1px solid var(--border);border-radius:8px;
+        display:flex;align-items:center;gap:8px;padding:0 12px;font-size:13px;color:var(--fg)}
+.select .chev{margin-left:auto;color:var(--muted)}
+
+/* поиск */
+.search-row{display:flex;gap:8px}
+.search{flex:1;height:36px;background:var(--panel);border:1px solid var(--border);border-radius:8px;
+        display:flex;align-items:center;gap:9px;padding:0 12px;color:var(--muted);font-size:13px}
+.search svg{flex:none}
+.voice-warn{color:#ffb020}
+
+/* чипсы — в одну строку с мягким обрезом, ничего не уезжает */
+.chips{display:flex;gap:6px;align-items:center;overflow:hidden;
+       -webkit-mask-image:linear-gradient(90deg,#000 92%,transparent);mask-image:linear-gradient(90deg,#000 92%,transparent)}
+.chip{flex:none;height:27px;padding:0 12px;border-radius:15px;border:1px solid var(--border);background:transparent;
+      color:var(--muted);font:600 12px/1 "Segoe UI",sans-serif;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.chip b{font-weight:600;color:inherit;opacity:.75}
+.chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip:not(.active):hover{border-color:var(--accent);color:var(--fg)}
+.vdiv{width:1px;height:18px;background:var(--border);margin:0 4px;flex:none}
+
+/* ===== таблица ===== */
+.table{flex:1;min-height:0;background:var(--panel);border:1px solid var(--bs);border-radius:10px;
+       display:flex;flex-direction:column;overflow:hidden}
+.thead,.row{display:grid;grid-template-columns:40px minmax(200px,1.35fr) minmax(120px,1fr) 92px 60px 56px;
+            gap:10px;align-items:center;padding:0 14px 0 10px}
+.thead{height:32px;color:var(--muted);font-size:11.5px;border-bottom:1px solid var(--bs);flex:none}
+.rows{flex:1;overflow:auto}
+.rows::-webkit-scrollbar{width:8px}
+.rows::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.row{height:44px;border-bottom:1px solid rgba(255,255,255,.025);position:relative;cursor:default}
+.row:hover{background:var(--panel2)}
+.row.playing{background:linear-gradient(90deg,rgba(229,96,32,.16),rgba(229,96,32,.05) 70%)}
+.row.playing::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;background:var(--accent);border-radius:0 2px 2px 0}
+.st{display:flex;align-items:center;gap:10px;min-width:0}
+.mono{width:28px;height:28px;border-radius:7px;flex:none;display:flex;align-items:center;justify-content:center;
+      font-size:10.5px;font-weight:700;color:#eec7ab;letter-spacing:.3px}
+.st .nm{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.playing .nm{color:var(--accent)}
+.eq{display:inline-flex;gap:2.5px;align-items:flex-end;height:14px;flex:none;margin-left:2px}
+.eq i{width:3px;border-radius:1px;background:var(--accent);animation:eq 1s ease-in-out infinite}
+.eq i:nth-child(1){height:6px}.eq i:nth-child(2){height:13px;animation-delay:.25s}
+.eq i:nth-child(3){height:9px;animation-delay:.5s}.eq i:nth-child(4){height:12px;animation-delay:.75s}
+@keyframes eq{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+.eq i{transform-origin:bottom}
+.tags{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.br{color:var(--muted);font-size:12px}
+.cc{justify-self:start;border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:10.5px;color:var(--muted)}
+.star{font-size:14px;color:var(--gold);background:none;border:0;cursor:pointer;padding:0}
+.star.off{color:#4a3a30}
+.star.off:hover{color:var(--gold)}
+.pbtn{width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--panel2);color:var(--fg);
+      display:flex;align-items:center;justify-content:center;cursor:pointer;justify-self:end}
+.pbtn svg{display:block}
+.row:hover .pbtn{background:var(--accent);border-color:var(--accent);color:#fff}
+.row.playing .pbtn{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ===== плеер: статус внутри окна, ничего не обрезается ===== */
+.player{flex:none;height:78px;background:var(--panel);border:1px solid var(--bs);border-radius:10px;
+        display:grid;grid-template-columns:minmax(250px,1fr) auto minmax(230px,1fr);align-items:center;
+        padding:0 16px;gap:18px}
+.pl-left{display:flex;align-items:center;gap:12px;min-width:0}
+.pl-logo{width:44px;height:44px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+         font-weight:700;font-size:14px;color:#eec7ab;border:1.5px solid var(--accent)}
+.pl-info{min-width:0}
+.pl-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-top:2px;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+.spectrum{display:flex;align-items:flex-end;gap:2px;height:26px}
+.spectrum i{width:3px;border-radius:1px;background:var(--accent);animation:eq 1.1s ease-in-out infinite;transform-origin:bottom}
+.pl-right{display:flex;align-items:center;gap:12px;justify-self:end}
+.vol{width:150px;height:4px;border-radius:2px;background:var(--bar,#5a4030);position:relative}
+.vol i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.vol s{position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#fff;transform:translate(-50%,-50%)}
+.volpct{font-size:12px;color:var(--muted);width:30px}
+
+/* ===== окно аккаунта: карточка с секциями ===== */
+.pop{position:absolute;top:88px;right:16px;width:424px;background:var(--panel);border:1px solid var(--border);
+     border-radius:12px;box-shadow:0 22px 55px rgba(0,0,0,.65);z-index:30;overflow:hidden}
+.pop.hidden{display:none}
+.pop>header{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;
+            border-bottom:1px solid var(--bs);font-size:14px;font-weight:600}
+.pop>header button{background:none;border:0;color:var(--muted);font-size:15px;cursor:pointer}
+.pop section{padding:13px 16px;border-bottom:1px solid var(--bs)}
+.sec-t{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:9px}
+.dev{display:flex;gap:11px;align-items:flex-start}
+.dev .ic{width:36px;height:36px;border-radius:9px;background:var(--panel2);border:1px solid var(--bs);flex:none;
+         display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.dev .nm{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dev .meta{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5}
+.chip-ok{background:rgba(61,220,132,.1);color:var(--green);border:1px solid rgba(61,220,132,.28);
+         font-size:10px;font-weight:600;border-radius:20px;padding:1.5px 8px}
+.link-d{margin-left:auto;background:none;border:1px solid rgba(255,123,114,.3);color:var(--danger);
+        font:600 11px/1 "Segoe UI",sans-serif;border-radius:6px;padding:5px 9px;cursor:pointer;flex:none}
+.link-d:hover{background:rgba(255,123,114,.08)}
+.account-line{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin-top:8px}
+.account-line b{color:var(--fg);font-weight:600}
+.pop>footer{display:flex;gap:8px;padding:13px 16px}
+.pop>footer .btn{flex:1;justify-content:center;height:34px}
+
+/* заметки под окном */
+.notes{max-width:1180px;margin:26px auto 0;background:var(--panel);border:1px solid var(--bs);border-radius:12px;padding:20px 24px}
+.notes h2{font-size:14px;margin-bottom:10px}
+.notes ul{margin:0 0 16px 18px;color:var(--muted);font-size:12.5px;line-height:1.8}
+.notes b{color:var(--fg)}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div>
+    <h1>Вариант A — «Отполированная таблица»</h1>
+    <p>Та же компоновка, что сейчас: минимум риска, чинятся все четыре замечания точечно.</p>
+  </div>
+  <button class="btn" onclick="document.getElementById('pop').classList.toggle('hidden')">Показать / скрыть окно аккаунта</button>
+</div>
+
+<div class="window">
+  <div class="titlebar">
+    <span class="tb-title">RockCast — радио локально / Chromecast</span>
+    <span class="tb-btns">— ▢ ✕</span>
+  </div>
+
+  <div class="page">
+    <div class="app-head">
+      <div class="brand">
+        <div class="logo">R</div>
+        <div>
+          <div class="app-title">RockCast <span class="badge">DESKTOP</span></div>
+          <div class="sub">Рок и металл — локально или на Chromecast</div>
+        </div>
+      </div>
+      <div class="head-actions">
+        <button class="btn" onclick="document.getElementById('pop').classList.toggle('hidden')">Аккаунт</button>
+        <button class="btn">Русский</button>
+      </div>
+    </div>
+
+    <div class="device-row">
+      <span class="lbl">Устройство</span>
+      <div class="select">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9e8d82" stroke-width="1.4"><path d="M2 6v4h3l4 3V3L5 6H2z" fill="#9e8d82" stroke="none"/><path d="M11.5 5.5a3.5 3.5 0 010 5"/></svg>
+        Динамики (Realtek(R) Audio) ★ Этот ПК
+        <span class="chev">▾</span>
+      </div>
+      <button class="btn">Найти акустику</button>
+    </div>
+
+    <div class="search-row">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#9e8d82" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        Поиск станции, группы или стиля…
+      </div>
+      <button class="btn"><span class="voice-warn">⚠</span> Голос</button>
+      <button class="btn">Каталог (40)</button>
+    </div>
+
+    <div class="chips">
+      <button class="chip active">Все <b>40</b></button>
+      <button class="chip">★ Избранное <b>6</b></button>
+      <button class="chip">История <b>231</b></button>
+      <span class="vdiv"></span>
+      <button class="chip">Classic Rock</button>
+      <button class="chip">Metal</button>
+      <button class="chip">Hard Rock</button>
+      <button class="chip">Alternative</button>
+      <button class="chip">Punk</button>
+      <button class="chip">Progressive</button>
+      <button class="chip">Indie</button>
+      <button class="chip">Doom</button>
+      <button class="chip">Thrash</button>
+    </div>
+
+    <div class="table">
+      <div class="thead">
+        <span></span><span>Станция</span><span>Теги</span><span>Битрейт</span><span>Страна</span><span></span>
+      </div>
+      <div class="rows" id="rows"></div>
+    </div>
+
+    <div class="player">
+      <div class="pl-left">
+        <div class="pl-logo" style="background:#481a16">RO</div>
+        <div class="pl-info">
+          <div class="pl-name">Rock Antenne — Heavy Metal</div>
+          <div class="pl-meta"><span class="dot"></span> Играет локально · Динамики (Realtek(R) Audio) ★ · 128k mp3</div>
+        </div>
+      </div>
+      <div class="spectrum" id="spec"></div>
+      <div class="pl-right">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f3eee9" stroke-width="1.4"><path d="M2 6v4h3l4 3V3L5 6H2z" fill="#f3eee9" stroke="none"/><path d="M11.5 5.5a3.5 3.5 0 010 5"/></svg>
+        <div class="vol"><i style="width:62%"></i><s style="left:62%"></s></div>
+        <span class="volpct">62%</span>
+        <button class="btn ghost">✓ Спектр</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== окно аккаунта ===== -->
+  <div class="pop" id="pop">
+    <header>Аккаунт и устройства <button onclick="document.getElementById('pop').classList.add('hidden')">✕</button></header>
+    <section>
+      <div class="sec-t">Этот компьютер</div>
+      <div class="dev">
+        <div class="ic">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="#9e8d82" stroke-width="1.3"><rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M5.5 14h5"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="nm">RockCast — DESKTOP-685GRAQ <span class="chip-ok">Подключено</span></div>
+          <div class="meta">Аккаунт: <b style="color:#f3eee9">rock1</b> · синхронизация избранного и истории включена</div>
+        </div>
+      </div>
+    </section>
+    <section>
+      <div class="sec-t">Другие устройства · 1</div>
+      <div class="dev">
+        <div class="ic">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#9e8d82" stroke-width="1.3"><rect x="4" y="1.5" width="8" height="13" rx="1.8"/><path d="M7 13h2"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="nm">RockMobile — RMX5056 <span class="chip-ok">Подключено</span></div>
+          <div class="meta">Подключено: 24.09.2026, 09:20 UTC<br>Последняя активность: 24.09.2026, 12:14 UTC</div>
+        </div>
+        <button class="link-d">Отключить</button>
+      </div>
+    </section>
+    <footer>
+      <button class="btn">↻ Обновить</button>
+      <button class="btn danger">Выйти на этом ПК</button>
+    </footer>
+  </div>
+</div>
+
+<div class="notes">
+  <h2>Ключевые изменения</h2>
+  <ul>
+    <li><b>Ничего не уезжает за края:</b> единые поля 16px, колонка ▶ получила фикс. ширину и не прижимается к границе, статус «Playing locally…» переехал внутрь плеера второй строкой.</li>
+    <li><b>Пуск и «кто играет»:</b> круглые кнопки ▶ 30px видны всегда (не только при наведении), играющая строка — акцентная подложка, полоса слева, эквалайзер у названия, кнопка ▶⏸ залита акцентом.</li>
+    <li><b>Шрифты:</b> одна шкала — 10.5 (чипы страны) / 11.5 (подписи, заголовки колонок) / 12–12.5 (теги, кнопки) / 13.5 (название станции) / 14 (плеер) / 18 (заголовок приложения вместо огромного лого-текста).</li>
+    <li><b>Строки 44px</b> вместо 36px — по строке легче попасть, курсор подсвечивает всю строку.</li>
+    <li><b>Окно аккаунта:</b> карточка с секциями «Этот компьютер» / «Другие устройства», статус-чипы «Подключено», разделённые кнопки «Обновить» и «Выйти» (опасное — красным контуром).</li>
+  </ul>
+</div>
+
+<script>
+const MONO = { "18":["#481a16","18"], "ME":["#302824","ME"], "PU":["#3d2c1d","PU"], "RO":["#481a16","RO"],
+               "1F":["#522814","1F"], "GO":["#382216","GO"], "AN":["#441b17","AN"], "BM":["#282523","BM"], "BR":["#5a2e15","BR"] };
+const S = [
+  {f:1,m:"18",n:"181.FM — Hair Band",t:"hair metal, hard rock",b:"128k · mp3",c:"US"},
+  {f:1,m:"18",n:"181.FM — Hard Rock",t:"hard rock",b:"128k · mp3",c:"US"},
+  {f:0,m:"ME",n:"Metal Rock Radio",t:"metal, hard rock",b:"128k · mp3",c:"CA"},
+  {f:0,m:"PU",n:"Punk Rock Demonstration",t:"punk, rock",b:"128k · mp3",c:"US"},
+  {f:0,m:"RO",n:"Rock Antenne",t:"rock, hard rock",b:"128k · mp3",c:"DE"},
+  {f:1,m:"RO",n:"Rock Antenne — Heavy Metal",t:"metal, heavy metal",b:"128k · mp3",c:"DE",p:1},
+  {f:0,m:"1F",n:"1.FM — High Voltage",t:"hard rock, metal",b:"128k · mp3",c:"CH"},
+  {f:0,m:"GO",n:"GotRadio — Hard Rock",t:"hard rock",b:"128k · mp3",c:"US"},
+  {f:0,m:"GO",n:"GotRadio — Metal Frontier",t:"metal",b:"128k · mp3",c:"US"},
+  {f:0,m:"AN",n:"Antyradio",t:"metal, rock",b:"192k · mp3",c:"PL"},
+  {f:0,m:"BM",n:"Bandit Metal",t:"death metal, hard rock",b:"128k · mp3",c:"SE"},
+  {f:0,m:"BR",n:"BR — The Classic Rock",t:"classic rock, heavy metal",b:"128k · mp3",c:"BR"},
+];
+const PLAY  = '<svg width="11" height="11" viewBox="0 0 12 12"><path d="M3 1.5l7 4.5-7 4.5z" fill="currentColor"/></svg>';
+const PAUSE = '<svg width="10" height="10" viewBox="0 0 12 12"><rect x="2" y="1.5" width="3" height="9" rx="1" fill="currentColor"/><rect x="7" y="1.5" width="3" height="9" rx="1" fill="currentColor"/></svg>';
+document.getElementById('rows').innerHTML = S.map(s=>`
+  <div class="row${s.p?' playing':''}">
+    <button class="star${s.f?'':' off'}">${s.f?'★':'☆'}</button>
+    <div class="st">
+      <div class="mono" style="background:${MONO[s.m][0]}">${MONO[s.m][1]}</div>
+      <span class="nm">${s.n}</span>${s.p?'<span class="eq"><i></i><i></i><i></i><i></i></span>':''}
+    </div>
+    <span class="tags">${s.t}</span>
+    <span class="br">${s.b}</span>
+    <span class="cc">${s.c}</span>
+    <button class="pbtn">${s.p?PAUSE:PLAY}</button>
+  </div>`).join('');
+const spec = document.getElementById('spec');
+let h = '';
+for (let i=0;i<34;i++){ const x = 6+Math.abs(Math.sin(i*1.7))*20; h += `<i style="height:${x}px;animation-delay:${(i%7)*0.12}s;opacity:${0.55+ (x/45)}"></i>`; }
+spec.innerHTML = h;
+</script>
+</body>
+</html>

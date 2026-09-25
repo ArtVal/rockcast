@@ -12,7 +12,8 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
 - **Station catalog** — pinned schema-v1 JSON snapshot plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
 - **Station icons (MVP)** — direct, bounded favicon/logo loading from station metadata with a local cache; RockServer-hosted icons are planned
-- **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata
+- **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata, shown with a green live dot and an animated equalizer on the playing row
+- **Rock-styled UI** — 44 px station rows with always-visible round play buttons, filter/genre chips, a unified player deck (station art, transport button on the panel axis, full-height clickable spectrum, volume in the status footer) and a card-style «Account & devices» window; design references live in `design/mockups/`
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
 - **Persistent settings** — volume, last station, device, language, spectrum toggle
@@ -86,11 +87,13 @@ Detailed Russian-language instructions, including voice commands: **[docs/user-m
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
 4. **Via PC** (Cast only) — enable if the station needs VPN on the PC; RockCast relays audio to the speaker over Wi‑Fi.
-5. **Select a station** — click a row in the list.
-6. **Play / Stop** — start or stop playback.
-7. **Volume** — slider; Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
-8. **Spectrum** — enable for the equalizer-style visualizer (extra network use when casting).
-9. **Language** — switch Russian / English from the UI; the choice is saved.
+5. **Select a station** — click a row; the round ▶ button on the row (or a double-click) starts playback immediately. The playing row is highlighted with an accent bar and an animated equalizer next to the name.
+6. **Play / Stop** — the large accent button in the player deck starts the selected station and stops the live stream; every row has its own play/pause control too.
+7. **Volume** — thin slider in the deck footer (speaker icon = mute/unmute); Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
+8. **Spectrum** — click the spectrum bars themselves to enable/disable the equalizer-style visualizer (extra network use when casting).
+9. **Search** — type to filter the catalog; the embedded button becomes «Найти» (Enter also submits). With an empty field the same button is «Голос» — voice input (click or Enter).
+10. **Account** — «Аккаунт» opens the account & devices card: this PC's session, other paired devices with last-seen times, refresh and logout.
+11. **Language** — switch Russian / English from the UI; the choice is saved.
 
 ### Cast notes
 
@@ -200,7 +203,9 @@ At the beginning or end of a list, **Previous** or **Next** does not wrap around
 ```text
 rockcast/
 ├── Cargo.toml
+├── assets/               # app icon + embedded UI icon PNGs (see scripts/generate_icons.py)
 ├── assets/catalog/       # checksum-pinned schema-v1 baseline release
+├── design/mockups/       # approved UI redesign mockups (HTML)
 ├── run.bat               # Windows release launcher
 ├── run.sh                # Linux release launcher
 ├── docs/                 # architecture & agent-oriented code docs

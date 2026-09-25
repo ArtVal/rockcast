@@ -27,6 +27,12 @@ fn is_station_unavailable_error(message: &str) -> bool {
 
 impl RockCastApp {
     pub(in crate::app) fn poll_messages(&mut self, ctx: &egui::Context) {
+        if let Some(recording) = &self.voice_recording
+            && !recording.load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.voice_recording = None;
+            self.status = "Распознаю команду…".into();
+        }
         let relay_url = self.playback.relay_public_url();
         for title in self.observers.poll(
             self.playback.current_generation(),
@@ -69,7 +75,20 @@ impl RockCastApp {
                             log::warn!("failed to record playback history: {error}");
                         }
                     }
-                    self.track = self.lang.t().track_meta_hint.into();
+                    // The stream often delivers its first ICY title while the
+                    // playout buffer is still filling, i.e. before PlayOk —
+                    // only show the hint when no real title has arrived yet.
+                    let placeholder = self.track.is_empty()
+                        || [
+                            self.lang.t().track_hint,
+                            self.lang.t().track_meta_hint,
+                            self.lang.t().stopped,
+                            self.lang.t().connecting,
+                        ]
+                        .contains(&self.track.as_str());
+                    if placeholder {
+                        self.track = self.lang.t().track_meta_hint.into();
+                    }
                     if !local
                         && !self.playback.relay_active()
                         && self.eq_enabled

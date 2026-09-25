@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RelayError {
-    #[error("no LAN IPv4 to advertise to Cast (check Wi‑Fi)")]
+    #[error("no LAN IPv4 to advertise to Cast (check Wi-Fi)")]
     NoLanIp,
     #[error("bind relay socket: {0}")]
     Bind(String),

@@ -53,6 +53,7 @@ impl<R: Read> IcyStreamReader<R> {
                 let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
                 if !title.is_empty() && title != self.last_title {
                     self.last_title = title.clone();
+                    log::info!("stream title: {title}");
                     let _ = tx.send(title);
                 }
             }

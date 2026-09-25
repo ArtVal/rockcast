@@ -12,10 +12,14 @@ impl RockCastApp {
         if self.voice_busy {
             return;
         }
+        if self.playing {
+            log::info!("voice search: stopping active playback so speakers do not bleed into mic");
+            self.stop();
+        }
         self.voice_busy = true;
         crate::voice_prompts::play(crate::voice_prompts::Prompt::Beep, self.lang);
         log::info!("voice button pressed: locale=ru-RU");
-        self.status = "Слушаю, пока удерживается кнопка…".into();
+        self.status = "Слушаю вас… Назовите группу или станцию".into();
         let recording = Arc::new(AtomicBool::new(true));
         self.voice_recording = Some(Arc::clone(&recording));
         let tx = self.ui_tx.clone();
@@ -52,9 +56,18 @@ impl RockCastApp {
 
     pub(in crate::app) fn stop_voice_recording(&mut self) {
         if let Some(recording) = self.voice_recording.take() {
-            log::info!("voice button released: committing captured audio");
+            log::info!("voice button pressed to stop: committing captured audio");
             recording.store(false, Ordering::Release);
             self.status = "Распознаю команду…".into();
         }
+    }
+
+    pub(in crate::app) fn cancel_voice(&mut self) {
+        if let Some(recording) = self.voice_recording.take() {
+            log::info!("voice search cancelled by user");
+            recording.store(false, Ordering::Release);
+        }
+        self.voice_busy = false;
+        self.status = "Голосовой ввод отменён".into();
     }
 }

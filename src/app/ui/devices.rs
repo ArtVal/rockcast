@@ -1,6 +1,6 @@
 //! egui panel widgets.
 
-use eframe::egui::{self, CornerRadius, Frame, RichText, Ui, Vec2};
+use eframe::egui::{self, RichText, Ui, Vec2};
 
 use super::super::RockCastApp;
 use super::super::theme::*;
@@ -23,9 +23,9 @@ impl RockCastApp {
                 .iter()
                 .map(|d| d.label(self.lang))
                 .collect();
-            let find_w = 142.0;
-            // Combo fills remaining width after device discovery.
-            let combo_w = (ui.available_width() - find_w - 10.0).max(160.0);
+            let find_w = 125.0;
+            let relay_w = if cast_selected { 110.0 } else { 0.0 };
+            let combo_w = (ui.available_width() - find_w - relay_w - 20.0).clamp(160.0, 480.0);
 
             let selected_text = match self.selected_device.and_then(|i| labels.get(i)) {
                 Some(s) => s.clone(),
@@ -74,32 +74,23 @@ impl RockCastApp {
             let find = egui::Button::new(RichText::new(t.find).color(FG))
                 .min_size(Vec2::new(find_w, 26.0))
                 .fill(PANEL_2);
-            if ui
-                .add_enabled(!self.loading_devices, find)
-                .clicked()
-            {
+            if ui.add_enabled(!self.loading_devices, find).clicked() {
                 self.refresh_devices();
             }
-        });
 
-        if cast_selected {
-            ui.add_space(6.0);
-            Frame::new()
-                .fill(PANEL_2)
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(egui::Margin::symmetric(10, 6))
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        let mut relay = self.cast_relay;
-                        let toggle = ui
-                            .checkbox(&mut relay, RichText::new(t.cast_relay).color(FG).size(13.0))
-                            .on_hover_text(t.cast_relay_hint);
-                        if toggle.changed() {
-                            self.set_cast_relay(relay);
-                        }
-                        ui.label(RichText::new(t.cast_relay_note).color(MUTED).size(12.0));
-                    });
-                });
-        }
+            if cast_selected {
+                ui.add_space(10.0);
+                let mut relay = self.cast_relay;
+                let toggle = ui
+                    .checkbox(
+                        &mut relay,
+                        RichText::new(t.cast_relay).color(FG).size(12.5),
+                    )
+                    .on_hover_text(format!("{}\n{}", t.cast_relay_hint, t.cast_relay_note));
+                if toggle.changed() {
+                    self.set_cast_relay(relay);
+                }
+            }
+        });
     }
 }

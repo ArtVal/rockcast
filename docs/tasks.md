@@ -1,5 +1,53 @@
 # RockCast tasks
 
+# RockCast tasks
+
+## RC-7 — UI polish pass: polished table, deck redesign, asset icons (2026-09-25)
+
+- **Goal:** land the approved variant-A mockup (`design/mockups/variant-a.html`) on top of RC-6
+  and close the four review complaints: clipped edges, unclear play affordance, mixed font sizes,
+  raw account window.
+- **Scope:**
+  - `src/app/theme.rs`: single type scale (10.5/11.5/12.5/13.5/18), ROW_H 44, row play button and
+    padding constants, shared GREEN.
+  - `src/app/mod.rs`: 16 px panel margins, 18 px app title, account button tinted green when a
+    session is active (the «✓» glyph is missing from the embedded font).
+  - `src/app/ui/stations.rs`: 44 px rows; always-visible 30 px row play buttons inset 16 px from
+    the edge; playing row tint + accent bar + animated equalizer; row width tracks the scroll
+    area's inner width (no horizontal scrollbar); «Голос»/«Найти» embedded button flush right;
+    asset-based clear button.
+  - `src/app/ui/controls.rs`: deck rebuilt as a single 64 px row — 48 px art, transport button on
+    the exact panel axis, full-height spectrum centered in the right half, two painter text lines
+    measured and vertically centered; thin custom volume slider + mute icon + percent moved into
+    the status footer left of the RockServer label.
+  - `src/app/ui/eq.rs`: spectrum has no background box, spans the given height and toggles on
+    click.
+  - `src/app/ui/account.rs`: account card (sections «Этот компьютер» / «Другие устройства», status
+    chips, device icon tiles, danger logout/disconnect, footer row), anchored under the Аккаунт
+    button, non-resizable.
+  - `src/app/icons.rs` + `scripts/generate_icons.py`: `icon_clear`, `icon_pc`, `icon_phone` added;
+    `icon_mic` regenerated in near-white; AGENTS.md now forbids painter-drawn/emoji icons.
+  - `src/app/actions/poll.rs`: PlayOk keeps an ICY title that arrived before it (metadata race);
+    `stream title` log line.
+  - `src/i18n.rs`: added `account_section_this_pc`, `account_refresh_short`; removed unused
+    strings and tofu-prone «✓»/«↻» glyphs.
+- **Checks:** cargo fmt, cargo clippy `-D warnings` (0 warnings), cargo test (139 unit +
+  2 integration tests) — green.
+
+## RC-6 — Rock-styled UI/UX overhaul and mobile voice search parity (2026-09-25)
+
+- **Goal:** Unify desktop player UX with RockMobile and the approved interactive prototype (`rockcast_ux_prototype.html`), enabling natural voice auto-stopping, rock-themed design, crisp offline PNG icon assets, and collision-free layout geometry.
+- **Scope:**
+  - `assets/icon_*.png` & `src/app/icons.rs`: Embedded 64x64 antialiased RGBA PNG icon textures (`search`, `mic`, `speaker`, `speaker_mute`) loaded via `image` crate without extra dependencies, eliminating square placeholder glyphs (`□`).
+  - `src/app/ui/stations.rs`: Fixed station table column width math so `available` space reserves the rightmost play button column and left offset, ensuring a 24px gap between the country badge and the play button. Replaced emojis with crisp icon and clean text buttons.
+  - `src/app/ui/controls.rs` & `src/app/mod.rs`: Divided bottom player deck into 3 bounded horizontal sections (left station/track deck, center spectrum analyzer, right volume & playback controls), preventing the spectrum analyzer from overlapping the volume slider.
+  - `src/app/ui/devices.rs`: Inline relay checkbox next to the acoustic search button, removing the wasteful separate frame.
+  - `src/i18n.rs` & `src/relay/error.rs`: Replaced non-breaking hyphens (U+2011) with ASCII hyphens (`Wi-Fi`).
+  - `src/voice/record.rs`: SpeechEndDetector with 350ms startup grace period (ignores beep and clicks), dynamic ambient calibration with conversational bounds (280..520 RMS), 1.0s silence threshold after speech, 4.5s pre-speech timeout, and 8s max speech duration cutoff.
+  - `src/app/actions/voice.rs`: Automatically stop active radio playback when voice recording starts to avoid speaker sound bleeding into the microphone.
+  - `src/app/theme.rs`: 8-color warm rock monogram palette (`MONOGRAM_PALETTE`) and deterministic `station_color` mapping.
+- **Checks:** `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` (0 warnings), `cargo test` (139 unit + 2 integration passed, 0 failed).
+
 ## RC-4b — render bounded server station presentation (2026-09-17)
 
 - Symptom: RC-4a can play a station selected in RockMobile even when it is

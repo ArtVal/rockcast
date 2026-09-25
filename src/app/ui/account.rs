@@ -1,3 +1,6 @@
+use super::super::theme::{
+    BORDER, FG, FS_BODY, FS_MICRO, FS_ROW, FS_SMALL, FS_TITLE, GREEN, MUTED, PANEL_2,
+};
 use super::super::{
     AccountContext, AccountErrorKind, AccountUiState, RockCastApp, account_session_active,
 };
@@ -5,8 +8,17 @@ use crate::{
     i18n,
     session::{AccountClient, OsCredentialStore},
 };
-use eframe::egui::{self, Context, RichText};
+use eframe::egui::{
+    self, Align, Align2, Color32, Context, CornerRadius, FontId, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, Vec2,
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+const DANGER: Color32 = Color32::from_rgb(0xff, 0x7b, 0x72);
+
+fn danger_dim() -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 123, 114, 90)
+}
 
 impl RockCastApp {
     pub(in crate::app) fn ensure_account_loaded(&mut self) {
@@ -116,10 +128,17 @@ impl RockCastApp {
         }
         self.begin_account_load();
         let mut open = self.account_open;
-        egui::Window::new(self.lang.t().account_title)
-            .open(&mut open)
-            .resizable(true)
-            .show(ctx, |ui| self.draw_account_state(ui, ctx));
+        egui::Window::new(
+            RichText::new(self.lang.t().account_title)
+                .size(FS_TITLE)
+                .strong(),
+        )
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .default_width(430.0)
+        .anchor(Align2::RIGHT_TOP, [-16.0, 46.0])
+        .show(ctx, |ui| self.draw_account_state(ui, ctx));
         if !self.account_open {
             open = false;
         }
@@ -240,34 +259,67 @@ impl RockCastApp {
                 }
             }
             AccountUiState::ConnectedFirstTime { context } => {
-                ui.label(RichText::new(t.account_success_title).strong());
-                draw_current_account(ui, context, t);
-                if ui.button(t.account_open_devices).clicked() {
-                    action = Some(Action::OpenDevices);
-                }
-                if ui.button(t.account_done).clicked() {
-                    action = Some(Action::Done);
-                }
+                let pc_icon = self.app_icons.pc.id();
+                ui.label(RichText::new(t.account_success_title).size(FS_ROW).strong());
+                ui.add_space(4.0);
+                draw_current_account(ui, context, t, pc_icon);
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let w = (ui.available_width() - 8.0) * 0.5;
+                    if ui
+                        .add_sized([w, 32.0], ghost_button(t.account_open_devices))
+                        .clicked()
+                    {
+                        action = Some(Action::OpenDevices);
+                    }
+                    if ui
+                        .add_sized([w, 32.0], ghost_button(t.account_done))
+                        .clicked()
+                    {
+                        action = Some(Action::Done);
+                    }
+                });
             }
             AccountUiState::Connected { context, banner } => {
+                let pc_icon = self.app_icons.pc.id();
+                let phone_icon = self.app_icons.phone.id();
                 if let Some(banner) = banner {
-                    ui.label(banner.as_str());
+                    ui.label(RichText::new(banner.as_str()).color(MUTED).size(FS_SMALL));
+                    ui.add_space(4.0);
                 }
-                if let Some(id) = draw_connected(ui, context, t, self.lang) {
+                if let Some(id) = draw_connected(ui, context, t, self.lang, pc_icon, phone_icon) {
                     action = Some(Action::AskRevoke(id));
                 }
-                if ui
-                    .add_enabled(
-                        !self.account_refreshing,
-                        egui::Button::new(t.account_refresh),
-                    )
-                    .clicked()
-                {
-                    action = Some(Action::Refresh);
-                }
-                if ui.button(t.account_logout).clicked() {
-                    action = Some(Action::Logout);
-                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let w = (ui.available_width() - 8.0) * 0.5;
+                    let refresh_label: String = if self.account_refreshing {
+                        t.account_checking.into()
+                    } else {
+                        t.account_refresh_short.into()
+                    };
+                    if ui
+                        .add_sized([w, 32.0], ghost_button(&refresh_label))
+                        .clicked()
+                        && !self.account_refreshing
+                    {
+                        action = Some(Action::Refresh);
+                    }
+                    if ui
+                        .add_sized(
+                            [w, 32.0],
+                            egui::Button::new(
+                                RichText::new(t.account_logout).color(DANGER).size(FS_BODY),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, danger_dim()))
+                            .corner_radius(CornerRadius::same(6)),
+                        )
+                        .clicked()
+                    {
+                        action = Some(Action::Logout);
+                    }
+                });
             }
             AccountUiState::Error { kind, cached } => {
                 ui.label(match kind {
@@ -276,17 +328,42 @@ impl RockCastApp {
                 });
                 if let Some(context) = cached {
                     ui.label(t.account_devices_unavailable);
-                    draw_current_account(ui, context, t);
+                    let pc_icon = self.app_icons.pc.id();
+                    draw_current_account(ui, context, t, pc_icon);
                 }
             }
         }
         if self.revoke_confirmation.is_some() {
+            ui.add_space(6.0);
             ui.separator();
-            ui.label(t.account_confirm_disconnect);
-            if ui.button(t.account_confirm).clicked() {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(t.account_confirm_disconnect)
+                    .color(FG)
+                    .size(FS_BODY)
+                    .strong(),
+            );
+            ui.add_space(4.0);
+            let w = (ui.available_width() - 8.0) * 0.5;
+            if ui
+                .add_sized(
+                    [w, 32.0],
+                    egui::Button::new(
+                        RichText::new(t.account_confirm)
+                            .color(Color32::WHITE)
+                            .size(FS_BODY),
+                    )
+                    .fill(Color32::from_rgb(0xdc, 0x26, 0x26))
+                    .corner_radius(CornerRadius::same(6)),
+                )
+                .clicked()
+            {
                 action = self.revoke_confirmation.clone().map(Action::Revoke);
             }
-            if ui.button(t.account_done).clicked() {
+            if ui
+                .add_sized([w, 32.0], ghost_button(t.account_done))
+                .clicked()
+            {
                 self.revoke_confirmation = None;
             }
         }
@@ -325,19 +402,34 @@ impl RockCastApp {
     }
 }
 
-fn draw_current_account(ui: &mut egui::Ui, context: &AccountContext, t: &i18n::Strings) {
-    ui.label(i18n::fmt1(
-        t.account_success,
-        &context.profile.account_display_name,
-    ));
-    ui.label(i18n::fmt1(
-        t.account_current_device,
-        presentation_device_name(
-            &context.profile.device_type,
-            &context.profile.device_display_name,
-        ),
-    ));
-    ui.label(t.account_connected);
+fn draw_current_account(
+    ui: &mut egui::Ui,
+    context: &AccountContext,
+    t: &i18n::Strings,
+    pc_icon: egui::TextureId,
+) {
+    ui.horizontal(|ui| {
+        icon_tile(ui, pc_icon);
+        ui.label(
+            RichText::new(presentation_device_name(
+                &context.profile.device_type,
+                &context.profile.device_display_name,
+            ))
+            .size(FS_ROW)
+            .strong(),
+        );
+        if ui.available_width() > 90.0 {
+            status_chip(ui, t.account_connected);
+        }
+    });
+    ui.label(
+        RichText::new(i18n::fmt1(
+            t.account_success,
+            &context.profile.account_display_name,
+        ))
+        .color(MUTED)
+        .size(FS_SMALL),
+    );
 }
 
 fn draw_connected(
@@ -345,41 +437,149 @@ fn draw_connected(
     context: &AccountContext,
     t: &i18n::Strings,
     lang: i18n::Lang,
+    pc_icon: egui::TextureId,
+    phone_icon: egui::TextureId,
 ) -> Option<String> {
-    draw_current_account(ui, context, t);
-    ui.separator();
-    ui.label(RichText::new(t.account_other_devices).strong());
-    let mut other_device_shown = false;
     let mut revoke = None;
-    for device in context
+
+    section_title(ui, t.account_section_this_pc);
+    ui.add_space(4.0);
+    draw_current_account(ui, context, t, pc_icon);
+
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    section_title(ui, t.account_other_devices);
+
+    let others: Vec<&crate::session::Device> = context
         .devices
         .iter()
         .filter(|device| device.device_id != context.profile.device_id)
-    {
-        other_device_shown = true;
-        ui.label(presentation_device_name(
-            &device.device_type,
-            &device.device_display_name,
-        ));
+        .collect();
+    if others.is_empty() {
+        ui.label(
+            RichText::new(t.account_empty_devices)
+                .color(MUTED)
+                .size(FS_SMALL),
+        );
+    }
+    for device in others {
+        ui.add_space(4.0);
+        let icon = if device.device_type.to_ascii_lowercase().contains("mobile") {
+            phone_icon
+        } else {
+            pc_icon
+        };
+        ui.horizontal(|ui| {
+            icon_tile(ui, icon);
+            ui.label(
+                RichText::new(presentation_device_name(
+                    &device.device_type,
+                    &device.device_display_name,
+                ))
+                .size(FS_BODY)
+                .strong(),
+            );
+            if ui.available_width() > 170.0 {
+                status_chip(ui, t.account_connected);
+            }
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if danger_button(ui, t.account_disconnect, false).clicked() {
+                    revoke = Some(device.device_id.clone());
+                }
+            });
+        });
+        let mut meta = String::new();
         if let Some(date) = display_date(&device.created_at, lang) {
-            ui.label(i18n::fmt1(t.account_connected_at, date));
+            meta.push_str(&i18n::fmt1(t.account_connected_at, date));
         }
         if let Some(date) = device
             .last_seen_at
             .as_deref()
             .and_then(|value| display_date(value, lang))
         {
-            ui.label(i18n::fmt1(t.account_last_seen, date));
+            if !meta.is_empty() {
+                meta.push('\n');
+            }
+            meta.push_str(&i18n::fmt1(t.account_last_seen, date));
         }
-        if ui.button(t.account_disconnect).clicked() {
-            revoke = Some(device.device_id.clone());
+        if !meta.is_empty() {
+            ui.horizontal(|ui| {
+                // Align meta text under the device name, past the 34px tile.
+                ui.add_space(42.0);
+                ui.label(RichText::new(meta).color(MUTED).size(FS_SMALL));
+            });
         }
-        ui.separator();
-    }
-    if !other_device_shown {
-        ui.label(t.account_empty_devices);
     }
     revoke
+}
+
+fn section_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .size(FS_MICRO)
+            .color(MUTED)
+            .strong(),
+    );
+}
+
+/// 34px rounded tile with a tinted device icon texture from `assets/`.
+fn icon_tile(ui: &mut egui::Ui, tex: egui::TextureId) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(8), PANEL_2);
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0, BORDER),
+        StrokeKind::Inside,
+    );
+    ui.painter().image(
+        tex,
+        rect.shrink(9.0),
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::from_rgb(0xd5, 0xca, 0xc0),
+    );
+}
+
+/// Small green "Подключено" pill.
+fn status_chip(ui: &mut egui::Ui, text: &str) {
+    let font = FontId::proportional(FS_MICRO);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(84.0, 18.0), Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::same(9),
+        Color32::from_rgba_unmultiplied(61, 220, 132, 26),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(9),
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(61, 220, 132, 70)),
+        StrokeKind::Inside,
+    );
+    ui.painter()
+        .text(rect.center(), Align2::CENTER_CENTER, text, font, GREEN);
+}
+
+fn ghost_button(text: impl Into<String>) -> egui::Button<'static> {
+    egui::Button::new(RichText::new(text).color(FG).size(FS_BODY))
+        .fill(PANEL_2)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(6))
+}
+
+fn danger_button(ui: &mut egui::Ui, text: &str, filled: bool) -> egui::Response {
+    let btn = if filled {
+        egui::Button::new(RichText::new(text).color(Color32::WHITE).size(FS_SMALL))
+            .fill(Color32::from_rgb(0xdc, 0x26, 0x26))
+            .corner_radius(CornerRadius::same(6))
+    } else {
+        egui::Button::new(RichText::new(text).color(DANGER).size(FS_SMALL))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::new(1.0, danger_dim()))
+            .corner_radius(CornerRadius::same(6))
+    };
+    ui.add(btn)
 }
 
 fn default_device_name() -> String {

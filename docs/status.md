@@ -1,5 +1,70 @@
 # RockCast status
 
+# RockCast status
+
+## RC-7 — UI polish pass: polished table, deck redesign, asset icons (implemented locally, 2026-09-25)
+
+The approved mockup (`design/mockups/variant-a.html`) was implemented on top of the RC-6 overhaul
+after hands-on review. All four review complaints are closed: clipped edges, unclear play
+affordance, mixed font sizes, and the raw account window.
+
+- **Single type scale** (`theme.rs`): 10.5 / 11.5 / 12.5 / 13.5 / 18 px only; the app title shrank
+  22 → 18; page margins are 16 px in the central panel and the player deck.
+- **Station table**: rows 36 → 44 px; the round 30 px play/pause button on every row is always
+  visible (outlined tile, accent fill on hover/playing) and sits 16 px off the panel edge; the
+  playing row shows an accent tint, left bar and an animated 4-bar equalizer after the name; the
+  horizontal scrollbar is gone because row width follows the scroll area's inner width (the
+  floating scrollbar reserve is accounted for in the header alignment too).
+- **Player deck redesign**: a single 64 px row on one vertical center line — 48 px station art, a
+  transport button pinned to the exact panel axis (start/stop toggle), a spectrum at full row
+  height centered in the right half; station info is two painter-drawn lines whose heights are
+  measured from the font, so the block is exactly vertically centered; the destination string
+  moved out (the status bar already reports it).
+- **Deck footer**: volume moved into the status bar — speaker mute icon, a thin custom 3 px slider
+  and a percent readout placed left of the RockServer label; the status label is left-aligned with
+  a reserved right-side width so it can never push the group off the panel.
+- **Search row**: the embedded action button is flush with the input's right edge; an empty field
+  shows «Голос» (mic asset; click or Enter starts voice input), typed text switches it to an
+  accent «Найти» (text only, no mic); the clear control is an icon-asset button.
+- **Account window**: non-resizable card anchored under the Аккаунт button with «Этот компьютер» /
+  «Другие устройства» sections, green «Подключено» chips, icon tiles per device, danger-styled
+  logout/disconnect and footer buttons in one row.
+- **Icons are assets only** (AGENTS.md rule): `icon_mic` regenerated in near-white so ACCENT
+  tinting works (the old orange fill multiplied into an unreadable blob), new `icon_pc`,
+  `icon_phone`, `icon_clear`; vector-drawn and emoji glyphs (tofu «✓»/«✕»/«⚠») removed.
+- **Metadata race fix** (`actions/poll.rs`): a stream often delivers its first ICY title before
+  PlayOk (the playout buffer fills later); PlayOk no longer overwrites `self.track` unconditionally
+  and shows the hint only when no real title has arrived. Stream titles are logged
+  (`stream title: …`) for diagnostics.
+- **Checks:** cargo fmt, cargo clippy `-D warnings` (0 warnings), cargo test (139 unit +
+  2 integration tests) — green.
+
+## RC-6 — Rock-styled UI/UX overhaul and mobile voice search parity (implemented locally, 2026-09-25)
+
+Desktop UI and voice search UX were overhauled to match the RockMobile flow and the approved interactive prototype (`rockcast_ux_prototype.html`), with all visual glitches, column collisions, and missing glyphs resolved:
+
+- **Unified bottom player bar (`draw_player_deck`):** Now Playing metadata, station monogram with individual rock palette color, pulsing live dot, 60 FPS spectrum analyzer with toggle, 1-click mute/unmute button, volume slider with monospace percent readout, circular Play button in ACCENT, Stop button, and bottom status sub-bar are consolidated into a single cohesive panel. Strict 3-region horizontal bounding eliminates widget overlaps between the spectrum analyzer and volume slider.
+- **Embedded PNG UI icons & font-glyph safety (`AppIcons`):**
+  - Integrated 64x64 RGBA antialiased PNG assets (`assets/icon_search.png`, `assets/icon_mic.png`, `assets/icon_speaker.png`, `assets/icon_speaker_mute.png`) loaded via `src/app/icons.rs` without external dependencies.
+  - Eliminated missing emoji replacement squares (`□`): search, microphone, speaker, and speaker mute render crisply via textured quads.
+  - Removed emojis from buttons (`Каталог`, `История`, `Stop`) and replaced non-breaking hyphens (U+2011) with ASCII hyphens (`Wi-Fi`).
+- **Table layout & column collision fix:**
+  - Fixed column span calculation: `available` width strictly excludes the dedicated rightmost play button column (`play_col_w = 48.0`) and left offset (`col_name_x = 68.0`), providing guaranteed 24px clearance between the country badge and row Play button.
+  - Center-aligned country badge and header directly within the country column (`COUNTRY_COL_W = 54.0`).
+- **Compact device controls:** Inline relay checkbox placed directly on the device row next to the acoustic search button, removing the wasteful separate frame.
+- **Voice search mobile parity & auto-stop:**
+  - Microphone capture automatically commits and sends audio to RockServer upon a 1.0s speech pause without requiring the user to press Stop manually.
+  - Startup grace period (350ms) ignores prompt beep playback and mouse clicks. Active radio playback is stopped immediately upon mic activation to eliminate speaker bleed.
+  - Dynamic ambient noise calibration computes adaptive speech threshold clamped within conversational bounds (280..520 RMS).
+  - Search input container embeds a 1-click stateful `[Голос]` / `[Стоп]` / `[Распознаю…]` button with embedded mic icon, an instant `✕` clear button, and Enter key binding for empty text.
+- **Station list table polish:**
+  - Individual rock brand palette for station monograms (`station_color`).
+  - 1-click favourite star toggle on each station row.
+  - 1-click circular play/pause button on every row.
+  - Left accent border and glowing amber highlight on selected station row.
+  - Instant client-side genre chip filtering.
+- **Checks:** `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` (0 warnings), and `cargo test` (139 unit + 2 integration tests passed, 0 failed).
+
 ## RC-5 — rockplatform.win domain and server-owned station icons (implemented locally, 2026-09-24)
 
 RockServer production moved to `https://rockplatform.win`, so

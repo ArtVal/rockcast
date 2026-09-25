@@ -1,6 +1,7 @@
 //! RockCast GUI on egui.
 
 mod actions;
+mod icons;
 mod messages;
 mod theme;
 mod ui;
@@ -15,7 +16,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eframe::egui::{self, Align, Color32, Frame, Layout, RichText, Stroke, TextureHandle, Vec2};
+use eframe::egui::{
+    self, Align, Color32, CornerRadius, Frame, Layout, RichText, Sense, Stroke, StrokeKind,
+    TextureHandle, Vec2,
+};
 
 use crate::{
     cast::CastDeviceInfo,
@@ -33,7 +37,9 @@ use crate::{
 };
 
 use messages::UiMsg;
-use theme::{ACCENT, BG, EQ_REPAINT_INTERVAL, FG, MUTED, PANEL, PANEL_2, UI_SLOW_REPAINT_INTERVAL};
+use theme::{
+    ACCENT, BG, BORDER, EQ_REPAINT_INTERVAL, FG, MUTED, PANEL, PANEL_2, UI_SLOW_REPAINT_INTERVAL,
+};
 
 #[derive(Clone)]
 pub(super) struct AccountContext {
@@ -93,6 +99,14 @@ pub(super) fn account_session_active(state: &AccountUiState) -> bool {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum StationFilterMode {
+    #[default]
+    All,
+    Favourites,
+    History,
+}
+
 pub struct RockCastApp {
     pub(super) playback: PlaybackController,
     pub(super) background: BackgroundRuntime,
@@ -100,6 +114,7 @@ pub struct RockCastApp {
     /// Text sent to the global RockServer station search.
     pub(super) station_search: String,
     pub(super) selected_genre: Option<String>,
+    pub(super) filter_mode: StationFilterMode,
     /// Lets the UI discard results from an older global search.
     pub(super) station_request_id: u64,
     pub(super) devices: Vec<OutputDevice>,
@@ -171,6 +186,8 @@ pub struct RockCastApp {
     pub(super) station_icon_requests: HashSet<String>,
     /// Jobs still expected to send a StationIcon message, used to wake egui.
     pub(super) station_icons_pending: usize,
+    pub(super) app_icons: icons::AppIcons,
+    pub(super) frame_count: u64,
 }
 
 impl RockCastApp {
@@ -193,7 +210,8 @@ impl RockCastApp {
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.item_spacing = Vec2::new(8.0, 6.0);
         style.spacing.button_padding = Vec2::new(10.0, 4.0);
-        style.spacing.slider_width = 220.0;
+        // Fits the deck's 196px right section: speaker + slider + percent.
+        style.spacing.slider_width = 110.0;
         style.spacing.interact_size.y = 24.0;
         cc.egui_ctx.set_style(style);
 
@@ -221,6 +239,7 @@ impl RockCastApp {
             stations: Vec::new(),
             station_search: String::new(),
             selected_genre: None,
+            filter_mode: StationFilterMode::All,
             station_request_id: 0,
             devices: Vec::new(),
             source: String::new(),
@@ -283,6 +302,8 @@ impl RockCastApp {
             station_icons: HashMap::new(),
             station_icon_requests: HashSet::new(),
             station_icons_pending: 0,
+            app_icons: icons::AppIcons::new(&cc.egui_ctx),
+            frame_count: 0,
         }
     }
     pub(in crate::app) fn can_start_play(&self) -> bool {
@@ -295,6 +316,33 @@ impl RockCastApp {
 
 impl eframe::App for RockCastApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_count = self.frame_count.saturating_add(1);
+        if let Ok(shot_path) = std::env::var("ROCKCAST_SCREENSHOT_PATH") {
+            let mut captured = false;
+            ctx.input(|i| {
+                for event in &i.raw.events {
+                    if let egui::Event::Screenshot { image, .. } = event {
+                        let w = image.size[0] as u32;
+                        let h = image.size[1] as u32;
+                        if let Some(buf) = image::RgbaImage::from_raw(w, h, image.as_raw().to_vec())
+                        {
+                            let _ = buf.save(&shot_path);
+                            captured = true;
+                        }
+                    }
+                }
+            });
+            if captured {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            } else if self.frame_count >= 60 && !self.stations.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+        }
+
         self.bootstrap();
         self.poll_messages(ctx);
         let device_commands_pending = self.poll_device_control_commands();
@@ -341,6 +389,12 @@ impl eframe::App for RockCastApp {
         if snap.playing {
             playback_diag::maybe_log(snap);
         }
+        if let Some(recording) = &self.voice_recording
+            && !recording.load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.voice_recording = None;
+            self.status = "Распознаю команду…".into();
+        }
         if self.voice_recording.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if eq_ui_active {
@@ -355,84 +409,69 @@ impl eframe::App for RockCastApp {
         }
 
         egui::TopBottomPanel::bottom("bottom")
-            .frame(
-                Frame::new()
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
-            )
+            .frame(Frame::new().fill(BG).inner_margin(egui::Margin {
+                left: 16,
+                right: 16,
+                top: 6,
+                bottom: 12,
+            }))
             .show_separator_line(false)
             .show(ctx, |ui| {
-                self.draw_now_playing(ui);
-                ui.add_space(6.0);
-                self.draw_controls(ui);
-                ui.add_space(4.0);
-                self.draw_status(ui);
+                self.draw_player_deck(ui);
             });
 
         egui::CentralPanel::default()
-            .frame(
-                Frame::new()
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
-            )
+            .frame(Frame::new().fill(BG).inner_margin(egui::Margin {
+                left: 16,
+                right: 16,
+                top: 12,
+                bottom: 8,
+            }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("RockCast").size(24.0).color(ACCENT).strong());
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(icon_rect, CornerRadius::same(6), ACCENT);
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "R",
+                        egui::FontId::proportional(16.0),
+                        Color32::WHITE,
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("RockCast")
+                            .size(theme::FS_TITLE)
+                            .color(FG)
+                            .strong(),
+                    );
+                    let (badge_rect, _) =
+                        ui.allocate_exact_size(Vec2::new(56.0, 18.0), Sense::hover());
+                    ui.painter().rect_filled(
+                        badge_rect,
+                        CornerRadius::same(4),
+                        Color32::from_rgba_unmultiplied(229, 96, 32, 35),
+                    );
+                    ui.painter().rect_stroke(
+                        badge_rect,
+                        CornerRadius::same(4),
+                        egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(229, 96, 32, 90)),
+                        StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        badge_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "DESKTOP",
+                        egui::FontId::proportional(9.5),
+                        ACCENT,
+                    );
+
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let history_count = self.personal_data.as_ref().map_or(0, |store| {
-                            store.history().len()
-                                + store
-                                    .profile()
-                                    .unresolved_references
-                                    .iter()
-                                    .filter(|entry| entry.source_kind == "history")
-                                    .count()
-                        });
-                        if ui.button(format!("History ({history_count})")).clicked() {
-                            self.history_open = true;
-                        }
-                        if ui.button(self.account_menu_label()).clicked() {
-                            self.account_open = true;
-                        }
-                        let favourites_count = self.personal_data.as_ref().map_or(0, |store| {
-                            store.favourites().len()
-                                + store
-                                    .profile()
-                                    .unresolved_references
-                                    .iter()
-                                    .filter(|entry| entry.source_kind == "favourite")
-                                    .count()
-                        });
-                        if ui
-                            .button(format!("Favourites ({favourites_count})"))
-                            .clicked()
-                        {
-                            self.favourites_open = true;
-                        }
-                        let favourite = self
-                            .selected_station
-                            .and_then(|index| self.stations.get(index))
-                            .is_some_and(|station| {
-                                self.personal_data
-                                    .as_ref()
-                                    .is_some_and(|store| store.is_favourite(&station.id))
-                            });
-                        if ui
-                            .add_enabled(
-                                self.personal_data.is_some() && self.selected_station.is_some(),
-                                egui::Button::new(if favourite {
-                                    "★ Favourite"
-                                } else {
-                                    "☆ Favourite"
-                                }),
-                            )
-                            .clicked()
-                        {
-                            self.toggle_selected_favourite();
-                        }
-                        let t = self.lang.t();
                         ui.menu_button(
-                            RichText::new(t.menu_language).color(MUTED).size(13.0),
+                            RichText::new(self.lang.native_name())
+                                .color(MUTED)
+                                .size(theme::FS_BODY),
                             |ui| {
                                 for lang in [Lang::Ru, Lang::En] {
                                     let selected = self.lang == lang;
@@ -445,11 +484,28 @@ impl eframe::App for RockCastApp {
                                 }
                             },
                         );
+                        // "✓" has no glyph in the embedded font; signal the
+                        // connected state with color instead of a tofu box.
+                        let acc_color = if account_session_active(&self.account_state) {
+                            theme::GREEN
+                        } else {
+                            FG
+                        };
+                        let acc_btn = egui::Button::new(
+                            RichText::new(self.lang.t().account_menu)
+                                .color(acc_color)
+                                .size(theme::FS_BODY),
+                        )
+                        .fill(PANEL_2)
+                        .stroke(egui::Stroke::new(1.0, BORDER));
+                        if ui.add(acc_btn).clicked() {
+                            self.account_open = true;
+                        }
                     });
                 });
                 ui.label(
                     RichText::new(self.lang.t().subtitle)
-                        .size(12.5)
+                        .size(theme::FS_SMALL)
                         .color(MUTED),
                 );
                 ui.add_space(8.0);
@@ -509,15 +565,6 @@ impl RockCastApp {
         if let Some(revision) = self.device_control.publish(state) {
             self.settings.device_control_state_revision = revision;
             self.settings_dirty = true;
-        }
-    }
-
-    pub(in crate::app) fn account_menu_label(&self) -> String {
-        let t = self.lang.t();
-        if account_session_active(&self.account_state) {
-            t.account_menu_connected.into()
-        } else {
-            t.account_menu.into()
         }
     }
 
