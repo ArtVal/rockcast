@@ -137,12 +137,38 @@ impl RockCastApp {
                             ui.interact(text_rect, ui.id().with("deck_text"), Sense::hover());
                         let name_y = left_rect.min.y + pad + name_h * 0.5;
                         let track_y = name_y + name_h * 0.5 + gap + track_h * 0.5;
-                        ui.painter().text(
-                            Pos2::new(text_x, name_y),
-                            egui::Align2::LEFT_CENTER,
+                        let now = ui.input(|i| i.time) as f32;
+                        // Long names/titles scroll marquee-style inside the
+                        // text zone instead of bleeding into the transport
+                        // button and the spectrum.
+                        let text_painter = ui.painter_at(text_rect);
+                        let name_scrolls = draw_marquee_line(
+                            &text_painter,
+                            text_rect,
+                            name_y,
                             st_name,
                             name_font,
                             FG,
+                            now,
+                        );
+                        let track_clip_left = text_x + if self.playing { 12.0 } else { 0.0 };
+                        let track_clip = Rect::from_min_max(
+                            Pos2::new(track_clip_left, text_rect.top()),
+                            Pos2::new(text_rect.right(), text_rect.bottom()),
+                        );
+                        let track_color = if self.playing {
+                            ACCENT
+                        } else {
+                            MUTED
+                        };
+                        let track_scrolls = draw_marquee_line(
+                            &ui.painter_at(track_clip),
+                            track_clip,
+                            track_y,
+                            line2,
+                            track_font,
+                            track_color,
+                            now,
                         );
                         if self.playing {
                             ui.painter().circle_filled(
@@ -150,21 +176,11 @@ impl RockCastApp {
                                 3.5,
                                 Color32::from_rgb(0x34, 0xd3, 0x99),
                             );
-                            ui.painter().text(
-                                Pos2::new(text_x + 12.0, track_y),
-                                egui::Align2::LEFT_CENTER,
-                                line2,
-                                track_font,
-                                ACCENT,
-                            );
-                        } else {
-                            ui.painter().text(
-                                Pos2::new(text_x, track_y),
-                                egui::Align2::LEFT_CENTER,
-                                line2,
-                                track_font,
-                                MUTED,
-                            );
+                        }
+                        if name_scrolls || track_scrolls {
+                            // Keep the marquee animating even without playback.
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(50));
                         }
                         let _ = text_resp.on_hover_text(format!("{st_name}\n{}", t.track_hint));
                     });
@@ -373,4 +389,49 @@ impl RockCastApp {
             }
         }
     }
+}
+
+/// Draws one deck text line clipped to `clip`. Static when it fits; when it
+/// overflows, scrolls marquee-style: pause at the start, scroll left until the
+/// tail is visible, pause, repeat. Returns `true` while scrolling (so the
+/// caller keeps repainting).
+fn draw_marquee_line(
+    painter: &egui::Painter,
+    clip: Rect,
+    y_center: f32,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    time_secs: f32,
+) -> bool {
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let galley_w = galley.size().x;
+    if galley_w <= clip.width() {
+        painter.galley(
+            Pos2::new(clip.left(), y_center - galley.size().y * 0.5),
+            galley,
+            color,
+        );
+        return false;
+    }
+
+    const SPEED: f32 = 30.0; // px per second
+    const PAUSE: f32 = 1.6; // seconds at each end
+    let distance = galley_w - clip.width();
+    let scroll_time = distance / SPEED;
+    let period = scroll_time + PAUSE * 2.0;
+    let phase = if period > 0.0 { time_secs % period } else { 0.0 };
+    let offset = if phase < PAUSE {
+        0.0
+    } else if phase < PAUSE + scroll_time {
+        (phase - PAUSE) * SPEED
+    } else {
+        distance
+    };
+    painter.galley(
+        Pos2::new(clip.left() - offset, y_center - galley.size().y * 0.5),
+        galley,
+        color,
+    );
+    true
 }
