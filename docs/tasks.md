@@ -1,6 +1,11 @@
 # RockCast tasks
 
-# RockCast tasks
+## Remote playback track publication (2026-09-26)
+
+- Goal: expose the current observed track to the paired RockMobile player.
+- Scope: optional bounded `track_title` in runtime playback state, fed by ICY/relay title events and cleared on start/stop/error.
+- Checks: `cargo test`, strict Clippy and `cargo build --release` passed; two live phone station switches showed distinct titles. `cargo fmt --check` remains blocked by pre-existing formatting in unrelated lines.
+- Status: installed and running on the Windows desktop.
 
 ## RC-7 — UI polish pass: polished table, deck redesign, asset icons (2026-09-25)
 

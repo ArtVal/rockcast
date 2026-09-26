@@ -200,6 +200,7 @@ impl RockCastApp {
         self.status = format!("Play: {} -> {}", station.name, device.name());
         self.station_now = station.name.clone();
         self.track = self.lang.t().connecting.into();
+        self.track_metadata = None;
         self.mark_settings_dirty();
         self.persist_settings_if_needed(true);
         Some(self.playback.play(
@@ -224,6 +225,7 @@ impl RockCastApp {
         self.playing_local = false;
         self.playing_url = None;
         self.track = self.lang.t().stopped.into();
+        self.track_metadata = None;
         Some(self.playback.stop())
     }
 

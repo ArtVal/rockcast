@@ -40,6 +40,7 @@ impl RockCastApp {
             self.eq_enabled,
             relay_url.as_deref(),
         ) {
+            self.track_metadata = super::super::bounded_track_title(&title, &self.station_now);
             self.track = title;
         }
         while let Some(event) = self.playback.try_event() {
@@ -50,7 +51,10 @@ impl RockCastApp {
             }
             match event {
                 PlaybackEvent::Status { text, .. } => self.status = text,
-                PlaybackEvent::Title { title, .. } => self.track = title,
+                PlaybackEvent::Title { title, .. } => {
+                    self.track_metadata = super::super::bounded_track_title(&title, &self.station_now);
+                    self.track = title;
+                }
                 PlaybackEvent::PlayOk {
                     url,
                     tap_url,
@@ -105,6 +109,7 @@ impl RockCastApp {
                     self.playing_url = None;
                     self.observers.stop();
                     self.track = self.lang.t().stopped.into();
+                    self.track_metadata = None;
                     self.status = self.lang.t().stopped.into();
                     self.output = super::super::RemoteOutput::Local;
                     self.finish_remote_command(generation, true);
@@ -135,6 +140,7 @@ impl RockCastApp {
                     self.selected_station = None;
                     self.station_now = "—".into();
                     self.track = self.lang.t().track_hint.into();
+                    self.track_metadata = None;
                     self.output = super::super::RemoteOutput::Local;
                     if let Some(next) = self.voice_fallback.pop_front() {
                         log::info!(

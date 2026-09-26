@@ -1,5 +1,9 @@
 # Playback
 
+## Remote state for RockMobile
+
+When paired as a RockServer player, RockCast accepts station commands from the account-owned controller and publishes confirmed playback state with a monotonic revision. The optional `track_title` is taken from observed ICY/relay metadata, bounded to 256 characters, and omitted until a title is known. A station change, stop or playback error clears the previous title so the phone cannot show stale track text. Station identity remains `station_id`; the title is display metadata.
+
 ## Choosing an output
 
 `output::scan_all(timeout, lang)` builds the device list:

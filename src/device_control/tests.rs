@@ -66,6 +66,19 @@ fn manifest_and_state_advertise_only_the_implemented_output_actions() {
 }
 
 #[test]
+fn player_state_publishes_optional_track_title() {
+    let mut state = PlayerState::idle(63);
+    state.playback_status = "playing";
+    state.station_id = Some("station-a".into());
+    state.track_title = Some("Artist - Track".into());
+    let playback = serde_json::to_value(state.runtime_state()).unwrap()["playback"].clone();
+    assert_eq!(playback["track_title"], "Artist - Track");
+    state.track_title = None;
+    let playback = serde_json::to_value(state.runtime_state()).unwrap()["playback"].clone();
+    assert!(playback.get("track_title").is_none());
+}
+
+#[test]
 fn protocol_parser_rejects_malformed_and_oversized_frames() {
     assert_eq!(
         inbound_type(r#"{"protocol_version":1,"type":"future.notice","payload":{}}"#).unwrap(),
@@ -621,6 +634,7 @@ fn player_state(status: &'static str, station_id: Option<&str>, volume: u8) -> P
     PlayerState {
         playback_status: status,
         station_id: station_id.map(str::to_owned),
+        track_title: None,
         volume,
         output_mode: "local",
         receiver_id: None,

@@ -6,7 +6,7 @@ Code-oriented docs for humans and coding agents. Product overview and user instr
 |-----|---------|
 | [architecture.md](architecture.md) | Threads, ownership, end-to-end data flow |
 | [modules.md](modules.md) | File/module map, key types, dependencies |
-| [playback.md](playback.md) | Local + Cast play/stop, cancellation, volume |
+| [playback.md](playback.md) | Local + Cast play/stop, cancellation, volume, remote track-state publication |
 | [concurrency.md](concurrency.md) | Thread pools, cancellation, Play/Stop freeze postmortem |
 | [cast.md](cast.md) | Discovery, CASTV2 stack, protocol notes |
 | [agents.md](agents.md) | **Start here if you are an LLM/agent** — invariants, gotchas, where to edit |

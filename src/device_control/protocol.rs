@@ -106,6 +106,8 @@ pub(crate) struct RuntimeState {
 struct PlaybackRuntimeState {
     status: &'static str,
     station_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    track_title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -176,6 +178,7 @@ enum Capability {
 pub(crate) struct PlayerState {
     pub(crate) playback_status: &'static str,
     pub(crate) station_id: Option<String>,
+    pub(crate) track_title: Option<String>,
     pub(crate) volume: u8,
     pub(crate) output_mode: &'static str,
     pub(crate) receiver_id: Option<String>,
@@ -186,6 +189,7 @@ impl PlayerState {
         Self {
             playback_status: "idle",
             station_id: None,
+            track_title: None,
             volume,
             output_mode: "local",
             receiver_id: None,
@@ -197,6 +201,7 @@ impl PlayerState {
             playback: PlaybackRuntimeState {
                 status: self.playback_status,
                 station_id: self.station_id.clone(),
+                track_title: self.track_title.clone(),
             },
             // RockCast has no mute operation today; false is a factual local state,
             // not an advertised remote mute command.

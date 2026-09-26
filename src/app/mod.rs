@@ -144,6 +144,7 @@ pub struct RockCastApp {
     pub(super) revoke_confirmation: Option<String>,
     pub(super) pairing_link_copied: bool,
     pub(super) track: String,
+    pub(super) track_metadata: Option<String>,
     pub(super) volume: u8,
     pub(super) loading_stations: bool,
     pub(super) loading_devices: bool,
@@ -266,6 +267,7 @@ impl RockCastApp {
             revoke_confirmation: None,
             pairing_link_copied: false,
             track: t.track_hint.into(),
+            track_metadata: None,
             volume,
             loading_stations: false,
             loading_devices: false,
@@ -348,7 +350,6 @@ impl eframe::App for RockCastApp {
         let device_commands_pending = self.poll_device_control_commands();
         self.poll_pairing();
         self.apply_volume_if_needed();
-        self.sync_device_control_state();
         if self.playing
             && self.playback.relay_active()
             && !self.playing_local
@@ -356,8 +357,10 @@ impl eframe::App for RockCastApp {
             && !title.is_empty()
             && self.track != title
         {
+            self.track_metadata = bounded_track_title(&title, &self.station_now);
             self.track = title;
         }
+        self.sync_device_control_state();
         let now = Instant::now();
         let eq_ui_active = self.eq_ui_needs_frames();
         let eq_repaint_due = eq_ui_active && now >= self.eq_repaint_next;
@@ -529,6 +532,11 @@ impl eframe::App for RockCastApp {
     }
 }
 
+fn bounded_track_title(title: &str, station_name: &str) -> Option<String> {
+    let title = title.trim().chars().take(256).collect::<String>();
+    (!title.is_empty() && title != station_name).then_some(title)
+}
+
 impl Drop for RockCastApp {
     fn drop(&mut self) {
         self.device_control.shutdown();
@@ -549,6 +557,7 @@ impl RockCastApp {
         let state = PlayerState {
             playback_status: playback_status(self.playback.phase(), station_id.as_deref()),
             station_id,
+            track_title: self.track_metadata.clone(),
             volume: self.volume,
             output_mode: match &self.output {
                 RemoteOutput::Local => "local",
@@ -673,4 +682,16 @@ fn default_pairing_device_name() -> String {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "This PC".into())
+}
+
+#[cfg(test)]
+mod track_title_tests {
+    use super::bounded_track_title;
+
+    #[test]
+    fn only_real_track_metadata_is_published() {
+        assert_eq!(bounded_track_title("Artist - Track", "Radio"), Some("Artist - Track".into()));
+        assert_eq!(bounded_track_title("Radio", "Radio"), None);
+        assert_eq!(bounded_track_title("  ", "Radio"), None);
+    }
 }

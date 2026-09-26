@@ -1,6 +1,8 @@
 # RockCast status
 
-# RockCast status
+## Remote playback track publication (2026-09-26)
+
+RockCast now publishes an optional bounded `track_title` with its revisioned device-control playback state. The title comes from observed ICY/relay metadata, is cleared on station start/stop/error, and is omitted when absent. The current Windows release binary was installed and restarted; a paired RockMobile changed stations twice and displayed distinct current titles from the deployed RockServer directory. `cargo test`, strict Clippy and release build passed. `cargo fmt --check` still reports pre-existing formatting outside these edits.
 
 ## RC-7 — UI polish pass: polished table, deck redesign, asset icons (implemented locally, 2026-09-25)
 

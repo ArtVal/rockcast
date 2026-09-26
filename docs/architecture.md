@@ -108,7 +108,7 @@ Exit → cancel token + non-blocking local/relay shutdown → process::exit(0)
 | Local | ICY inside `LocalPlayer` decode (`title_tx`) | FFT in decode thread → `LocalPlayer::levels` |
 | Cast | `observers::IcyWatcher` HTTP tap after PlayOk | `observers::SpectrumAnalyzer` separate HTTP tap |
 
-Both taps are stopped on station change / stop / error.
+Both taps are stopped on station change / stop / error. The app forwards observed ICY/relay titles into its optional device-control `track_title` runtime field and publishes the changed state. Station ID remains the playback identity; a title is never inferred from the station name.
 
 ## Station icon flow (MVP)
 
