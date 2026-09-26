@@ -5,6 +5,7 @@ use eframe::egui::{ColorImage, Context, TextureHandle, TextureOptions};
 /// Embedded static UI icon handles.
 #[derive(Clone)]
 pub(crate) struct AppIcons {
+    pub logo: TextureHandle,
     pub search: TextureHandle,
     pub mic: TextureHandle,
     pub speaker: TextureHandle,
@@ -18,6 +19,11 @@ impl AppIcons {
     /// Loads all embedded application icon textures into the egui context.
     pub fn new(ctx: &Context) -> Self {
         Self {
+            logo: load_png(
+                ctx,
+                "icon_logo",
+                include_bytes!("../../assets/icon_logo.png"),
+            ),
             search: load_png(
                 ctx,
                 "icon_search",

@@ -347,6 +347,9 @@ impl RockCastApp {
                 if ui.add(genre_btn).clicked() {
                     self.filter_mode = super::super::StationFilterMode::All;
                     self.selected_genre = (!selected).then(|| genre.to_owned());
+                    // Genre chips drive a server search via global_station_query()
+                    // instead of filtering the local catalog in place.
+                    search_requested = true;
                 }
             }
         });
@@ -532,23 +535,11 @@ impl RockCastApp {
                 .show(ui, |ui| {
                     let row_w = ui.available_width();
 
+                    // In All mode the list is whatever the last server search
+                    // returned (the genre term is part of that query), so no
+                    // extra local tag filtering is applied here.
                     let visible_indices: Vec<usize> = match self.filter_mode {
-                        super::super::StationFilterMode::All => (0..self.stations.len())
-                            .filter(|&i| {
-                                if let Some(genre) = &self.selected_genre {
-                                    let tags = self.stations[i].tags.to_lowercase();
-                                    let name = self.stations[i].name.to_lowercase();
-                                    let g = genre.to_lowercase();
-                                    let g_norm = g.replace('-', " ");
-                                    tags.contains(&g)
-                                        || tags.contains(&g_norm)
-                                        || name.contains(&g)
-                                        || name.contains(&g_norm)
-                                } else {
-                                    true
-                                }
-                            })
-                            .collect(),
+                        super::super::StationFilterMode::All => (0..self.stations.len()).collect(),
                         super::super::StationFilterMode::Favourites => (0..self.stations.len())
                             .filter(|&i| self.is_station_favourite(&self.stations[i].id))
                             .collect(),

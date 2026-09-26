@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub use phase::{PlaybackEvent, PlaybackPhase};
-use volume::{cast_volume, local_volume};
+use volume::local_volume;
 
 pub struct PlaybackController {
     cast: Arc<CastService>,
@@ -236,7 +236,7 @@ impl PlaybackController {
                 }
                 match result {
                     Ok(()) => {
-                        let _ = cast.set_volume_current(cast_volume(volume));
+                        let _ = cast.set_volume_current(local_volume(volume));
                         let tap_url = if relay_owned {
                             relay.tap_url()
                         } else {
@@ -362,7 +362,7 @@ impl PlaybackController {
             if local_output {
                 local.set_volume(local_volume(percent));
             } else {
-                let _ = cast.set_volume_current(cast_volume(percent));
+                let _ = cast.set_volume_current(local_volume(percent));
             }
         });
     }

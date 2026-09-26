@@ -17,8 +17,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Frame, Layout, RichText, Sense, Stroke, StrokeKind,
-    TextureHandle, Vec2,
+    self, Align, Color32, CornerRadius, Frame, Layout, Pos2, Rect, RichText, Sense, Stroke,
+    StrokeKind, TextureHandle, Vec2,
 };
 
 use crate::{
@@ -429,14 +429,14 @@ impl eframe::App for RockCastApp {
             }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(icon_rect, CornerRadius::same(6), ACCENT);
-                    ui.painter().text(
-                        icon_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "R",
-                        egui::FontId::proportional(16.0),
+                    // Brand mark from assets/icon_logo.png (see
+                    // scripts/generate_icons.py); drawn untinted.
+                    let (logo_rect, _) =
+                        ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                    ui.painter().image(
+                        self.app_icons.logo.id(),
+                        logo_rect,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                         Color32::WHITE,
                     );
                     ui.add_space(4.0);

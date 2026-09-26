@@ -85,6 +85,23 @@ def create_phone():
     im = im.resize((64, 64), Image.Resampling.LANCZOS)
     im.save("assets/icon_phone.png")
 
+def create_logo():
+    # Brand mark for the app header, derived from the master app icon.
+    # Multicolor art: drawn untinted, unlike the monochrome glyph set.
+    im = Image.open("assets/app-icon.png").convert("RGBA")
+    im = im.resize((128, 128), Image.Resampling.LANCZOS)
+    im.save("assets/icon_logo.png")
+
+
+def create_ico():
+    # Multi-resolution Windows icon embedded into the .exe by build.rs.
+    im = Image.open("assets/app-icon.png").convert("RGBA")
+    im.save(
+        "assets/app-icon.ico",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
+
+
 create_search()
 create_mic()
 create_speaker()
@@ -92,4 +109,6 @@ create_speaker_mute()
 create_clear()
 create_pc()
 create_phone()
+create_logo()
+create_ico()
 print("All icons generated successfully!")
