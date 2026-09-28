@@ -52,7 +52,8 @@ impl RockCastApp {
             match event {
                 PlaybackEvent::Status { text, .. } => self.status = text,
                 PlaybackEvent::Title { title, .. } => {
-                    self.track_metadata = super::super::bounded_track_title(&title, &self.station_now);
+                    self.track_metadata =
+                        super::super::bounded_track_title(&title, &self.station_now);
                     self.track = title;
                 }
                 PlaybackEvent::PlayOk {
@@ -78,6 +79,7 @@ impl RockCastApp {
                         {
                             log::warn!("failed to record playback history: {error}");
                         }
+                        self.schedule_personal_sync();
                     }
                     // The stream often delivers its first ICY title while the
                     // playout buffer is still filling, i.e. before PlayOk —
@@ -185,6 +187,7 @@ impl RockCastApp {
                             Ok(store) => self.personal_data = Some(store),
                             Err(error) => log::warn!("personal data disabled: {error}"),
                         }
+                        self.init_personal_sync_state();
                     }
                     self.source = source;
                     self.restore_station_selection();
@@ -490,6 +493,56 @@ impl RockCastApp {
                             },
                         },
                     };
+                    if super::super::account_session_active(&self.account_state) {
+                        self.schedule_personal_sync();
+                    }
+                }
+                UiMsg::StationResolved { station_id, result } => {
+                    self.resolving_stations.remove(&station_id);
+                    match result {
+                        Ok(station) => {
+                            log::info!(
+                                "favourite resolved: station_id={station_id} -> {} name='{}'",
+                                station.id,
+                                station.name
+                            );
+                            // A rehosted stream resolves under a new id: move
+                            // the favourite to the found station so the row
+                            // stops being grey and sync spreads the fix.
+                            if station.id != station_id && self.is_station_favourite(&station_id) {
+                                let name = station.name.clone();
+                                let station_clone = station.clone();
+                                if let Some(store) = self.personal_data.as_mut() {
+                                    let _ = store.remove_favourite(&station_id);
+                                    let _ = store.toggle_favourite(&station_clone);
+                                }
+                                self.status =
+                                    format!("Станция «{name}» переехала — избранное обновлено");
+                                self.schedule_personal_sync();
+                            }
+                            let index = match self.stations.iter().position(|s| s.id == station.id)
+                            {
+                                Some(index) => index,
+                                None => {
+                                    self.stations.insert(0, station);
+                                    0
+                                }
+                            };
+                            self.selected_station = Some(index);
+                            self.scroll_to_station = Some(index);
+                            self.mark_settings_dirty();
+                            self.play();
+                        }
+                        Err(message) => {
+                            log::info!(
+                                "favourite resolve failed: station_id={station_id}: {message}"
+                            );
+                            self.status = message;
+                        }
+                    }
+                }
+                UiMsg::PersonalSyncResult { generation, result } => {
+                    self.handle_personal_sync_result(generation, result);
                 }
                 UiMsg::PairingResult { request_id, result } => {
                     let super::super::AccountUiState::Waiting {
@@ -512,6 +565,9 @@ impl RockCastApp {
                                     devices: Vec::new(),
                                 },
                             };
+                            // A freshly paired device starts with a clean
+                            // per-device sync cursor (full snapshot pull).
+                            self.reset_personal_sync_state();
                             self.force_account_reload();
                         }
                         Err(crate::session::PairingPoll::SecureStorageUnavailable) => {

@@ -5,10 +5,66 @@ use std::time::Duration;
 use crate::{
     i18n::Lang,
     output::scan_streaming,
-    stations::{enrich_stations, load_catalog},
+    rockserver::RuntimeConfig,
+    stations::{Station, enrich_stations, load_catalog},
 };
 
 use super::super::{RockCastApp, messages::UiMsg};
+
+/// Resolves one favourite known only from its profile record: checks the
+/// local catalog snapshot first by ID, then queries RockServer strictly
+/// by ID (`GET /api/v1/catalog/stations/{station_id}`). No search by name.
+fn resolve_missing_station(
+    config: &RuntimeConfig,
+    station_id: &str,
+    name: &str,
+) -> Result<Station, String> {
+    if let Some(station) = crate::stations::catalog_stations()
+        .into_iter()
+        .find(|s| {
+            s.id == station_id
+                || s.legacy_ids.iter().any(|lid| {
+                    lid == station_id
+                        || lid.strip_prefix("rockmobile:rockcast-")
+                            .is_some_and(|hash| station_id == format!("legacy-{hash}"))
+                })
+        })
+    {
+        return Ok(station);
+    }
+    crate::rockserver::get_station(config, station_id)
+        .map_err(|e| format!("Станция «{name}» ({station_id}) не найдена: {e}"))
+}
+
+impl RockCastApp {
+    /// Starts a background lookup for a favourite whose station is not in the
+    /// loaded list; the muted row's play button leads here.
+    pub(in crate::app) fn begin_resolve_missing_station(&mut self, station_id: &str, name: &str) {
+        if self.resolving_stations.contains(station_id) {
+            return;
+        }
+        self.resolving_stations.insert(station_id.to_owned());
+        self.status = format!("Ищу станцию «{name}»…");
+        log::info!("favourite resolve started: station_id={station_id} name={name}");
+        let ui_tx = self.ui_tx.clone();
+        let rockserver = self.rockserver.clone();
+        let request_id = station_id.to_owned();
+        let name = name.to_owned();
+        if self
+            .background
+            .spawn(move |_cancel| {
+                let result = resolve_missing_station(&rockserver, &request_id, &name);
+                let _ = ui_tx.send(UiMsg::StationResolved {
+                    station_id: request_id,
+                    result,
+                });
+            })
+            .is_err()
+        {
+            self.resolving_stations.remove(station_id);
+        }
+    }
+}
 
 impl RockCastApp {
     pub(in crate::app) fn bootstrap(&mut self) {

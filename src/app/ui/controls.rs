@@ -156,11 +156,7 @@ impl RockCastApp {
                             Pos2::new(track_clip_left, text_rect.top()),
                             Pos2::new(text_rect.right(), text_rect.bottom()),
                         );
-                        let track_color = if self.playing {
-                            ACCENT
-                        } else {
-                            MUTED
-                        };
+                        let track_color = if self.playing { ACCENT } else { MUTED };
                         let track_scrolls = draw_marquee_line(
                             &ui.painter_at(track_clip),
                             track_clip,
@@ -420,7 +416,11 @@ fn draw_marquee_line(
     let distance = galley_w - clip.width();
     let scroll_time = distance / SPEED;
     let period = scroll_time + PAUSE * 2.0;
-    let phase = if period > 0.0 { time_secs % period } else { 0.0 };
+    let phase = if period > 0.0 {
+        time_secs % period
+    } else {
+        0.0
+    };
     let offset = if phase < PAUSE {
         0.0
     } else if phase < PAUSE + scroll_time {

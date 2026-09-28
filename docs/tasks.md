@@ -1,5 +1,63 @@
 # RockCast tasks
 
+## Playable muted favourite rows (2026-09-28)
+
+- User ask: a grey (not-in-catalog) favourite must be playable, not just listed.
+- Done:
+  - `src/stations/radio_browser.rs`: `resolve_station` (name search), `match_station`
+    (exact stable-id match, unique-name fallback), `urlencode`; re-exported via
+    `crate::stations`.
+  - `src/app/actions/catalog.rs`: `begin_resolve_missing_station` — background job, Radio
+    Browser then RockServer search; `UiMsg::StationResolved`; handler inserts/selects/plays and
+    repoints the favourite when the stream rehosted under a new id.
+  - `src/app/ui/stations.rs`: play button on muted rows (dimmed while resolving) returning
+    `MissingRowAction`.
+- Checks: fmt, strict Clippy, cargo test — green (integration tests built in a separate target
+  dir while the previous app binary was still running).
+
+## Full favourites list in the table filter (2026-09-28)
+
+- User ask: the «★ Избранное» tab must show the whole list, not only favourites present in the
+  currently loaded catalog.
+- Done: `StationRow::{Loaded, Missing}` rows in `src/app/ui/stations.rs`; muted non-playable rows
+  for missing favourites with hover explanation and star-based removal;
+  `PersonalDataStore::remove_favourite(station_id)`; removal schedules a sync push.
+- Checks: fmt, strict Clippy, cargo test — green.
+
+## Quarantine retirement (2026-09-28)
+
+- User pain: the favourites/history tab badges counted quarantined records while the visible rows
+  only showed favourites present in the currently loaded station list; with Radio Browser and
+  RockServer unreachable, most records were quarantined at every start (262 entries) and the
+  profile shrank from 8/327 to 3/70.
+- Done: quarantine disabled (`restore_quarantined_records` + `remap_legacy_station_ids` replace
+  `resolve_records`), one-time restore of already-quarantined records with backup+journal,
+  `clear_history` simplified, `unresolved_for` removed.
+- Known limitation kept deliberately: the station-table Favourites/History filters still show
+  only records whose station is in the currently loaded list; the «Local favourites» /
+  «Local playback history» windows list everything.
+- Checks: fmt, strict Clippy, cargo test — green.
+
+## RM-012-B — client favourites/history sync (2026-09-28)
+
+- Goal: converge RockCast favourites/history with RockMobile through the RM-012-A
+  `POST /api/v1/sync` contract while keeping the local profile a full offline fallback.
+- Scope:
+  - `src/personal_sync/` (`contract`, `state`, `transport`, `engine`): snake_case wire DTOs,
+    per-device cursor + acknowledged-base state file, batch chunking (≤300 per collection),
+    401-driven session renewal, 429/503 backoff classes, 422 field-only errors.
+  - `src/personal_data/` split into `records` / `sync_apply` (+ tests): history `updatedAt`
+    backfill, LWW/tombstone application reusing RM-007-A retention and caps, metadata passthrough.
+  - `src/app/actions/personal_sync.rs`: startup/debounce(10 s)/periodic(5 min) triggers on the
+    background runtime, generation-guarded result handling, cursor persisted only after apply,
+    state reset on fresh profile or fresh pairing.
+  - Account panel sync status line (i18n ru/en) and `sync=` METRICS field; logs are
+    counter/phase-only.
+- Checks: cargo fmt, strict Clippy, cargo test — green; sync behaviour covered by fake-channel
+  unit tests, no live server in tests.
+- Open: two-device manual acceptance after client deployment (add favourite on one device →
+  appears on the other; delete → tombstone propagates).
+
 ## Remote playback track publication (2026-09-26)
 
 - Goal: expose the current observed track to the paired RockMobile player.

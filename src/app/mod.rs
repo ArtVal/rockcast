@@ -134,6 +134,18 @@ pub struct RockCastApp {
     /// session; it is never recovered from a stream URL.
     pub(super) playback_station_id: Option<String>,
     pub(super) personal_data: Option<crate::personal_data::PersonalDataStore>,
+    /// RM-012-B: per-device favourites/history sync state and UI diagnostics.
+    pub(super) sync_state: Option<crate::personal_sync::SyncState>,
+    pub(super) sync_status: actions::personal_sync::SyncStatus,
+    pub(super) sync_running: bool,
+    pub(super) sync_generation: u64,
+    pub(super) sync_retry_not_before: Option<Instant>,
+    pub(super) sync_backoff_attempts: u32,
+    pub(super) sync_debounce_at: Option<Instant>,
+    pub(super) sync_last_periodic: Instant,
+    /// Favourite stations being resolved from their profile record right now
+    /// (RM-012-B follow-up: muted favourite rows are playable).
+    pub(super) resolving_stations: HashSet<String>,
     pub(super) favourites_open: bool,
     pub(super) history_open: bool,
     pub(super) account_open: bool,
@@ -254,6 +266,15 @@ impl RockCastApp {
             last_played_station,
             playback_station_id: None,
             personal_data: None,
+            sync_state: None,
+            sync_status: actions::personal_sync::SyncStatus::default(),
+            sync_running: false,
+            sync_generation: 0,
+            sync_retry_not_before: None,
+            sync_backoff_attempts: 0,
+            sync_debounce_at: None,
+            sync_last_periodic: Instant::now(),
+            resolving_stations: HashSet::new(),
             favourites_open: false,
             history_open: false,
             account_open: false,
@@ -347,6 +368,7 @@ impl eframe::App for RockCastApp {
 
         self.bootstrap();
         self.poll_messages(ctx);
+        self.tick_personal_sync();
         let device_commands_pending = self.poll_device_control_commands();
         self.poll_pairing();
         self.apply_volume_if_needed();
@@ -380,6 +402,9 @@ impl eframe::App for RockCastApp {
             || self.account_load_started
             || self.account_refreshing
             || device_commands_pending
+            || self.sync_running
+            || self.sync_debounce_at.is_some()
+            || !self.resolving_stations.is_empty()
             || matches!(self.account_state, AccountUiState::Waiting { .. });
         let snap = PlaybackSnapshot {
             playing: self.playing,
@@ -387,6 +412,9 @@ impl eframe::App for RockCastApp {
             cast_relay: self.cast_relay,
             playing_local: self.playing_local,
             fast_repaint: needs_fast_repaint,
+            sync: self
+                .sync_status
+                .metric(account_session_active(&self.account_state)),
         };
         self.telemetry.maybe_log(snap);
         if snap.playing {
@@ -434,8 +462,7 @@ impl eframe::App for RockCastApp {
                 ui.horizontal(|ui| {
                     // Brand mark from assets/icon_logo.png (see
                     // scripts/generate_icons.py); drawn untinted.
-                    let (logo_rect, _) =
-                        ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                    let (logo_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
                     ui.painter().image(
                         self.app_icons.logo.id(),
                         logo_rect,
@@ -690,7 +717,10 @@ mod track_title_tests {
 
     #[test]
     fn only_real_track_metadata_is_published() {
-        assert_eq!(bounded_track_title("Artist - Track", "Radio"), Some("Artist - Track".into()));
+        assert_eq!(
+            bounded_track_title("Artist - Track", "Radio"),
+            Some("Artist - Track".into())
+        );
         assert_eq!(bounded_track_title("Radio", "Radio"), None);
         assert_eq!(bounded_track_title("  ", "Radio"), None);
     }

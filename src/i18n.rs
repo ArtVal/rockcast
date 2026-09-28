@@ -120,6 +120,10 @@ pub struct Strings {
     pub account_connection_cancelled: &'static str,
     pub account_connection_failed: &'static str,
     pub account_terminal_error: &'static str,
+    pub sync_title: &'static str,
+    pub sync_state_ok: &'static str,
+    pub sync_state_error: &'static str,
+    pub sync_state_idle: &'static str,
 }
 
 pub static RU: Strings = Strings {
@@ -210,6 +214,10 @@ pub static RU: Strings = Strings {
     account_storage_unavailable: "Защищённое хранилище недоступно. Локальное радио продолжает работать.",
     account_connection_cancelled: "Подключение отменено. Локальное радио продолжает работать.",
     account_connection_failed: "Не удалось начать подключение. Локальное радио не изменилось.",
+    sync_title: "Синхронизация избранного и истории",
+    sync_state_ok: "выполнена",
+    sync_state_error: "ошибка, повторим позже",
+    sync_state_idle: "ожидает",
     account_terminal_error: "Ссылка истекла или подключение не подтверждено. Создайте новую ссылку.",
 };
 
@@ -301,6 +309,10 @@ pub static EN: Strings = Strings {
     account_storage_unavailable: "Secure credential storage is unavailable. Local radio remains available.",
     account_connection_cancelled: "Connection cancelled. Local radio remains available.",
     account_connection_failed: "Could not start account connection. Local radio is unchanged.",
+    sync_title: "Favourites & history sync",
+    sync_state_ok: "up to date",
+    sync_state_error: "error, will retry",
+    sync_state_idle: "pending",
     account_terminal_error: "The link expired or the connection was not approved. Create a new link.",
 };
 

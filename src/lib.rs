@@ -10,6 +10,8 @@ pub mod net;
 pub mod observers;
 pub mod output;
 pub mod personal_data;
+/// Client side of the RM-012-B favourites/history server sync.
+pub mod personal_sync;
 pub mod playback;
 pub mod playback_diag;
 pub mod profile;

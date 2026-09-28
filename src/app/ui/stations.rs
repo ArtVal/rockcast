@@ -314,6 +314,7 @@ impl RockCastApp {
                 && let Some(store) = self.personal_data.as_mut()
             {
                 let _ = store.clear_history();
+                self.schedule_personal_sync();
             }
 
             ui.add_space(4.0);
@@ -372,6 +373,8 @@ impl RockCastApp {
         let mut should_play = false;
         let mut clicked_station: Option<usize> = None;
         let mut toggle_fav: Option<crate::stations::Station> = None;
+        let mut unfav_missing: Option<(String, String)> = None;
+        let mut resolve_missing: Option<(String, String)> = None;
         let scroll_h = (list_h - 136.0).max(100.0);
         let col_station = t.col_station;
         let col_tags = t.col_tags;
@@ -537,11 +540,36 @@ impl RockCastApp {
 
                     // In All mode the list is whatever the last server search
                     // returned (the genre term is part of that query), so no
-                    // extra local tag filtering is applied here.
-                    let visible_indices: Vec<usize> = match self.filter_mode {
-                        super::super::StationFilterMode::All => (0..self.stations.len()).collect(),
-                        super::super::StationFilterMode::Favourites => (0..self.stations.len())
-                            .filter(|&i| self.is_station_favourite(&self.stations[i].id))
+                    // extra local tag filtering is applied here. The
+                    // Favourites filter shows the whole profile list: stations
+                    // loaded in the catalog as normal rows, and muted rows for
+                    // favourites whose station is not currently loaded.
+                    let rows: Vec<StationRow> = match self.filter_mode {
+                        super::super::StationFilterMode::All => {
+                            (0..self.stations.len()).map(StationRow::Loaded).collect()
+                        }
+                        super::super::StationFilterMode::Favourites => self
+                            .personal_data
+                            .as_ref()
+                            .map(|store| store.favourites().to_vec())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|favourite| {
+                                match crate::personal_data::station_index_by_id(
+                                    &self.stations,
+                                    &favourite.station_id,
+                                ) {
+                                    Some(index) => StationRow::Loaded(index),
+                                    None => StationRow::Missing {
+                                        station_id: favourite.station_id.clone(),
+                                        name: favourite
+                                            .metadata
+                                            .last_known_name
+                                            .clone()
+                                            .unwrap_or_else(|| favourite.station_id.clone()),
+                                    },
+                                }
+                            })
                             .collect(),
                         super::super::StationFilterMode::History => {
                             let history = self
@@ -559,11 +587,11 @@ impl RockCastApp {
                                     indices.push(idx);
                                 }
                             }
-                            indices
+                            indices.into_iter().map(StationRow::Loaded).collect()
                         }
                     };
 
-                    if visible_indices.is_empty() {
+                    if rows.is_empty() {
                         let empty_text = match self.filter_mode {
                             super::super::StationFilterMode::Favourites => {
                                 "В избранном пока нет станций. Нажмите ★ рядом со станцией в списке."
@@ -589,7 +617,35 @@ impl RockCastApp {
                         return;
                     }
 
-                    for &i in &visible_indices {
+                    for (row_pos, row) in rows.iter().enumerate() {
+                        if let StationRow::Missing { station_id, name } = row {
+                            match draw_missing_favourite_row(
+                                ui,
+                                &RowLayout {
+                                    row_w,
+                                    name_w,
+                                    col_name_x,
+                                    col_tags_x,
+                                },
+                                row_pos,
+                                station_id,
+                                name,
+                                self.resolving_stations.contains(station_id),
+                            ) {
+                                MissingRowAction::Unfavourite => {
+                                    unfav_missing = Some((station_id.clone(), name.clone()))
+                                }
+                                MissingRowAction::Play => {
+                                    resolve_missing = Some((station_id.clone(), name.clone()))
+                                }
+                                MissingRowAction::None => {}
+                            }
+                            continue;
+                        }
+                        let StationRow::Loaded(i) = row else {
+                            continue;
+                        };
+                        let i = *i;
                         let st = &self.stations[i];
                         let selected = self.selected_station == Some(i);
                         let meta = [
@@ -626,7 +682,7 @@ impl RockCastApp {
                                 Color32::from_rgba_unmultiplied(229, 96, 32, 42)
                             } else if resp.hovered() {
                                 Color32::from_rgb(0x27, 0x1f, 0x1a)
-                            } else if i % 2 == 1 {
+                            } else if row_pos % 2 == 1 {
                                 Color32::from_rgb(0x1e, 0x17, 0x12)
                             } else {
                                 Color32::from_rgb(0x18, 0x13, 0x0f)
@@ -897,6 +953,12 @@ impl RockCastApp {
         if let Some(st) = toggle_fav {
             self.toggle_station_favourite(&st);
         }
+        if let Some((station_id, name)) = unfav_missing {
+            self.remove_missing_favourite(&station_id, &name);
+        }
+        if let Some((station_id, name)) = resolve_missing {
+            self.begin_resolve_missing_station(&station_id, &name);
+        }
 
         if let Some(i) = clicked_station {
             let prev = self.selected_station;
@@ -932,4 +994,156 @@ impl RockCastApp {
         }
         terms
     }
+}
+
+/// One rendered row of the station table. `Missing` is a favourite whose
+/// station is not in the currently loaded list: shown muted, removable via
+/// its star, but not playable.
+enum StationRow {
+    Loaded(usize),
+    Missing { station_id: String, name: String },
+}
+
+struct RowLayout {
+    row_w: f32,
+    name_w: f32,
+    col_name_x: f32,
+    col_tags_x: f32,
+}
+
+enum MissingRowAction {
+    None,
+    Unfavourite,
+    Play,
+}
+
+fn draw_missing_favourite_row(
+    ui: &mut Ui,
+    layout: &RowLayout,
+    row_pos: usize,
+    station_id: &str,
+    name: &str,
+    busy: bool,
+) -> MissingRowAction {
+    let (row_rect, resp) = ui.allocate_exact_size(Vec2::new(layout.row_w, ROW_H), Sense::click());
+    if !ui.is_rect_visible(row_rect) {
+        return MissingRowAction::None;
+    }
+    let bg = if resp.hovered() {
+        Color32::from_rgb(0x27, 0x1f, 0x1a)
+    } else if row_pos % 2 == 1 {
+        Color32::from_rgb(0x1e, 0x17, 0x12)
+    } else {
+        Color32::from_rgb(0x18, 0x13, 0x0f)
+    };
+    ui.painter()
+        .rect_filled(row_rect, CornerRadius::same(4), bg);
+    let y = row_rect.center().y;
+
+    // Filled star; clicking removes the favourite even without a station row.
+    let star_rect = Rect::from_center_size(Pos2::new(row_rect.left() + 16.0, y), Vec2::splat(22.0));
+    let star_resp = ui.interact(
+        star_rect,
+        ui.id().with(("station_star", station_id)),
+        Sense::click(),
+    );
+    ui.painter().text(
+        star_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "★",
+        egui::FontId::proportional(14.0),
+        GOLD_STAR,
+    );
+    if star_resp.clicked() {
+        return MissingRowAction::Unfavourite;
+    }
+
+    let icon_rect = Rect::from_center_size(Pos2::new(row_rect.left() + 40.0, y), Vec2::splat(26.0));
+    let chars: Vec<char> = name.chars().filter(|c| c.is_alphanumeric()).collect();
+    let initial = if chars.len() >= 2 {
+        format!("{}{}", chars[0], chars[1]).to_uppercase()
+    } else if let Some(c) = chars.first() {
+        c.to_uppercase().to_string()
+    } else {
+        "?".to_string()
+    };
+    ui.painter().rect_filled(
+        icon_rect,
+        CornerRadius::same(5),
+        station_color(name).gamma_multiply(0.55),
+    );
+    ui.painter().rect_stroke(
+        icon_rect,
+        CornerRadius::same(5),
+        Stroke::new(1.0, Color32::from_rgb(0x4a, 0x38, 0x2c)),
+        StrokeKind::Inside,
+    );
+    ui.painter().text(
+        icon_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        initial,
+        egui::FontId::proportional(11.0),
+        MUTED,
+    );
+
+    let name_limit = ((layout.name_w / 7.5) as usize).clamp(16, 64);
+    ui.painter().text(
+        Pos2::new(row_rect.left() + layout.col_name_x, y),
+        egui::Align2::LEFT_CENTER,
+        truncate(name, name_limit),
+        FontId::proportional(FS_ROW),
+        MUTED,
+    );
+    ui.painter().text(
+        Pos2::new(row_rect.left() + layout.col_tags_x, y),
+        egui::Align2::LEFT_CENTER,
+        "станция недоступна в текущем списке",
+        egui::FontId::proportional(12.0),
+        MUTED.gamma_multiply(0.85),
+    );
+    // Play resolves the station on demand (Radio Browser by stable id,
+    // RockServer search as fallback) and starts playback once found.
+    let play_btn_rect = Rect::from_center_size(
+        Pos2::new(row_rect.right() - ROW_PAD_RIGHT - ROW_PLAY_BTN * 0.5, y),
+        Vec2::splat(ROW_PLAY_BTN),
+    );
+    let play_resp = ui.interact(
+        play_btn_rect,
+        ui.id().with(("row_play_missing", station_id)),
+        Sense::click(),
+    );
+    let (play_fill, play_fg, play_stroke) = if busy {
+        (PANEL_2, MUTED.gamma_multiply(0.5), Stroke::new(1.0, BORDER))
+    } else if play_resp.hovered() {
+        (ACCENT, Color32::WHITE, Stroke::NONE)
+    } else {
+        (PANEL_2, MUTED, Stroke::new(1.0, BORDER))
+    };
+    ui.painter()
+        .circle_filled(play_btn_rect.center(), ROW_PLAY_BTN * 0.5, play_fill);
+    if play_stroke.width > 0.0 {
+        ui.painter()
+            .circle_stroke(play_btn_rect.center(), ROW_PLAY_BTN * 0.5, play_stroke);
+    }
+    ui.painter().text(
+        play_btn_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "▶",
+        egui::FontId::proportional(13.0),
+        play_fg,
+    );
+    if busy {
+        resp.on_hover_text(format!(
+            "«{name}»: ищу станцию в каталоге и RockServer…"
+        ));
+        return MissingRowAction::None;
+    }
+    // The row itself plays too: click, double-click or the play button starts resolving and playback.
+    if play_resp.clicked() || resp.clicked() || resp.double_clicked() {
+        return MissingRowAction::Play;
+    }
+    resp.on_hover_text(format!(
+        "«{name}» сейчас не загружена в список станций. Клик или ▶ загрузит её по ID и включит. Звезда убирает её из избранного."
+    ));
+    MissingRowAction::None
 }

@@ -42,6 +42,23 @@ impl RockCastApp {
             Ok(false) => self.status = format!("Removed from favourites: {}", station.name),
             Err(error) => self.status = format!("Favourites unavailable: {error}"),
         }
+        self.schedule_personal_sync();
+    }
+
+    /// Removes a favourite that has no station row in the loaded catalog
+    /// (the muted rows of the Favourites filter).
+    pub(in crate::app) fn remove_missing_favourite(&mut self, station_id: &str, name: &str) {
+        let Some(store) = self.personal_data.as_mut() else {
+            return;
+        };
+        match store.remove_favourite(station_id) {
+            Ok(true) => {
+                self.status = format!("Removed from favourites: {name}");
+                self.schedule_personal_sync();
+            }
+            Ok(false) => {}
+            Err(error) => self.status = format!("Favourites unavailable: {error}"),
+        }
     }
 
     /// Checks if a station ID is saved in local favourites.
@@ -147,6 +164,7 @@ impl RockCastApp {
                             Ok(()) => self.status = "Playback history cleared".into(),
                             Err(error) => self.status = format!("History unavailable: {error}"),
                         }
+                        self.schedule_personal_sync();
                     }
                 });
                 ui.separator();

@@ -1,5 +1,112 @@
 # RockCast status
 
+## Favourite display names recovered from history (2026-09-28, follow-up)
+
+Favourites applied by server sync arrive without display names (the RM-012-A contract carries no
+favourite metadata), which made their table rows show raw station ids. A backfill now recovers
+the name from the newest history entry of the same station — both when the profile opens and
+after every sync response is applied (history records do carry `lastKnownName` metadata).
+Favourite resolution failures also log start/outcome, and when both Radio Browser and RockServer
+are unreachable the status says so explicitly instead of a bare «не найдена».
+
+Note: the running app binary must be rebuilt and restarted to pick up the muted-row play button
+and this backfill; a stale running `rockcast.exe` also blocks rebuilding the default target.
+
+Checks: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test` (178 unit tests) — green. New tests cover open-time and sync-apply-time backfill.
+
+## Muted favourite rows are playable (2026-09-28, follow-up)
+
+The play button on a muted favourites row now resolves the station on demand and starts playback.
+Resolution runs on the background runtime: Radio Browser first — searching by the last known name
+and matching RockCast's stable `radio-browser-<hash(url)>` id (an exact stream-identity match),
+with a unique case-insensitive name match accepted when the stream was rehosted — then the
+RockServer search as the second source (same matching). While resolving, the row button is dimmed
+and the status shows «Ищу станцию …». On success the station is inserted at the top of the loaded
+list, selected and played; when it resolved under a new id (rehosted stream), the favourite is
+repointed (remove + re-add, which syncs as delete+upsert). Ambiguous name matches never play a
+wrong station: the row reports «не найдена» instead.
+
+Checks: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test` (176 unit + 2 integration tests) — green. New unit tests cover query encoding and
+the exact-id/unique-name/ambiguous matching matrix without network access.
+
+## Favourites tab shows the whole profile list (2026-09-28, follow-up)
+
+The station-table Favourites filter no longer intersects the profile with the currently loaded
+station list. It now renders every favourite record: stations present in the loaded list as
+normal playable rows, and favourites whose station is not loaded (Radio Browser/RockServer ids
+from other sessions, phone-synced records) as muted rows with the last known name, a monogram,
+and a «станция недоступна в текущем списке» hint; a hover tooltip explains that searching for the
+station makes it playable again. The star on a muted row removes the favourite
+(`PersonalDataStore::remove_favourite` by station id, wired into the sync debounce), since
+`toggle_favourite` requires a loaded `Station`. Zebra striping follows the visible row position.
+The History filter and All mode are unchanged.
+
+Checks: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test` (172 unit + 2 integration tests) — green.
+
+## Quarantine retired for personal records (2026-09-28, follow-up to RM-012-B)
+
+The RM-007-A lifecycle quarantine is disabled per user request: opening the profile no longer
+moves favourites/history whose `station_id` does not resolve in the current catalog into
+`unresolvedReferences`. Such records now simply stay in their collections — they are listed with
+their last known name and play nothing until the station is discoverable again. This also removes
+the RM-012-B hazard where a slim offline catalog (Radio Browser/RockServer unreachable) made the
+next sync cycle mistake quarantined records for user deletions and tombstone them server-wide.
+
+- One-time restore migration: existing `unresolvedReferences` entries (favourite and history
+  kinds) move back into the live collections on the next profile open, keeping their original
+  station ids, `reference_id` as `record_id`, and `first_seen_at` as the timestamp. The usual
+  pre-migration backup and journal (`restore-and-remap`) are written first.
+- Legacy-id remapping and duplicate-favourite collapsing at open are kept; only the
+  quarantine/`unresolved_for` path was deleted. `clear_history` no longer touches the (now
+  permanently empty) quarantine list.
+- Checks: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo test` (171 unit + 2 integration tests) — green. New tests cover the survive-untouched
+  and restore-on-open paths.
+
+## RM-012-B — client favourites/history sync with RockServer (2026-09-28)
+
+RockCast now converges favourites and playback history with RockMobile through the deployed
+RM-012-A `POST /api/v1/sync` contract (OpenAPI 0.6.0, rockserver 2d8e27f). The local RM-007-A
+profile stays the full offline fallback: without an account session or network, every
+favourite/history feature works exactly as before, and sync only runs in the background.
+
+- **Sync engine** (`src/personal_sync/`, no UI logic): per-device state
+  (`personal-sync-state.v1.json`) keeps the last `server_revision` cursor plus the exact record
+  versions the server acknowledged; diffing the live profile against that base yields the next
+  push (upserts + tombstone deletes). Oversized pushes are split into server-legal requests
+  (≤300 upserts and ≤300 deletes per collection) with the cursor threaded through chunks.
+- **Application rules**: each incoming record applies last-writer-wins on `updated_at`
+  (strictly newer replaces, ties keep the local record); `deleted_at` deletes locally by
+  `record_id`; losing push echoes arrive as ordinary records and lose honestly. The cursor is
+  persisted only after the response is durably applied to the profile, so a crash mid-cycle
+  merely re-pulls the same delta (verified idempotence test).
+- **Tombstone safety**: a local deletion is pushed with `updated_at` strictly newer than the
+  newest version this device ever saw (including other devices' future-dated clocks), so deletes
+  cannot be resurrected by an older replay; a recreated/lost profile file or a freshly paired
+  device resets the per-device state to a full-snapshot pull instead of tombstoning the account.
+- **Lifecycle reuse**: coalescing (5 min), caps (500/500), and 90-day retention stay in
+  `PersonalDataStore`; the sync layer never duplicates them. History entries gained an
+  `updatedAt` sync field (backfilled from `lastPlayedAt` for pre-RM-012-B files) and history
+  metadata now passes unknown keys through verbatim for cross-client round trips.
+- **Transport**: same native device-session Bearer as device-control, one 401-driven session
+  renewal per request, 429/5xx mapped to exponential backoff (1→15 min) on the scheduler,
+  422 surfaced by `details.field` only (no payloads), 15 s request timeout.
+- **Triggers**: app start (first periodic tick once a session is active), debounced local edits
+  (10 s after a favourite toggle, history record, or clear), and a periodic pull every 5 minutes.
+  Everything runs on the existing `BackgroundRuntime`; the UI thread only applies results.
+- **Diagnostics**: the account panel shows the sync phase («выполнена …» / «ошибка» / «ожидает»)
+  with local time; METRICS lines gained a `sync=` field (off/idle/ok/error). Logs carry counters
+  and phases only — no tokens, identifiers, or record payloads.
+- **Checks:** `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo test` (170 unit + 2 integration tests) — green. Sync tests run on a scripted fake
+  channel: LWW incl. tombstones and echoes, cursors, chunk splitting, 401→renew→retry,
+  429/422/503 classes, first-sync full push+snapshot, and crash-idempotence.
+- **Pending:** the two-device manual acceptance (favourite added on one device appears on the
+  other; deletion arrives as a tombstone) runs after the client build is deployed.
+
 ## Remote playback track publication (2026-09-26)
 
 RockCast now publishes an optional bounded `track_title` with its revisioned device-control playback state. The title comes from observed ICY/relay metadata, is cleared on station start/stop/error, and is omitted when absent. The current Windows release binary was installed and restarted; a paired RockMobile changed stations twice and displayed distinct current titles from the deployed RockServer directory. `cargo test`, strict Clippy and release build passed. `cargo fmt --check` still reports pre-existing formatting outside these edits.

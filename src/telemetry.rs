@@ -11,6 +11,27 @@ pub struct PlaybackSnapshot {
     pub cast_relay: bool,
     pub playing_local: bool,
     pub fast_repaint: bool,
+    /// RM-012-B personal-data sync phase (no payload, phase only).
+    pub sync: SyncMetric,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncMetric {
+    Off,
+    Idle,
+    Ok,
+    Error,
+}
+
+impl SyncMetric {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Idle => "idle",
+            Self::Ok => "ok",
+            Self::Error => "error",
+        }
+    }
 }
 
 pub struct Telemetry {
@@ -66,11 +87,12 @@ impl Telemetry {
             .collect::<String>();
 
         log::info!(
-            "METRICS cpu_pct={cpu_pct:.1} ui_fps={ui_fps:.1} playing=1 eq={} relay={} local={} fast_repaint={}{profile_suffix}",
+            "METRICS cpu_pct={cpu_pct:.1} ui_fps={ui_fps:.1} playing=1 eq={} relay={} local={} fast_repaint={} sync={}{profile_suffix}",
             u8::from(snap.eq_enabled),
             u8::from(snap.cast_relay),
             u8::from(snap.playing_local),
             u8::from(snap.fast_repaint),
+            snap.sync.as_str(),
         );
 
         self.last_report = Instant::now();

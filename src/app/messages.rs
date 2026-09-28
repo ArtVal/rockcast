@@ -35,6 +35,14 @@ pub(crate) enum UiMsg {
             crate::session::SessionError,
         >,
     ),
+    StationResolved {
+        station_id: String,
+        result: Result<Station, String>,
+    },
+    PersonalSyncResult {
+        generation: u64,
+        result: Result<crate::personal_sync::SyncOutcome, crate::personal_sync::SyncFailure>,
+    },
 }
 
 pub(super) fn same_output_device(left: &OutputDevice, right: &OutputDevice) -> bool {

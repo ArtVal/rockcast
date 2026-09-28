@@ -254,3 +254,105 @@ fn fetch_tag_once(host: &str, path: &str) -> Result<Vec<Station>, String> {
         .filter_map(normalize)
         .collect())
 }
+
+/// Percent-encodes a UTF-8 query value for the Radio Browser API.
+#[allow(dead_code)]
+fn urlencode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Picks the candidate matching RockCast's stable station id (a hash of the
+/// stream URL). When the stream was rehosted and no id matches, a unique
+/// case-insensitive name match is accepted; ambiguity wins nothing.
+pub fn match_station(candidates: &[Station], name: &str, station_id: &str) -> Option<Station> {
+    if let Some(exact) = candidates.iter().find(|s| s.id == station_id) {
+        return Some(exact.clone());
+    }
+    let lower = name.trim().to_lowercase();
+    let matches: Vec<&Station> = candidates
+        .iter()
+        .filter(|s| s.name.trim().to_lowercase() == lower)
+        .collect();
+    match matches.as_slice() {
+        [only] => Some((*only).clone()),
+        _ => None,
+    }
+}
+
+/// Resolves one favourite station missing from the loaded catalog by searching
+/// Radio Browser under its last known name.
+#[allow(dead_code)]
+pub fn resolve_station(name: &str, station_id: &str) -> Result<Station, String> {
+    for host in discover_hosts() {
+        let path = format!(
+            "/json/stations/search?name={}&hidebroken=true&limit=25",
+            urlencode(name)
+        );
+        match fetch_tag_once(&host, &path) {
+            Ok(stations) => {
+                if let Some(station) = match_station(&stations, name, station_id) {
+                    return Ok(station);
+                }
+            }
+            Err(e) => log::info!("Radio Browser resolve {host}: {e}"),
+        }
+    }
+    Err("not found in Radio Browser".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn station(id: &str, name: &str) -> Station {
+        Station::from_primary(
+            id.into(),
+            name.into(),
+            format!("https://{id}"),
+            "".into(),
+            "".into(),
+            128,
+            "mp3".into(),
+        )
+    }
+
+    #[test]
+    fn urlencode_keeps_safe_characters_and_encodes_the_rest() {
+        assert_eq!(urlencode("Rock FM"), "Rock%20FM");
+        assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
+        assert_eq!(urlencode("рок"), "%D1%80%D0%BE%D0%BA");
+        assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
+    }
+
+    #[test]
+    fn match_station_prefers_the_exact_stable_id() {
+        let candidates = vec![
+            station("radio-browser-1", "Rock FM"),
+            station("other", "Rock FM"),
+        ];
+        let found = match_station(&candidates, "Rock FM", "radio-browser-1").unwrap();
+        assert_eq!(found.id, "radio-browser-1");
+    }
+
+    #[test]
+    fn match_station_accepts_a_unique_name_match_when_rehosted() {
+        let candidates = vec![station("new-id", "  rock fm ")];
+        let found = match_station(&candidates, "Rock FM", "old-id").unwrap();
+        assert_eq!(found.id, "new-id");
+    }
+
+    #[test]
+    fn match_station_rejects_ambiguous_name_matches() {
+        let candidates = vec![station("a", "Rock FM"), station("b", "rock fm")];
+        assert!(match_station(&candidates, "Rock FM", "missing").is_none());
+    }
+}

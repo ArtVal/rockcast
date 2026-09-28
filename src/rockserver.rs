@@ -123,9 +123,62 @@ pub(crate) fn search(
             );
             station.homepage_url = item.homepage_url;
             station.favicon_url = item.favicon_url;
+            station.language = item.language;
             station
         })
         .collect())
+}
+
+/// Queries RockServer for a single station by its stable ID (`GET /api/v1/catalog/stations/{station_id}`).
+pub(crate) fn get_station(
+    config: &RuntimeConfig,
+    station_id: &str,
+) -> Result<Station, String> {
+    let station_id = station_id.trim();
+    if station_id.is_empty() {
+        return Err("Station ID cannot be empty".into());
+    }
+    let base = config.base_url().trim().trim_end_matches('/');
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        return Err("RockServer URL must start with http:// or https://".into());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|_| "RockServer HTTP client failed".to_owned())?;
+    let mut request = client.get(format!("{base}/api/v1/catalog/stations/{station_id}"));
+    if let Some(token) = config.bearer_token() {
+        request = request.bearer_auth(token);
+    }
+    let response = request
+        .send()
+        .map_err(|_| "RockServer is unavailable; using local catalog".to_owned())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(format!("Station '{station_id}' was not found on server"));
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "RockServer returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let item: StationDto = response
+        .json()
+        .map_err(|_| "RockServer returned invalid station JSON".to_owned())?;
+    let url = item.stream_url;
+    let mut station = Station::from_primary(
+        item.id,
+        item.name,
+        url,
+        item.tags.join(", "),
+        item.country_code.unwrap_or_default(),
+        item.bitrate_kbps.unwrap_or(0),
+        item.codec.unwrap_or_default(),
+    );
+    station.homepage_url = item.homepage_url;
+    station.favicon_url = item.favicon_url;
+    station.language = item.language;
+    Ok(station)
 }
 
 #[derive(Serialize)]
@@ -148,6 +201,8 @@ struct StationDto {
     bitrate_kbps: Option<u32>,
     codec: Option<String>,
     country_code: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
     #[serde(default, alias = "homepageUrl")]
     homepage_url: Option<String>,
     #[serde(default, alias = "faviconUrl")]
@@ -164,6 +219,13 @@ mod tests {
     };
 
     fn serve_one(response_body: &'static str) -> (String, thread::JoinHandle<String>) {
+        serve_status("200 OK", response_body)
+    }
+
+    fn serve_status(
+        status_line: &'static str,
+        response_body: &'static str,
+    ) -> (String, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
@@ -181,7 +243,7 @@ mod tests {
                 }
             }
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 response_body.len(),
                 response_body
             );
@@ -199,6 +261,28 @@ mod tests {
         let request = server.join().unwrap().to_ascii_lowercase();
         assert!(request.starts_with("post /api/v1/search http/1.1\r\n"));
         assert!(!request.contains("authorization:"));
+    }
+
+    #[test]
+    fn public_get_station_uses_catalog_endpoint_without_authorization() {
+        let body = r#"{"id":"rock-fm","name":"Rock FM","stream_url":"https://stream.test/rock","tags":["rock"],"country_code":"US","bitrate_kbps":320,"codec":"mp3"}"#;
+        let (base_url, server) = serve_one(body);
+        let config = RuntimeConfig::for_test(base_url, None);
+        let station = get_station(&config, "rock-fm").unwrap();
+        assert_eq!(station.id, "rock-fm");
+        assert_eq!(station.name, "Rock FM");
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.starts_with("get /api/v1/catalog/stations/rock-fm http/1.1\r\n"));
+        assert!(!request.contains("authorization:"));
+    }
+
+    #[test]
+    fn get_station_returns_error_on_404() {
+        let (base_url, server) = serve_status("404 Not Found", r#"{"error":"not_found"}"#);
+        let config = RuntimeConfig::for_test(base_url, None);
+        let err = get_station(&config, "unknown").unwrap_err();
+        assert!(err.contains("not found"));
+        let _ = server.join();
     }
 
     #[test]

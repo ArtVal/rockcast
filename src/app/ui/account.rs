@@ -21,6 +21,25 @@ fn danger_dim() -> Color32 {
 }
 
 impl RockCastApp {
+    /// RM-012-B sync diagnostics line for the account panel; phase and time
+    /// only, never identifiers or payloads.
+    fn draw_sync_status(&self, ui: &mut egui::Ui, t: &i18n::Strings) {
+        use super::super::actions::personal_sync::SyncPhase;
+        let state = match self.sync_status.phase {
+            SyncPhase::Ok => match &self.sync_status.last_sync_at {
+                Some(at) => format!("{} · {}", t.sync_state_ok, at),
+                None => t.sync_state_ok.into(),
+            },
+            SyncPhase::Error => t.sync_state_error.into(),
+            SyncPhase::Idle => t.sync_state_idle.into(),
+        };
+        ui.label(
+            RichText::new(format!("{}: {}", t.sync_title, state))
+                .color(MUTED)
+                .size(FS_SMALL),
+        );
+    }
+
     pub(in crate::app) fn ensure_account_loaded(&mut self) {
         if self.account_load_started {
             return;
@@ -263,6 +282,7 @@ impl RockCastApp {
                 ui.label(RichText::new(t.account_success_title).size(FS_ROW).strong());
                 ui.add_space(4.0);
                 draw_current_account(ui, context, t, pc_icon);
+                self.draw_sync_status(ui, t);
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) * 0.5;
@@ -290,6 +310,7 @@ impl RockCastApp {
                 if let Some(id) = draw_connected(ui, context, t, self.lang, pc_icon, phone_icon) {
                     action = Some(Action::AskRevoke(id));
                 }
+                self.draw_sync_status(ui, t);
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) * 0.5;
