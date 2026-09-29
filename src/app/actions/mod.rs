@@ -1,5 +1,6 @@
 //! Playback, settings, and catalog actions.
 
+mod account;
 mod catalog;
 mod eq;
 mod icons;

@@ -702,7 +702,7 @@ impl RockCastApp {
     }
 }
 
-fn default_pairing_device_name() -> String {
+pub(in crate::app) fn default_pairing_device_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()

@@ -67,6 +67,7 @@ pub(super) fn decode_symphonia_f32(
             peek,
             pos: 0,
             inner: std::sync::Mutex::new(reader),
+            stop: Arc::clone(stop),
         }),
         Default::default(),
     );
@@ -98,11 +99,19 @@ pub(super) fn decode_symphonia_f32(
     while !stop.load(Ordering::SeqCst) {
         let packet = next_packet(format.as_mut(), stop)?;
         if packet.track_id() != track_id {
+            if stop.load(Ordering::SeqCst) {
+                break;
+            }
             continue;
         }
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
-            Err(SymError::DecodeError(_)) => continue,
+            Err(SymError::DecodeError(_)) => {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                continue;
+            }
             Err(e) => return Err(e.to_string()),
         };
         let interleaved = copy_interleaved(&decoded, &mut sample_buf);
@@ -147,6 +156,7 @@ pub(super) fn decode_symphonia_relay(
             peek,
             pos: 0,
             inner: std::sync::Mutex::new(reader),
+            stop: Arc::clone(stop),
         }),
         Default::default(),
     );
@@ -178,11 +188,19 @@ pub(super) fn decode_symphonia_relay(
     while !stop.load(Ordering::SeqCst) {
         let packet = next_packet(format.as_mut(), stop)?;
         if packet.track_id() != track_id {
+            if stop.load(Ordering::SeqCst) {
+                break;
+            }
             continue;
         }
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
-            Err(SymError::DecodeError(_)) => continue,
+            Err(SymError::DecodeError(_)) => {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                continue;
+            }
             Err(e) => return Err(e.to_string()),
         };
         let interleaved = copy_interleaved(&decoded, &mut sample_buf);
@@ -229,12 +247,22 @@ fn next_packet(
     }
     match format.next_packet() {
         Ok(packet) => Ok(packet),
-        Err(SymError::ResetRequired) => Err("reset".into()),
+        Err(SymError::ResetRequired) => {
+            if stop.load(Ordering::SeqCst) {
+                Err("stopped".into())
+            } else {
+                Err("reset".into())
+            }
+        }
         Err(SymError::IoError(error))
             if error.kind() == io::ErrorKind::UnexpectedEof
                 || error.kind() == io::ErrorKind::Interrupted =>
         {
-            Err("eof".into())
+            if stop.load(Ordering::SeqCst) {
+                Err("stopped".into())
+            } else {
+                Err("eof".into())
+            }
         }
         Err(_) if stop.load(Ordering::SeqCst) => Err("stopped".into()),
         Err(error) => Err(error.to_string()),
@@ -245,10 +273,14 @@ struct PrefixedMediaSource {
     peek: Vec<u8>,
     pos: usize,
     inner: std::sync::Mutex<Box<dyn Read + Send>>,
+    stop: Arc<AtomicBool>,
 }
 
 impl Read for PrefixedMediaSource {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.stop.load(Ordering::SeqCst) {
+            return Ok(0);
+        }
         if self.pos < self.peek.len() {
             let n = buf.len().min(self.peek.len() - self.pos);
             buf[..n].copy_from_slice(&self.peek[self.pos..self.pos + n]);

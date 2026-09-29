@@ -66,7 +66,7 @@ impl<R: Read> IcyStreamReader<R> {
         let mut got = 0;
         while got < buf.len() {
             if self.stop.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stopped"));
             }
             match self.inner.read(&mut buf[got..]) {
                 Ok(0) => {
@@ -75,7 +75,7 @@ impl<R: Read> IcyStreamReader<R> {
                 Ok(n) => got += n,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                     if self.stop.load(Ordering::SeqCst) {
-                        return Err(e);
+                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stopped"));
                     }
                     continue;
                 }
@@ -89,19 +89,32 @@ impl<R: Read> IcyStreamReader<R> {
 impl<R: Read> Read for IcyStreamReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.stop.load(Ordering::SeqCst) {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
+            return Ok(0);
         }
         if self.meta_int == 0 {
-            return self.inner.read(buf);
+            return match self.inner.read(buf) {
+                Ok(n) => Ok(n),
+                Err(_) if self.stop.load(Ordering::SeqCst) => Ok(0),
+                Err(e) => Err(e),
+            };
         }
         if self.until_meta == 0 {
-            self.skip_meta()?;
+            if let Err(e) = self.skip_meta() {
+                if self.stop.load(Ordering::SeqCst) {
+                    return Ok(0);
+                }
+                return Err(e);
+            }
         }
         let max = buf.len().min(self.until_meta);
         if max == 0 {
             return Ok(0);
         }
-        let n = self.inner.read(&mut buf[..max])?;
+        let n = match self.inner.read(&mut buf[..max]) {
+            Ok(n) => n,
+            Err(_) if self.stop.load(Ordering::SeqCst) => return Ok(0),
+            Err(e) => return Err(e),
+        };
         if n == 0 {
             return Ok(0);
         }
@@ -149,6 +162,9 @@ impl StopAwareBody {
                                 || e.kind() == io::ErrorKind::WouldBlock
                                 || e.kind() == io::ErrorKind::TimedOut =>
                         {
+                            if stop_read.load(Ordering::SeqCst) {
+                                break;
+                            }
                             continue;
                         }
                         Err(e) => {
@@ -208,7 +224,7 @@ impl Read for StopAwareBody {
         }
         loop {
             if self.stop.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "stopped"));
+                return Ok(0);
             }
             if self.pending_at < self.pending.len() {
                 let n = (self.pending.len() - self.pending_at).min(buf.len());
@@ -223,7 +239,12 @@ impl Read for StopAwareBody {
             let chunk = match self.rx.recv_timeout(READ_POLL) {
                 Ok(Ok(chunk)) if chunk.is_empty() => return Ok(0),
                 Ok(Ok(chunk)) => chunk,
-                Ok(Err(e)) => return Err(e),
+                Ok(Err(e)) => {
+                    if self.stop.load(Ordering::SeqCst) {
+                        return Ok(0);
+                    }
+                    return Err(e);
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
             };
@@ -267,5 +288,59 @@ pub fn open_stream_response(
                 return Err("failed to open audio stream".into());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn icy_stream_reader_returns_eof_when_stopped() {
+        let data = vec![0xAB; 1024];
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut reader = IcyStreamReader::new(Cursor::new(data), 0, Arc::clone(&stop), None);
+
+        let mut buf = [0u8; 10];
+        assert_eq!(reader.read(&mut buf).unwrap(), 10);
+
+        stop.store(true, Ordering::SeqCst);
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
+
+        // Subsequent reads must return Ok(0) immediately
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
+
+        // Standard read_exact must fail with UnexpectedEof immediately rather than looping forever
+        let mut exact_buf = [0u8; 10];
+        let err = reader.read_exact(&mut exact_buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn icy_stream_reader_with_metadata_returns_eof_when_stopped() {
+        // Stream with 16 bytes of audio, 1 byte meta-length = 1 (16 bytes of metadata), then more audio
+        let mut data = vec![0x11; 16];
+        data.push(1); // 1 * 16 = 16 bytes of meta
+        data.extend_from_slice(b"StreamTitle='A';");
+        data.extend(vec![0x22; 32]);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (title_tx, title_rx) = mpsc::channel();
+        let mut reader =
+            IcyStreamReader::new(Cursor::new(data), 16, Arc::clone(&stop), Some(title_tx));
+
+        let mut buf = [0u8; 16];
+        assert_eq!(reader.read(&mut buf).unwrap(), 16);
+
+        // Next read triggers skip_meta, parses title, and reads audio
+        let mut buf2 = [0u8; 8];
+        assert_eq!(reader.read(&mut buf2).unwrap(), 8);
+        assert_eq!(title_rx.try_recv().unwrap(), "A");
+
+        // Now stop the reader
+        stop.store(true, Ordering::SeqCst);
+        let mut buf3 = [0u8; 8];
+        assert_eq!(reader.read(&mut buf3).unwrap(), 0);
     }
 }

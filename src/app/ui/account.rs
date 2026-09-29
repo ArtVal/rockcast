@@ -2,12 +2,9 @@ use super::super::theme::{
     BORDER, FG, FS_BODY, FS_MICRO, FS_ROW, FS_SMALL, FS_TITLE, GREEN, MUTED, PANEL_2,
 };
 use super::super::{
-    AccountContext, AccountErrorKind, AccountUiState, RockCastApp, account_session_active,
+    AccountContext, AccountErrorKind, AccountUiState, RockCastApp, default_pairing_device_name,
 };
-use crate::{
-    i18n,
-    session::{AccountClient, OsCredentialStore},
-};
+use crate::i18n;
 use eframe::egui::{
     self, Align, Align2, Color32, Context, CornerRadius, FontId, Pos2, Rect, RichText, Sense,
     Stroke, StrokeKind, Vec2,
@@ -38,107 +35,6 @@ impl RockCastApp {
                 .color(MUTED)
                 .size(FS_SMALL),
         );
-    }
-
-    pub(in crate::app) fn ensure_account_loaded(&mut self) {
-        if self.account_load_started {
-            return;
-        }
-        self.account_load_started = true;
-        self.spawn_account_load();
-    }
-
-    fn begin_account_load(&mut self) {
-        if matches!(self.account_state, AccountUiState::Waiting { .. }) {
-            return;
-        }
-        if account_session_active(&self.account_state) {
-            return;
-        }
-        if !self.account_load_started {
-            return;
-        }
-        if !matches!(self.account_state, AccountUiState::Starting { .. }) {
-            self.account_state = AccountUiState::Starting {
-                device_name: default_device_name(),
-                loading_account: true,
-            };
-        }
-    }
-
-    pub(in crate::app) fn force_account_reload(&mut self) {
-        self.account_refreshing = false;
-        self.account_load_started = true;
-        self.spawn_account_load();
-    }
-
-    pub(in crate::app) fn refresh_account(&mut self) {
-        if self.account_load_started || self.account_refreshing {
-            return;
-        }
-        self.account_refreshing = true;
-        self.account_load_started = true;
-        if let AccountUiState::Connected { banner, .. } = &mut self.account_state {
-            *banner = Some(self.lang.t().account_checking.into());
-        }
-        self.spawn_account_load();
-    }
-
-    fn spawn_account_load(&mut self) {
-        let tx = self.ui_tx.clone();
-        let config = self.rockserver.clone();
-        if self
-            .background
-            .spawn(move |_| {
-                let client = AccountClient::new(config, OsCredentialStore);
-                let result = client.load_account_session();
-                let _ = tx.send(super::super::messages::UiMsg::AccountLoaded(result));
-            })
-            .is_err()
-        {
-            self.account_load_started = false;
-            self.account_refreshing = false;
-            self.account_state = AccountUiState::Error {
-                kind: AccountErrorKind::Recoverable,
-                cached: None,
-            };
-        }
-    }
-
-    fn start_pairing(&mut self, name: String) {
-        let fallback_name = name.clone();
-        self.pairing_link_copied = false;
-        self.account_state = AccountUiState::Starting {
-            device_name: name.clone(),
-            loading_account: false,
-        };
-        let tx = self.ui_tx.clone();
-        let config = self.rockserver.clone();
-        if self
-            .background
-            .spawn(move |_| {
-                let result = AccountClient::new(config, OsCredentialStore).create_pairing(&name);
-                let _ = tx.send(super::super::messages::UiMsg::PairingStarted { name, result });
-            })
-            .is_err()
-        {
-            self.account_state = AccountUiState::Disconnected {
-                device_name: fallback_name,
-                message: Some(self.lang.t().account_connection_failed.into()),
-            };
-        }
-    }
-
-    fn cancel_pairing(&mut self) {
-        if let Some(cancel) = &self.pairing_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        self.pairing_cancel = None;
-        self.pairing_link_copied = false;
-        self.account_state = AccountUiState::Disconnected {
-            device_name: default_device_name(),
-            message: Some(self.lang.t().account_connection_cancelled.into()),
-        };
     }
 
     pub(in crate::app) fn draw_account_window(&mut self, ctx: &Context) {
@@ -178,7 +74,7 @@ impl RockCastApp {
             ) {
                 self.account_load_started = false;
                 self.account_state = AccountUiState::Disconnected {
-                    device_name: default_device_name(),
+                    device_name: default_pairing_device_name(),
                     message: None,
                 };
             }
@@ -391,13 +287,7 @@ impl RockCastApp {
         match action {
             Some(Action::StartPairing(name)) => self.start_pairing(name),
             Some(Action::Refresh) => self.refresh_account(),
-            Some(Action::Logout) => {
-                let _ = AccountClient::new(self.rockserver.clone(), OsCredentialStore).logout();
-                self.account_state = AccountUiState::Disconnected {
-                    device_name: default_device_name(),
-                    message: None,
-                };
-            }
+            Some(Action::Logout) => self.logout_account(),
             Some(Action::Cancel) => self.cancel_pairing(),
             Some(Action::OpenDevices) => {
                 if let AccountUiState::ConnectedFirstTime { context } = &self.account_state {
@@ -409,15 +299,7 @@ impl RockCastApp {
             }
             Some(Action::Done) => self.account_open = false,
             Some(Action::AskRevoke(id)) => self.revoke_confirmation = Some(id),
-            Some(Action::Revoke(id)) => {
-                self.revoke_confirmation = None;
-                if AccountClient::new(self.rockserver.clone(), OsCredentialStore)
-                    .revoke_device(&id)
-                    .is_ok()
-                {
-                    self.refresh_account();
-                }
-            }
+            Some(Action::Revoke(id)) => self.revoke_account_device(&id),
             None => {}
         }
     }
@@ -601,10 +483,6 @@ fn danger_button(ui: &mut egui::Ui, text: &str, filled: bool) -> egui::Response 
             .corner_radius(CornerRadius::same(6))
     };
     ui.add(btn)
-}
-
-fn default_device_name() -> String {
-    super::super::default_pairing_device_name()
 }
 
 pub(super) fn presentation_device_name(device_type: &str, value: &str) -> String {
