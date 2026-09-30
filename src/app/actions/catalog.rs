@@ -109,42 +109,31 @@ impl RockCastApp {
                     Lang::Ru => "ru",
                     Lang::En => "en",
                 };
-                if query.is_empty() {
-                    let (catalog, source) = load_catalog(lang);
-                    let _ = tx.send(UiMsg::Stations {
-                        list: catalog.clone(),
-                        source,
-                        request_id,
-                        finished: false,
-                        total: None,
-                        has_more: false,
-                    });
-                }
-                match crate::rockserver::search(&rockserver, &query, locale, 20, 0) {
-                    Ok(batch) => {
-                        if cancel.is_cancelled() {
+                if !query.is_empty() {
+                    match crate::rockserver::search(&rockserver, &query, locale, 20, 0) {
+                        Ok(batch) => {
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let n = batch.stations.len();
+                            let total = batch.total;
+                            let has_more = batch.has_more;
+                            let _ = tx.send(UiMsg::Stations {
+                                list: batch.stations,
+                                source: if total > n {
+                                    format!("RockServer · {n} / {total}")
+                                } else {
+                                    format!("RockServer · {n}")
+                                },
+                                request_id,
+                                finished: true,
+                                total: Some(total),
+                                has_more,
+                            });
                             return;
                         }
-                        let n = batch.stations.len();
-                        let total = batch.total;
-                        let has_more = batch.has_more;
-                        let _ = tx.send(UiMsg::Stations {
-                            list: batch.stations,
-                            source: if total > n {
-                                format!("RockServer · {n} / {total}")
-                            } else {
-                                format!("RockServer · {n}")
-                            },
-                            request_id,
-                            finished: true,
-                            total: Some(total),
-                            has_more,
-                        });
-                        return;
+                        Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
                     }
-                    Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
-                }
-                if !query.is_empty() {
                     let (catalog, source) = load_catalog(lang);
                     let list: Vec<Station> = catalog
                         .into_iter()
@@ -161,7 +150,16 @@ impl RockCastApp {
                     });
                     return;
                 }
-                let (catalog, _) = load_catalog(lang);
+
+                let (catalog, source) = load_catalog(lang);
+                let _ = tx.send(UiMsg::Stations {
+                    list: catalog.clone(),
+                    source,
+                    request_id,
+                    finished: false,
+                    total: None,
+                    has_more: false,
+                });
                 let (merged, source) = enrich_stations(catalog, lang);
                 if cancel.is_cancelled() {
                     return;

@@ -1,7 +1,7 @@
 //! Voice recognition result message handling.
 
 use crate::{
-    app::RockCastApp,
+    app::{RockCastApp, StationFilterMode},
     voice::{VoiceCommandStatus, VoiceError, VoiceOutcome, VoiceStreamErrorCode},
 };
 
@@ -28,7 +28,22 @@ impl RockCastApp {
                 let first = stations[0].clone();
                 self.voice_fallback = stations.iter().skip(1).cloned().collect();
                 self.station_now = first.name.clone();
+                self.station_request_id = self.station_request_id.wrapping_add(1);
                 self.stations = stations;
+                self.loading_stations = false;
+                self.loading_more_stations = false;
+                self.loading_more_error = None;
+                self.station_search_total = Some(self.stations.len());
+                self.station_search_offset = self.stations.len();
+                self.station_has_more = false;
+                self.filter_mode = StationFilterMode::All;
+                self.selected_genre = None;
+                self.selected_country = None;
+                self.selected_min_bitrate = None;
+                let clean_query = crate::voice::clean_voice_query(&result.transcript);
+                if !clean_query.is_empty() {
+                    self.station_search = clean_query;
+                }
                 self.queue_station_icons(&self.stations.clone());
                 self.source = format!("RockServer · голос · {}", self.stations.len());
                 self.selected_station = Some(0);

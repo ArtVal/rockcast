@@ -17,6 +17,9 @@ impl RockCastApp {
             self.stop();
         }
         self.voice_busy = true;
+        self.station_request_id = self.station_request_id.wrapping_add(1);
+        self.loading_stations = false;
+        self.loading_more_stations = false;
         crate::voice_prompts::play(crate::voice_prompts::Prompt::Beep, self.lang);
         log::info!("voice button pressed: locale=ru-RU");
         self.status = "Слушаю вас… Назовите группу или станцию".into();

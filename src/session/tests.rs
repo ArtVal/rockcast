@@ -10,7 +10,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::rockserver::RuntimeConfig;
 use super::client::{AccountClient, SESSION_MUTEX, access_token_needs_refresh};
-use super::storage::{CredentialStore, OsCredentialStore, decode_credentials};
+use super::storage::{CredentialStore, decode_credentials};
 #[cfg(windows)]
 use super::storage::{dpapi, read_credentials};
 use super::types::{

@@ -19,6 +19,7 @@ use crate::stations::Station;
 
 use dto::{NormalizedQueryDto, VoiceAction, VoiceEvent};
 pub use dto::{VoiceCommandStatus, VoiceStreamErrorCode};
+pub use rank::clean_voice_query;
 use rank::rerank_voice_candidates;
 use record::{
     default_microphone_sample_rate, record_default_microphone, stream_default_microphone,
@@ -43,6 +44,7 @@ pub struct VoiceSearchResult {
     pub stations: Vec<Station>,
     pub auto_play: bool,
     pub control: Option<VoiceControl>,
+    pub transcript: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -430,6 +432,7 @@ fn receive_voice_result<S: Read + Write>(
                     stations,
                     auto_play: normalized_query.action == VoiceAction::Play,
                     control: None,
+                    transcript,
                 }));
             }
             VoiceEvent::Error { code, message, .. } => {
@@ -449,6 +452,7 @@ fn voice_control_result(control: VoiceControl) -> VoiceSearchResult {
         stations: Vec::new(),
         auto_play: false,
         control: Some(control),
+        transcript: String::new(),
     }
 }
 

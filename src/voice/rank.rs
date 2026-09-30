@@ -145,6 +145,40 @@ fn station_prefix_score(spoken_phrase: &[String], station_name: &str) -> i32 {
     if matches_prefix { 500 } else { 0 }
 }
 
+pub fn clean_voice_query(transcript: &str) -> String {
+    let lower = transcript.to_lowercase();
+    let words: Vec<&str> = lower
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .filter(|w| {
+            !matches!(
+                *w,
+                "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}"
+                    | "\u{0432}\u{043a}\u{043b}\u{044e}\u{0447}\u{0438}\u{0442}\u{044c}"
+                    | "\u{043f}\u{043e}\u{0441}\u{0442}\u{0430}\u{0432}\u{044c}"
+                    | "\u{043f}\u{043e}\u{0441}\u{0442}\u{0430}\u{0432}\u{0438}\u{0442}\u{044c}"
+                    | "\u{0437}\u{0430}\u{043f}\u{0443}\u{0441}\u{0442}\u{0438}"
+                    | "\u{043d}\u{0430}\u{0439}\u{0434}\u{0438}"
+                    | "\u{0438}\u{0449}\u{0438}"
+                    | "\u{043a}\u{0440}\u{0443}\u{0442}\u{0438}"
+                    | "\u{0441}\u{044b}\u{0433}\u{0440}\u{0430}\u{0439}"
+                    | "\u{0438}\u{0433}\u{0440}\u{0430}\u{0439}"
+                    | "\u{043f}\u{043e}\u{0436}\u{0430}\u{043b}\u{0443}\u{0439}\u{0441}\u{0442}\u{0430}"
+                    | "play"
+                    | "find"
+                    | "please"
+            )
+        })
+        .collect();
+
+    if words.is_empty() {
+        transcript.trim().to_owned()
+    } else {
+        words.join(" ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,4 +228,14 @@ mod tests {
 
         assert_eq!(stations[0].name, "Radio ROKS Classic Rock");
     }
+
+    #[test]
+    fn clean_voice_query_removes_command_prefixes() {
+        assert_eq!(clean_voice_query("включи джаз"), "джаз");
+        assert_eq!(clean_voice_query("поставь радио джаз"), "радио джаз");
+        assert_eq!(clean_voice_query("play jazz fm"), "jazz fm");
+        assert_eq!(clean_voice_query("рок"), "рок");
+        assert_eq!(clean_voice_query("включи"), "включи");
+    }
 }
+
