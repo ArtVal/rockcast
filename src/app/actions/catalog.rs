@@ -89,6 +89,11 @@ impl RockCastApp {
         self.station_request_id = self.station_request_id.wrapping_add(1);
         let request_id = self.station_request_id;
         self.loading_stations = true;
+        self.loading_more_stations = false;
+        self.loading_more_error = None;
+        self.station_search_total = None;
+        self.station_search_offset = 0;
+        self.station_has_more = false;
         self.status = self.lang.t().loading_stations_status.into();
         let tx = self.ui_tx.clone();
         let lang = self.lang;
@@ -111,19 +116,29 @@ impl RockCastApp {
                         source,
                         request_id,
                         finished: false,
+                        total: None,
+                        has_more: false,
                     });
                 }
-                match crate::rockserver::search(&rockserver, &query, locale) {
-                    Ok(stations) => {
+                match crate::rockserver::search(&rockserver, &query, locale, 20, 0) {
+                    Ok(batch) => {
                         if cancel.is_cancelled() {
                             return;
                         }
-                        let n = stations.len();
+                        let n = batch.stations.len();
+                        let total = batch.total;
+                        let has_more = batch.has_more;
                         let _ = tx.send(UiMsg::Stations {
-                            list: stations,
-                            source: format!("RockServer · {n}"),
+                            list: batch.stations,
+                            source: if total > n {
+                                format!("RockServer · {n} / {total}")
+                            } else {
+                                format!("RockServer · {n}")
+                            },
                             request_id,
                             finished: true,
+                            total: Some(total),
+                            has_more,
                         });
                         return;
                     }
@@ -131,15 +146,18 @@ impl RockCastApp {
                 }
                 if !query.is_empty() {
                     let (catalog, source) = load_catalog(lang);
-                    let list = catalog
+                    let list: Vec<Station> = catalog
                         .into_iter()
                         .filter(|station| station_matches(station, &query))
                         .collect();
+                    let n = list.len();
                     let _ = tx.send(UiMsg::Stations {
                         list,
                         source: format!("{source} · offline results"),
                         request_id,
                         finished: true,
+                        total: Some(n),
+                        has_more: false,
                     });
                     return;
                 }
@@ -148,17 +166,72 @@ impl RockCastApp {
                 if cancel.is_cancelled() {
                     return;
                 }
+                let n = merged.len();
                 let _ = tx.send(UiMsg::Stations {
                     list: merged,
                     source,
                     request_id,
                     finished: true,
+                    total: Some(n),
+                    has_more: false,
                 });
             })
             .is_err()
         {
             self.loading_stations = false;
             self.status = self.lang.t().background_busy.into();
+        }
+    }
+
+    pub(in crate::app) fn load_more_stations(&mut self) {
+        if self.loading_stations || self.loading_more_stations || !self.station_has_more {
+            return;
+        }
+        let request_id = self.station_request_id;
+        let offset = self.stations.len();
+        self.loading_more_stations = true;
+        self.loading_more_error = None;
+        let tx = self.ui_tx.clone();
+        let lang = self.lang;
+        let rockserver = self.rockserver.clone();
+        let query = self.station_search.trim().to_owned();
+        if self
+            .background
+            .spawn(move |cancel| {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                let locale = match lang {
+                    Lang::Ru => "ru",
+                    Lang::En => "en",
+                };
+                match crate::rockserver::search(&rockserver, &query, locale, 20, offset) {
+                    Ok(batch) => {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let _ = tx.send(UiMsg::MoreStationsLoaded {
+                            list: batch.stations,
+                            request_id,
+                            offset,
+                            total: batch.total,
+                            has_more: batch.has_more,
+                        });
+                    }
+                    Err(e) => {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let _ = tx.send(UiMsg::MoreStationsFailed {
+                            request_id,
+                            error: e,
+                        });
+                    }
+                }
+            })
+            .is_err()
+        {
+            self.loading_more_stations = false;
         }
     }
 

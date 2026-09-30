@@ -43,9 +43,18 @@ impl RockCastApp {
 
             // Filter chips: All, Favourites, History, Genres
             let all_selected = self.filter_mode == StationFilterMode::All
-                && self.selected_genre.is_none();
+                && self.selected_genre.is_none()
+                && self.selected_country.is_none()
+                && self.selected_min_bitrate.is_none();
+            let all_label = match self.station_search_total {
+                Some(total) if total > self.stations.len() => {
+                    format!("Все ({} из {total})", self.stations.len())
+                }
+                Some(total) => format!("Все ({total})"),
+                None => format!("Все ({})", self.stations.len()),
+            };
             let all_btn = egui::Button::new(
-                RichText::new(format!("Все ({})", self.stations.len()))
+                RichText::new(all_label)
                     .color(if all_selected { Color32::WHITE } else { MUTED })
                     .strong(),
             )
@@ -59,6 +68,8 @@ impl RockCastApp {
             if ui.add(all_btn).clicked() {
                 self.filter_mode = StationFilterMode::All;
                 self.selected_genre = None;
+                self.selected_country = None;
+                self.selected_min_bitrate = None;
                 search_requested = true;
             }
 
@@ -148,6 +159,74 @@ impl RockCastApp {
                     search_requested = true;
                 }
             }
+
+            ui.add_space(4.0);
+            ui.label(RichText::new("|").color(BORDER));
+            ui.add_space(4.0);
+
+            // Country facet ComboBox
+            let country_text = self.selected_country.as_deref().unwrap_or("Страна ▾");
+            egui::ComboBox::from_id_salt("country_facet")
+                .selected_text(
+                    RichText::new(country_text)
+                        .color(if self.selected_country.is_some() {
+                            Color32::WHITE
+                        } else {
+                            MUTED
+                        })
+                        .size(12.0)
+                        .strong(),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.selected_country, None, "Все страны");
+                    let mut countries: std::collections::BTreeSet<String> = self
+                        .stations
+                        .iter()
+                        .map(|s| s.country.trim().to_uppercase())
+                        .filter(|c| !c.is_empty())
+                        .collect();
+                    for default_c in ["US", "RU", "GB", "DE", "FR", "CA", "NL", "IT", "ES"] {
+                        countries.insert(default_c.to_string());
+                    }
+                    for c in countries {
+                        let label = match c.as_str() {
+                            "US" => "US · США",
+                            "RU" => "RU · Россия",
+                            "GB" => "GB · Великобритания",
+                            "DE" => "DE · Германия",
+                            "FR" => "FR · Франция",
+                            "CA" => "CA · Канада",
+                            "NL" => "NL · Нидерланды",
+                            "IT" => "IT · Италия",
+                            "ES" => "ES · Испания",
+                            other => other,
+                        };
+                        ui.selectable_value(&mut self.selected_country, Some(c.clone()), label);
+                    }
+                });
+
+            // Bitrate facet ComboBox
+            let bitrate_text = match self.selected_min_bitrate {
+                Some(b) => format!("≥ {b}k"),
+                None => "Битрейт ▾".to_string(),
+            };
+            egui::ComboBox::from_id_salt("bitrate_facet")
+                .selected_text(
+                    RichText::new(bitrate_text)
+                        .color(if self.selected_min_bitrate.is_some() {
+                            Color32::WHITE
+                        } else {
+                            MUTED
+                        })
+                        .size(12.0)
+                        .strong(),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.selected_min_bitrate, None, "Любой битрейт");
+                    ui.selectable_value(&mut self.selected_min_bitrate, Some(128), "≥ 128 kbps");
+                    ui.selectable_value(&mut self.selected_min_bitrate, Some(192), "≥ 192 kbps (HQ)");
+                    ui.selectable_value(&mut self.selected_min_bitrate, Some(320), "≥ 320 kbps (Hi-Fi)");
+                });
         });
 
         search_requested

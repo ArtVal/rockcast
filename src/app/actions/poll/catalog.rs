@@ -1,5 +1,4 @@
-//! Catalog station loading, icon texture caching, and station resolution message handling.
-
+use std::collections::HashSet;
 use eframe::egui;
 
 use crate::{
@@ -16,11 +15,18 @@ impl RockCastApp {
         source: String,
         request_id: u64,
         finished: bool,
+        total: Option<usize>,
+        has_more: bool,
     ) {
         if request_id != self.station_request_id {
             return;
         }
         self.stations = list;
+        self.station_search_total = total;
+        self.station_search_offset = self.stations.len();
+        self.station_has_more = has_more;
+        self.loading_more_stations = false;
+        self.loading_more_error = None;
         self.queue_station_icons(&self.stations.clone());
         if self.personal_data.is_none() {
             let resolver = crate::stations::catalog_resolver();
@@ -36,7 +42,58 @@ impl RockCastApp {
         self.source = source;
         self.restore_station_selection();
         self.loading_stations = !finished;
-        self.status = i18n::fmt1(self.lang.t().stations_count, self.stations.len());
+        self.status = match self.station_search_total {
+            Some(tot) if tot > self.stations.len() => {
+                format!(
+                    "{}: {} из {tot}",
+                    self.lang.t().stations_count,
+                    self.stations.len()
+                )
+            }
+            _ => i18n::fmt1(self.lang.t().stations_count, self.stations.len()),
+        };
+    }
+
+    pub(super) fn handle_more_stations_loaded(
+        &mut self,
+        list: Vec<Station>,
+        request_id: u64,
+        _offset: usize,
+        total: usize,
+        has_more: bool,
+    ) {
+        if request_id != self.station_request_id {
+            return;
+        }
+        self.loading_more_stations = false;
+        self.loading_more_error = None;
+        self.station_search_total = Some(total);
+        self.station_has_more = has_more;
+
+        if !list.is_empty() {
+            let mut existing_ids: HashSet<String> =
+                self.stations.iter().map(|s| s.id.clone()).collect();
+            let new_stations: Vec<Station> = list
+                .into_iter()
+                .filter(|s| existing_ids.insert(s.id.clone()))
+                .collect();
+            if !new_stations.is_empty() {
+                self.queue_station_icons(&new_stations);
+                self.stations.extend(new_stations);
+            }
+        }
+        self.station_search_offset = self.stations.len();
+        let loaded = self.stations.len();
+        self.source = format!("RockServer · {loaded} / {total}");
+        self.status = format!("{}: {loaded} из {total}", self.lang.t().stations_count);
+    }
+
+    pub(super) fn handle_more_stations_failed(&mut self, request_id: u64, error: String) {
+        if request_id != self.station_request_id {
+            return;
+        }
+        self.loading_more_stations = false;
+        self.loading_more_error = Some(error);
     }
 
     pub(super) fn handle_station_icon(

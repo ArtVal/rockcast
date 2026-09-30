@@ -102,6 +102,28 @@ def create_ico():
     )
 
 
+def create_arrow_up():
+    im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    color = (243, 238, 233, 230)
+    d.line([(128, 60), (128, 204)], fill=color, width=24, joint="curve")
+    d.line([(64, 124), (128, 60), (192, 124)], fill=color, width=24, joint="curve")
+    im = im.resize((64, 64), Image.Resampling.LANCZOS)
+    im.save("assets/icon_arrow_up.png")
+
+def create_target():
+    im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    color = (243, 238, 233, 230)
+    d.ellipse([60, 60, 196, 196], outline=color, width=20)
+    d.ellipse([114, 114, 142, 142], fill=color)
+    d.line([(128, 32), (128, 68)], fill=color, width=20, joint="curve")
+    d.line([(128, 188), (128, 224)], fill=color, width=20, joint="curve")
+    d.line([(32, 128), (68, 128)], fill=color, width=20, joint="curve")
+    d.line([(188, 128), (224, 128)], fill=color, width=20, joint="curve")
+    im = im.resize((64, 64), Image.Resampling.LANCZOS)
+    im.save("assets/icon_target.png")
+
 create_search()
 create_mic()
 create_speaker()
@@ -111,4 +133,6 @@ create_pc()
 create_phone()
 create_logo()
 create_ico()
+create_arrow_up()
+create_target()
 print("All icons generated successfully!")

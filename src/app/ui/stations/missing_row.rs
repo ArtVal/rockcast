@@ -30,28 +30,59 @@ pub(super) enum MissingRowAction {
 
 impl RockCastApp {
     pub(super) fn build_station_rows(&self) -> Vec<StationRow> {
+        let matches_facets = |idx: usize| -> bool {
+            if let Some(st) = self.stations.get(idx) {
+                if let Some(country) = &self.selected_country {
+                    if !st.country.eq_ignore_ascii_case(country) {
+                        return false;
+                    }
+                }
+                if let Some(min_bitrate) = self.selected_min_bitrate {
+                    if st.bitrate > 0 && st.bitrate < min_bitrate {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
+
         match self.filter_mode {
-            StationFilterMode::All => (0..self.stations.len()).map(StationRow::Loaded).collect(),
+            StationFilterMode::All => (0..self.stations.len())
+                .filter(|&idx| matches_facets(idx))
+                .map(StationRow::Loaded)
+                .collect(),
             StationFilterMode::Favourites => self
                 .personal_data
                 .as_ref()
                 .map(|store| store.favourites().to_vec())
                 .unwrap_or_default()
                 .into_iter()
-                .map(|favourite| {
+                .filter_map(|favourite| {
                     match crate::personal_data::station_index_by_id(
                         &self.stations,
                         &favourite.station_id,
                     ) {
-                        Some(index) => StationRow::Loaded(index),
-                        None => StationRow::Missing {
-                            station_id: favourite.station_id.clone(),
-                            name: favourite
-                                .metadata
-                                .last_known_name
-                                .clone()
-                                .unwrap_or_else(|| favourite.station_id.clone()),
-                        },
+                        Some(index) => {
+                            if matches_facets(index) {
+                                Some(StationRow::Loaded(index))
+                            } else {
+                                None
+                            }
+                        }
+                        None => {
+                            if self.selected_country.is_none() && self.selected_min_bitrate.is_none() {
+                                Some(StationRow::Missing {
+                                    station_id: favourite.station_id.clone(),
+                                    name: favourite
+                                        .metadata
+                                        .last_known_name
+                                        .clone()
+                                        .unwrap_or_else(|| favourite.station_id.clone()),
+                                })
+                            } else {
+                                None
+                            }
+                        }
                     }
                 })
                 .collect(),
@@ -68,7 +99,9 @@ impl RockCastApp {
                         &entry.station_id,
                     ) && !indices.contains(&idx)
                     {
-                        indices.push(idx);
+                        if matches_facets(idx) {
+                            indices.push(idx);
+                        }
                     }
                 }
                 indices.into_iter().map(StationRow::Loaded).collect()

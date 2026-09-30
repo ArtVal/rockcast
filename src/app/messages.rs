@@ -9,6 +9,19 @@ pub(crate) enum UiMsg {
         request_id: u64,
         /// false = local catalog (enrich still running), true = final.
         finished: bool,
+        total: Option<usize>,
+        has_more: bool,
+    },
+    MoreStationsLoaded {
+        list: Vec<Station>,
+        request_id: u64,
+        offset: usize,
+        total: usize,
+        has_more: bool,
+    },
+    MoreStationsFailed {
+        request_id: u64,
+        error: String,
     },
     DeviceFound(OutputDevice),
     DevicesFinished(String),

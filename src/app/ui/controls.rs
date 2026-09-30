@@ -113,7 +113,7 @@ impl RockCastApp {
                             t.stopped
                         };
                         let text_x = left_rect.left() + 60.0;
-                        let text_w = (left_rect.right() - text_x).max(80.0);
+                        let text_w = (left_rect.right() - text_x - 28.0).max(60.0);
                         let name_font = FontId::proportional(FS_ROW);
                         let track_font = FontId::proportional(FS_BODY);
                         let name_h = ui
@@ -133,8 +133,45 @@ impl RockCastApp {
                             Pos2::new(text_x, left_rect.min.y),
                             Vec2::new(text_w, row_h),
                         );
-                        let text_resp =
-                            ui.interact(text_rect, ui.id().with("deck_text"), Sense::hover());
+                        let text_resp = ui
+                            .interact(text_rect, ui.id().with("deck_text"), Sense::click())
+                            .on_hover_text("Нажмите, чтобы показать станцию в списке");
+
+                        let target_btn_rect = Rect::from_center_size(
+                            Pos2::new(left_rect.right() - 14.0, cy),
+                            Vec2::splat(22.0),
+                        );
+                        let target_resp = ui
+                            .interact(target_btn_rect, ui.id().with("deck_target_btn"), Sense::click())
+                            .on_hover_text("Показать текущую станцию в списке");
+                        let target_hovered = target_resp.hovered();
+                        let target_tint = if target_hovered { Color32::WHITE } else { MUTED };
+                        if target_hovered {
+                            ui.painter().rect_filled(target_btn_rect, CornerRadius::same(6), PANEL_2);
+                            ui.painter().rect_stroke(
+                                target_btn_rect,
+                                CornerRadius::same(6),
+                                Stroke::new(1.0, BORDER),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        ui.painter().image(
+                            self.app_icons.target.id(),
+                            target_btn_rect.shrink(3.0),
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            target_tint,
+                        );
+
+                        if text_resp.clicked() || target_resp.clicked() {
+                            let playing_idx = self.selected_station.or_else(|| {
+                                self.stations.iter().position(|s| s.name == self.station_now)
+                            });
+                            if let Some(idx) = playing_idx {
+                                self.scroll_to_station = Some(idx);
+                                ui.ctx().request_repaint();
+                            }
+                        }
+
                         let name_y = left_rect.min.y + pad + name_h * 0.5;
                         let track_y = name_y + name_h * 0.5 + gap + track_h * 0.5;
                         let now = ui.input(|i| i.time) as f32;

@@ -51,7 +51,19 @@ impl RockCastApp {
                 source,
                 request_id,
                 finished,
-            } => self.handle_stations_loaded(list, source, request_id, finished),
+                total,
+                has_more,
+            } => self.handle_stations_loaded(list, source, request_id, finished, total, has_more),
+            UiMsg::MoreStationsLoaded {
+                list,
+                request_id,
+                offset,
+                total,
+                has_more,
+            } => self.handle_more_stations_loaded(list, request_id, offset, total, has_more),
+            UiMsg::MoreStationsFailed { request_id, error } => {
+                self.handle_more_stations_failed(request_id, error);
+            }
             UiMsg::StationIcon { request_key, image } => {
                 self.handle_station_icon(ctx, request_key, image);
             }

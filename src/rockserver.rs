@@ -71,12 +71,21 @@ impl RuntimeConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SearchBatch {
+    pub stations: Vec<Station>,
+    pub total: usize,
+    pub has_more: bool,
+}
+
 /// Queries RockServer and converts its public station DTOs into playback stations.
 pub(crate) fn search(
     config: &RuntimeConfig,
     query: &str,
     locale: &str,
-) -> Result<Vec<Station>, String> {
+    limit: usize,
+    offset: usize,
+) -> Result<SearchBatch, String> {
     let base = config.base_url().trim().trim_end_matches('/');
     if !(base.starts_with("http://") || base.starts_with("https://")) {
         return Err("RockServer URL must start with http:// or https://".into());
@@ -90,7 +99,8 @@ pub(crate) fn search(
         .json(&SearchRequest {
             query,
             locale,
-            limit: 20,
+            limit,
+            offset,
         });
     if let Some(token) = config.bearer_token() {
         request = request.bearer_auth(token);
@@ -107,7 +117,7 @@ pub(crate) fn search(
     let body: SearchResponse = response
         .json()
         .map_err(|_| "RockServer returned invalid search JSON".to_owned())?;
-    Ok(body
+    let stations: Vec<Station> = body
         .stations
         .into_iter()
         .map(|item| {
@@ -126,7 +136,15 @@ pub(crate) fn search(
             station.language = item.language;
             station
         })
-        .collect())
+        .collect();
+    let n = stations.len();
+    let total = body.total.unwrap_or(offset + n);
+    let has_more = body.has_more.unwrap_or(false);
+    Ok(SearchBatch {
+        stations,
+        total,
+        has_more,
+    })
 }
 
 /// Queries RockServer for a single station by its stable ID (`GET /api/v1/catalog/stations/{station_id}`).
@@ -185,11 +203,16 @@ pub(crate) fn get_station(
 struct SearchRequest<'a> {
     query: &'a str,
     locale: &'a str,
-    limit: u8,
+    limit: usize,
+    offset: usize,
 }
 #[derive(Deserialize)]
 struct SearchResponse {
     stations: Vec<StationDto>,
+    #[serde(default)]
+    total: Option<usize>,
+    #[serde(default)]
+    has_more: Option<bool>,
 }
 #[derive(Deserialize)]
 struct StationDto {
@@ -255,12 +278,25 @@ mod tests {
 
     #[test]
     fn public_search_uses_v1_without_authorization() {
-        let (base_url, server) = serve_one(r#"{"stations":[]}"#);
+        let (base_url, server) = serve_one(r#"{"stations":[],"total":0,"has_more":false}"#);
         let config = RuntimeConfig::for_test(base_url, None);
-        assert!(search(&config, "rock", "en").unwrap().is_empty());
+        assert!(search(&config, "rock", "en", 20, 0).unwrap().stations.is_empty());
         let request = server.join().unwrap().to_ascii_lowercase();
         assert!(request.starts_with("post /api/v1/search http/1.1\r\n"));
         assert!(!request.contains("authorization:"));
+    }
+
+    #[test]
+    fn search_parses_total_and_has_more_batch() {
+        let body = r#"{"stations":[{"id":"st-1","name":"Station 1","stream_url":"http://stream/1"}],"total":42,"has_more":true}"#;
+        let (base_url, server) = serve_one(body);
+        let config = RuntimeConfig::for_test(base_url, None);
+        let batch = search(&config, "rock", "en", 20, 0).unwrap();
+        assert_eq!(batch.stations.len(), 1);
+        assert_eq!(batch.stations[0].id, "st-1");
+        assert_eq!(batch.total, 42);
+        assert!(batch.has_more);
+        let _ = server.join();
     }
 
     #[test]
@@ -289,7 +325,7 @@ mod tests {
     fn developer_override_can_add_bearer_without_changing_route() {
         let (base_url, server) = serve_one(r#"{"stations":[]}"#);
         let config = RuntimeConfig::for_test(base_url, Some("dev-test-token"));
-        assert!(search(&config, "", "ru").unwrap().is_empty());
+        assert!(search(&config, "", "ru", 20, 0).unwrap().stations.is_empty());
         let request = server.join().unwrap().to_ascii_lowercase();
         assert!(request.starts_with("post /api/v1/search http/1.1\r\n"));
         assert!(request.contains("authorization: bearer dev-test-token\r\n"));
