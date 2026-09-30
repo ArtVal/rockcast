@@ -29,22 +29,24 @@ pub(super) enum MissingRowAction {
 }
 
 impl RockCastApp {
-    pub(super) fn build_station_rows(&self) -> Vec<StationRow> {
-        let matches_facets = |idx: usize| -> bool {
-            if let Some(st) = self.stations.get(idx) {
-                if let Some(country) = &self.selected_country {
-                    if !st.country.eq_ignore_ascii_case(country) {
-                        return false;
-                    }
-                }
-                if let Some(min_bitrate) = self.selected_min_bitrate {
-                    if st.bitrate > 0 && st.bitrate < min_bitrate {
-                        return false;
-                    }
+    pub(in crate::app) fn station_matches_facets(&self, idx: usize) -> bool {
+        if let Some(st) = self.stations.get(idx) {
+            if let Some(country) = &self.selected_country {
+                if !st.country.eq_ignore_ascii_case(country) {
+                    return false;
                 }
             }
-            true
-        };
+            if let Some(min_bitrate) = self.selected_min_bitrate {
+                if st.bitrate > 0 && st.bitrate < min_bitrate {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    pub(super) fn build_station_rows(&self) -> Vec<StationRow> {
+        let matches_facets = |idx: usize| -> bool { self.station_matches_facets(idx) };
 
         match self.filter_mode {
             StationFilterMode::All => (0..self.stations.len())

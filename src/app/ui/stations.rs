@@ -52,12 +52,25 @@ impl RockCastApp {
             self.draw_table_header(ui, &layout, &t);
 
             let rows = self.build_station_rows();
+            let has_facets = self.selected_country.is_some() || self.selected_min_bitrate.is_some();
             let show_footer = self.filter_mode == StationFilterMode::All
                 && (self.loading_more_stations
                     || self.loading_more_error.is_some()
-                    || (!self.station_has_more && rows.len() >= 20));
+                    || (has_facets && self.station_has_more)
+                    || (!self.station_has_more && self.stations.len() >= 20));
             let total_rows = rows.len() + if show_footer { 1 } else { 0 };
             let mut need_load_more = false;
+
+            if self.filter_mode == StationFilterMode::All
+                && has_facets
+                && rows.len() < 10
+                && self.station_has_more
+                && !self.loading_more_stations
+                && !self.loading_stations
+                && self.loading_more_error.is_none()
+            {
+                need_load_more = true;
+            }
 
             let mut scroll_area = egui::ScrollArea::vertical()
                 .id_salt("stations_scroll")
@@ -65,13 +78,21 @@ impl RockCastApp {
                 .max_height(layout.scroll_h)
                 .min_scrolled_height(layout.scroll_h);
 
-            if let Some(target_idx) = self.scroll_to_station {
-                let target_y = target_idx as f32 * ROW_H;
+            let target_row_pos = self.scroll_to_station.and_then(|target_st_idx| {
+                rows.iter().position(|r| match r {
+                    StationRow::Loaded(idx) => *idx == target_st_idx,
+                    _ => false,
+                })
+            });
+            if let Some(row_pos) = target_row_pos {
+                let target_y = row_pos as f32 * ROW_H;
                 let centered_y = (target_y - layout.scroll_h * 0.5 + ROW_H * 0.5).max(0.0);
                 scroll_area = scroll_area.vertical_scroll_offset(centered_y);
             }
 
+            let mut visible_row_range: Option<std::ops::Range<usize>> = None;
             let scroll_output = scroll_area.show_rows(ui, ROW_H, total_rows, |ui, row_range| {
+                visible_row_range = Some(row_range.clone());
                 let row_w = ui.available_width();
 
                 if rows.is_empty() {
@@ -140,7 +161,7 @@ impl RockCastApp {
                             }
                         }
                     } else {
-                        self.draw_stations_footer_row(ui, row_w);
+                        self.draw_stations_footer_row(ui, row_w, rows.len());
                     }
                 }
 
@@ -159,16 +180,32 @@ impl RockCastApp {
                 self.load_more_stations();
             }
 
-            if scroll_output.state.offset.y > 400.0 {
-                let btn_w = 92.0;
-                let btn_h = 30.0;
+            let to_top_visible = scroll_output.state.offset.y > 400.0;
+            let playing_st_idx = self.selected_station.or_else(|| {
+                self.stations.iter().position(|s| s.name == self.station_now)
+            });
+            let playing_row_pos = playing_st_idx.and_then(|target_idx| {
+                rows.iter().position(|r| match r {
+                    StationRow::Loaded(i) => *i == target_idx,
+                    _ => false,
+                })
+            });
+            let locate_visible = match (playing_row_pos, visible_row_range) {
+                (Some(pos), Some(range)) => !range.contains(&pos),
+                _ => false,
+            };
+
+            let base_right = scroll_output.inner_rect.right() - 20.0;
+            let btn_y = scroll_output.inner_rect.bottom() - 30.0 - 14.0;
+            let mut next_right = base_right;
+
+            if to_top_visible {
+                let top_w = 92.0;
                 let btn_rect = Rect::from_min_size(
-                    Pos2::new(
-                        scroll_output.inner_rect.right() - btn_w - 20.0,
-                        scroll_output.inner_rect.bottom() - btn_h - 14.0,
-                    ),
-                    Vec2::new(btn_w, btn_h),
+                    Pos2::new(next_right - top_w, btn_y),
+                    Vec2::new(top_w, 30.0),
                 );
+                next_right -= top_w + 8.0;
                 let btn_resp = ui.interact(btn_rect, ui.id().with("to_top_btn"), Sense::click());
                 let hovered = btn_resp.hovered();
                 let bg = if hovered {
@@ -212,6 +249,57 @@ impl RockCastApp {
                 }
             }
 
+            if locate_visible && let Some(target_idx) = playing_st_idx {
+                let loc_w = 120.0;
+                let btn_rect = Rect::from_min_size(
+                    Pos2::new(next_right - loc_w, btn_y),
+                    Vec2::new(loc_w, 30.0),
+                );
+                let btn_resp = ui
+                    .interact(btn_rect, ui.id().with("to_playing_btn"), Sense::click())
+                    .on_hover_text("Перейти к играющей станции в списке");
+                let hovered = btn_resp.hovered();
+                let bg = if hovered {
+                    ACCENT
+                } else {
+                    Color32::from_rgba_premultiplied(32, 28, 25, 235)
+                };
+                let border = if hovered { Color32::WHITE } else { BORDER };
+                let tint = if hovered { Color32::WHITE } else { ACCENT };
+
+                ui.painter().rect_filled(btn_rect, CornerRadius::same(15), bg);
+                ui.painter().rect_stroke(
+                    btn_rect,
+                    CornerRadius::same(15),
+                    Stroke::new(1.0, border),
+                    StrokeKind::Inside,
+                );
+
+                let icon_size = 14.0;
+                let icon_rect = Rect::from_min_size(
+                    Pos2::new(btn_rect.min.x + 10.0, btn_rect.center().y - icon_size * 0.5),
+                    Vec2::splat(icon_size),
+                );
+                ui.painter().image(
+                    self.app_icons.locate.id(),
+                    icon_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    tint,
+                );
+                ui.painter().text(
+                    Pos2::new(btn_rect.min.x + 28.0, btn_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "К играющей",
+                    FontId::proportional(FS_SMALL),
+                    tint,
+                );
+
+                if btn_resp.clicked() {
+                    self.scroll_to_station = Some(target_idx);
+                    ui.ctx().request_repaint();
+                }
+            }
+
             self.draw_column_guides(ui, &layout);
         });
 
@@ -245,7 +333,7 @@ impl RockCastApp {
         }
     }
 
-    fn draw_stations_footer_row(&mut self, ui: &mut Ui, row_w: f32) {
+    fn draw_stations_footer_row(&mut self, ui: &mut Ui, row_w: f32, matching_rows_len: usize) {
         let (row_rect, _resp) = ui.allocate_exact_size(Vec2::new(row_w, ROW_H), Sense::hover());
         let center = row_rect.center();
 
@@ -287,19 +375,55 @@ impl RockCastApp {
                 self.loading_more_error = None;
                 self.load_more_stations();
             }
-        } else if !self.station_has_more && self.stations.len() >= 20 {
-            let count = self.stations.len();
+        } else if (self.selected_country.is_some() || self.selected_min_bitrate.is_some())
+            && self.station_has_more
+        {
+            let btn_w = 280.0;
+            let btn_h = 28.0;
+            let btn_rect = Rect::from_center_size(center, Vec2::new(btn_w, btn_h));
+            let btn_resp = ui.interact(
+                btn_rect,
+                ui.id().with("footer_more_facets_btn"),
+                Sense::click(),
+            );
+            let hovered = btn_resp.hovered();
+            let bg = if hovered { ACCENT } else { PANEL_2 };
+            let fg = if hovered { Color32::WHITE } else { ACCENT };
+            ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
+            ui.painter().rect_stroke(
+                btn_rect,
+                CornerRadius::same(6),
+                Stroke::new(1.0, BORDER),
+                StrokeKind::Inside,
+            );
             ui.painter().text(
                 center,
                 egui::Align2::CENTER_CENTER,
-                format!("Показаны все станции ({count})"),
+                "Загрузить ещё станции из каталога",
+                FontId::proportional(FS_SMALL),
+                fg,
+            );
+            if btn_resp.clicked() {
+                self.load_more_stations();
+            }
+        } else if !self.station_has_more && self.stations.len() >= 20 {
+            let total_loaded = self.stations.len();
+            let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {
+                format!("Показаны все совпадения ({matching_rows_len} из {total_loaded} станций)")
+            } else {
+                format!("Показаны все станции ({total_loaded})")
+            };
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                msg,
                 FontId::proportional(FS_SMALL),
                 MUTED,
             );
         }
     }
 
-    fn global_station_query(&self) -> String {
+    pub(crate) fn global_station_query(&self) -> String {
         let mut terms = self.station_search.trim().to_owned();
         if let Some(genre) = &self.selected_genre
             && !terms.to_lowercase().contains(&genre.to_lowercase())

@@ -111,18 +111,19 @@ def create_arrow_up():
     im = im.resize((64, 64), Image.Resampling.LANCZOS)
     im.save("assets/icon_arrow_up.png")
 
-def create_target():
+def create_locate():
     im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     color = (243, 238, 233, 230)
-    d.ellipse([60, 60, 196, 196], outline=color, width=20)
-    d.ellipse([114, 114, 142, 142], fill=color)
-    d.line([(128, 32), (128, 68)], fill=color, width=20, joint="curve")
-    d.line([(128, 188), (128, 224)], fill=color, width=20, joint="curve")
-    d.line([(32, 128), (68, 128)], fill=color, width=20, joint="curve")
-    d.line([(188, 128), (224, 128)], fill=color, width=20, joint="curve")
+    # Playing track indicator (play triangle) + playlist row
+    d.polygon([(40, 60), (84, 84), (40, 108)], fill=color)
+    d.rounded_rectangle([104, 72, 220, 96], radius=10, fill=color)
+    # Second playlist row
+    d.rounded_rectangle([40, 126, 220, 150], radius=10, fill=color)
+    # Third playlist row
+    d.rounded_rectangle([40, 180, 180, 204], radius=10, fill=color)
     im = im.resize((64, 64), Image.Resampling.LANCZOS)
-    im.save("assets/icon_target.png")
+    im.save("assets/icon_locate.png")
 
 create_search()
 create_mic()
@@ -134,5 +135,5 @@ create_phone()
 create_logo()
 create_ico()
 create_arrow_up()
-create_target()
+create_locate()
 print("All icons generated successfully!")

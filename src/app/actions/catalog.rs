@@ -194,7 +194,7 @@ impl RockCastApp {
         let tx = self.ui_tx.clone();
         let lang = self.lang;
         let rockserver = self.rockserver.clone();
-        let query = self.station_search.trim().to_owned();
+        let query = self.global_station_query();
         if self
             .background
             .spawn(move |cancel| {

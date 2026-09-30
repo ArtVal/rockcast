@@ -14,7 +14,7 @@ pub(crate) struct AppIcons {
     pub pc: TextureHandle,
     pub phone: TextureHandle,
     pub arrow_up: TextureHandle,
-    pub target: TextureHandle,
+    pub locate: TextureHandle,
 }
 
 impl AppIcons {
@@ -58,10 +58,10 @@ impl AppIcons {
                 "icon_arrow_up",
                 include_bytes!("../../assets/icon_arrow_up.png"),
             ),
-            target: load_png(
+            locate: load_png(
                 ctx,
-                "icon_target",
-                include_bytes!("../../assets/icon_target.png"),
+                "icon_locate",
+                include_bytes!("../../assets/icon_locate.png"),
             ),
         }
     }
