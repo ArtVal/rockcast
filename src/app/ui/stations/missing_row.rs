@@ -7,7 +7,7 @@ use eframe::egui::{
 use crate::app::{
     RockCastApp, StationFilterMode,
     theme::{
-        ACCENT, BORDER, FS_ROW, GOLD_STAR, MUTED, PANEL_2, ROW_H, ROW_PAD_RIGHT, ROW_PLAY_BTN,
+        ACCENT, BORDER, FS_ROW, GOLD_STAR, MUTED, PANEL_2, ROW_H, ROW_PLAY_BTN,
         station_color, truncate,
     },
 };
@@ -199,7 +199,7 @@ pub(super) fn draw_missing_favourite_row(
         MUTED.gamma_multiply(0.85),
     );
     let play_btn_rect = Rect::from_center_size(
-        Pos2::new(row_rect.right() - ROW_PAD_RIGHT - ROW_PLAY_BTN * 0.5, y),
+        Pos2::new(row_rect.left() + layout.play_center_x, y),
         Vec2::splat(ROW_PLAY_BTN),
     );
     let play_resp = ui.interact(

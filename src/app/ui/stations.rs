@@ -56,7 +56,7 @@ impl RockCastApp {
             let show_footer = self.filter_mode == StationFilterMode::All
                 && (self.loading_more_stations
                     || self.loading_more_error.is_some()
-                    || (has_facets && self.station_has_more)
+                    || (self.station_has_more && (has_facets || self.stations.len() >= 20))
                     || (!self.station_has_more && self.stations.len() >= 20));
             let total_rows = rows.len() + if show_footer { 1 } else { 0 };
             let mut need_load_more = false;
@@ -75,6 +75,7 @@ impl RockCastApp {
             let mut scroll_area = egui::ScrollArea::vertical()
                 .id_salt("stations_scroll")
                 .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .max_height(layout.scroll_h)
                 .min_scrolled_height(layout.scroll_h);
 
@@ -102,7 +103,7 @@ impl RockCastApp {
                         }
                         StationFilterMode::History => "История прослушиваний пока пуста.",
                         StationFilterMode::All => {
-                            if is_loading {
+                            if is_loading || self.loading_more_stations {
                                 loading_stations
                             } else {
                                 list_empty
@@ -166,7 +167,7 @@ impl RockCastApp {
                 }
 
                 if self.filter_mode == StationFilterMode::All
-                    && row_range.end >= rows.len().saturating_sub(3)
+                    && row_range.end >= rows.len().saturating_sub(2)
                     && self.station_has_more
                     && !self.loading_more_stations
                     && !self.loading_stations
@@ -406,6 +407,18 @@ impl RockCastApp {
             if btn_resp.clicked() {
                 self.load_more_stations();
             }
+        } else if self.station_has_more {
+            let time = ui.input(|i| i.time) as f32;
+            let pulse = ((time * 3.5).sin() * 0.4 + 0.6).clamp(0.2, 1.0);
+            let color = ACCENT.gamma_multiply(pulse);
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "Загрузка станций…",
+                FontId::proportional(FS_ROW),
+                color,
+            );
+            ui.ctx().request_repaint();
         } else if !self.station_has_more && self.stations.len() >= 20 {
             let total_loaded = self.stations.len();
             let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {

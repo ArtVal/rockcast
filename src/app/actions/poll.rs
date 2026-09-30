@@ -60,7 +60,8 @@ impl RockCastApp {
                 offset,
                 total,
                 has_more,
-            } => self.handle_more_stations_loaded(list, request_id, offset, total, has_more),
+                next_cursor,
+            } => self.handle_more_stations_loaded(list, request_id, offset, total, has_more, next_cursor),
             UiMsg::MoreStationsFailed { request_id, error } => {
                 self.handle_more_stations_failed(request_id, error);
             }

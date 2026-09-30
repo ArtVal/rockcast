@@ -9,7 +9,7 @@ use crate::{
         RockCastApp,
         theme::{
             ACCENT, COL_RESIZE_HIT_W, COUNTRY_COL_W, FS_SMALL, META_COL_MIN,
-            MUTED, NAME_COL_MAX, NAME_COL_MIN, PANEL_2, ROW_PAD_RIGHT, ROW_PLAY_BTN,
+            MUTED, NAME_COL_MAX, NAME_COL_MIN, PANEL_2, ROW_PLAY_BTN,
             TAGS_COL_MIN,
         },
     },
@@ -27,38 +27,47 @@ pub(super) struct TableLayout {
     pub(super) col_tags_x: f32,
     pub(super) col_meta_x: f32,
     pub(super) col_country_x: f32,
+    pub(super) play_center_x: f32,
     pub(super) is_dragged: bool,
 }
 
 impl RockCastApp {
     pub(super) fn calculate_table_layout(&mut self, ui: &mut Ui, list_h: f32) -> TableLayout {
         let full_w = ui.available_width();
-        let scroll_h = (list_h - 136.0).max(100.0);
+        let scroll_h = (ui.available_height() - 44.0).clamp(100.0, (list_h - 136.0).max(100.0));
+        let scrollbar_reserve = (ui.spacing().scroll.bar_width
+            + ui.spacing().scroll.bar_inner_margin
+            + ui.spacing().scroll.bar_outer_margin)
+            .max(14.0);
+        let row_w = (full_w - scrollbar_reserve).max(300.0);
+
         let col_name_x = 68.0;
-        let play_col_w = ROW_PLAY_BTN + ROW_PAD_RIGHT + 10.0;
+        let play_w = ROW_PLAY_BTN + 20.0;
         let country_w = COUNTRY_COL_W;
         let meta_w = META_COL_MIN;
-        let fixed_w = col_name_x + meta_w + country_w + play_col_w;
-        let name_tags_w = (full_w - fixed_w).max(NAME_COL_MIN + TAGS_COL_MIN);
+        let fixed_w = col_name_x + meta_w + country_w + play_w;
+        let name_tags_w = (row_w - fixed_w).max(NAME_COL_MIN + TAGS_COL_MIN);
 
         let default_name_w: f32 = (name_tags_w * 0.44)
             .clamp(NAME_COL_MIN, NAME_COL_MAX)
             .min(name_tags_w - TAGS_COL_MIN);
+        let max_name = (name_tags_w - TAGS_COL_MIN).max(NAME_COL_MIN);
         let mut name_w = self
             .station_name_col_w
             .unwrap_or(default_name_w)
-            .clamp(NAME_COL_MIN, NAME_COL_MAX.min(name_tags_w - TAGS_COL_MIN));
-        let mut tags_w = self
-            .station_tags_col_w
-            .unwrap_or(name_tags_w - name_w)
-            .clamp(TAGS_COL_MIN, name_tags_w - name_w);
-        if name_w + tags_w > name_tags_w {
-            tags_w = (name_tags_w - name_w).max(TAGS_COL_MIN);
+            .clamp(NAME_COL_MIN, NAME_COL_MAX.min(max_name));
+        let mut tags_w = (name_tags_w - name_w).max(TAGS_COL_MIN);
+        if let Some(saved_tags) = self.station_tags_col_w {
+            let max_tags = (name_tags_w - NAME_COL_MIN).max(TAGS_COL_MIN);
+            tags_w = saved_tags.clamp(TAGS_COL_MIN, max_tags);
+            name_w = (name_tags_w - tags_w).max(NAME_COL_MIN);
         }
 
         let col_tags_x = col_name_x + name_w;
         let col_meta_x = col_tags_x + tags_w;
         let col_country_x = col_meta_x + meta_w;
+        let col_play_x = col_country_x + country_w;
+        let play_center_x = col_play_x + play_w * 0.5;
         let top = ui.cursor().top();
 
         let left_handle = Rect::from_min_max(
@@ -99,18 +108,22 @@ impl RockCastApp {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if left_resp.dragged() {
+            let max_name = (name_tags_w - TAGS_COL_MIN).max(NAME_COL_MIN);
             let new_name = (name_w + left_resp.drag_delta().x)
-                .clamp(NAME_COL_MIN, NAME_COL_MAX.min(name_tags_w - TAGS_COL_MIN));
+                .clamp(NAME_COL_MIN, NAME_COL_MAX.min(max_name));
             self.station_name_col_w = Some(new_name);
             name_w = new_name;
-            tags_w = tags_w.clamp(TAGS_COL_MIN, (name_tags_w - name_w).max(TAGS_COL_MIN));
+            tags_w = (name_tags_w - name_w).max(TAGS_COL_MIN);
             self.station_tags_col_w = Some(tags_w);
         }
         if right_resp.dragged() {
+            let max_tags = (name_tags_w - NAME_COL_MIN).max(TAGS_COL_MIN);
             let new_tags = (tags_w + right_resp.drag_delta().x)
-                .clamp(TAGS_COL_MIN, (name_tags_w - name_w).max(TAGS_COL_MIN));
+                .clamp(TAGS_COL_MIN, max_tags);
             self.station_tags_col_w = Some(new_tags);
             tags_w = new_tags;
+            name_w = (name_tags_w - tags_w).max(NAME_COL_MIN);
+            self.station_name_col_w = Some(name_w);
         }
 
         let is_dragged = left_resp.dragged() || right_resp.dragged();
@@ -126,6 +139,7 @@ impl RockCastApp {
             col_tags_x,
             col_meta_x,
             col_country_x,
+            play_center_x,
             is_dragged,
         }
     }
@@ -172,15 +186,8 @@ impl RockCastApp {
             header_font,
             MUTED,
         );
-        let bar_reserve = ui.spacing().scroll.floating_allocated_width;
         ui.painter().text(
-            Pos2::new(
-                head_rect.left() + layout.full_w
-                    - bar_reserve
-                    - ROW_PAD_RIGHT
-                    - ROW_PLAY_BTN * 0.5,
-                y,
-            ),
+            Pos2::new(head_rect.left() + layout.play_center_x, y),
             egui::Align2::CENTER_CENTER,
             "▶",
             FontId::proportional(11.0),
@@ -190,7 +197,7 @@ impl RockCastApp {
         ui.add_space(4.0);
         let sep_y = ui.cursor().top();
         ui.painter().hline(
-            ui.max_rect().x_range(),
+            head_rect.x_range(),
             sep_y,
             Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)),
         );

@@ -93,6 +93,7 @@ impl RockCastApp {
         self.loading_more_error = None;
         self.station_search_total = None;
         self.station_search_offset = 0;
+        self.station_catalog_cursor = None;
         self.station_has_more = false;
         self.status = self.lang.t().loading_stations_status.into();
         let tx = self.ui_tx.clone();
@@ -155,14 +156,13 @@ impl RockCastApp {
                 if cancel.is_cancelled() {
                     return;
                 }
-                let n = catalog.len();
                 let _ = tx.send(UiMsg::Stations {
                     list: catalog,
                     source,
                     request_id,
                     finished: true,
-                    total: Some(n),
-                    has_more: false,
+                    total: None,
+                    has_more: true,
                 });
             })
             .is_err()
@@ -177,44 +177,77 @@ impl RockCastApp {
             return;
         }
         let request_id = self.station_request_id;
-        let offset = self.stations.len();
+        let offset = self.station_search_offset;
+        let cursor = self.station_catalog_cursor.clone();
+        let query = self.global_station_query();
         self.loading_more_stations = true;
         self.loading_more_error = None;
         let tx = self.ui_tx.clone();
         let lang = self.lang;
         let rockserver = self.rockserver.clone();
-        let query = self.global_station_query();
         if self
             .background
             .spawn(move |cancel| {
                 if cancel.is_cancelled() {
                     return;
                 }
-                let locale = match lang {
-                    Lang::Ru => "ru",
-                    Lang::En => "en",
-                };
-                match crate::rockserver::search(&rockserver, &query, locale, 20, offset) {
-                    Ok(batch) => {
-                        if cancel.is_cancelled() {
-                            return;
+                if query.trim().is_empty() {
+                    match crate::rockserver::list_catalog(&rockserver, cursor.as_deref(), 20) {
+                        Ok(batch) => {
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let has_more = batch.next_cursor.is_some() && !batch.stations.is_empty();
+                            let next_cursor = batch.next_cursor;
+                            let _ = tx.send(UiMsg::MoreStationsLoaded {
+                                list: batch.stations,
+                                request_id,
+                                offset: 0,
+                                total: None,
+                                has_more,
+                                next_cursor,
+                            });
                         }
-                        let _ = tx.send(UiMsg::MoreStationsLoaded {
-                            list: batch.stations,
-                            request_id,
-                            offset,
-                            total: batch.total,
-                            has_more: batch.has_more,
-                        });
+                        Err(e) => {
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let _ = tx.send(UiMsg::MoreStationsFailed {
+                                request_id,
+                                error: e,
+                            });
+                        }
                     }
-                    Err(e) => {
-                        if cancel.is_cancelled() {
-                            return;
+                } else {
+                    let locale = match lang {
+                        Lang::Ru => "ru",
+                        Lang::En => "en",
+                    };
+                    match crate::rockserver::search(&rockserver, &query, locale, 20, offset) {
+                        Ok(batch) => {
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let n = batch.stations.len();
+                            let next_offset = offset + n;
+                            let _ = tx.send(UiMsg::MoreStationsLoaded {
+                                list: batch.stations,
+                                request_id,
+                                offset: next_offset,
+                                total: Some(batch.total),
+                                has_more: batch.has_more,
+                                next_cursor: None,
+                            });
                         }
-                        let _ = tx.send(UiMsg::MoreStationsFailed {
-                            request_id,
-                            error: e,
-                        });
+                        Err(e) => {
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let _ = tx.send(UiMsg::MoreStationsFailed {
+                                request_id,
+                                error: e,
+                            });
+                        }
                     }
                 }
             })

@@ -199,6 +199,84 @@ pub(crate) fn get_station(
     Ok(station)
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CatalogBatch {
+    pub stations: Vec<Station>,
+    pub next_cursor: Option<String>,
+}
+
+/// Lists paginated stations from the RockServer catalog (`GET /api/v1/catalog/stations`).
+pub(crate) fn list_catalog(
+    config: &RuntimeConfig,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<CatalogBatch, String> {
+    let base = config.base_url().trim().trim_end_matches('/');
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        return Err("RockServer URL must start with http:// or https://".into());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|_| "RockServer HTTP client failed".to_owned())?;
+    let mut url = format!("{base}/api/v1/catalog/stations?limit={limit}");
+    if let Some(c) = cursor {
+        let trimmed = c.trim();
+        if !trimmed.is_empty() {
+            let encoded: String = trimmed
+                .bytes()
+                .flat_map(|b| match b {
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        vec![b as char]
+                    }
+                    _ => format!("%{:02X}", b).chars().collect(),
+                })
+                .collect();
+            url.push_str(&format!("&cursor={encoded}"));
+        }
+    }
+    let mut request = client.get(url);
+    if let Some(token) = config.bearer_token() {
+        request = request.bearer_auth(token);
+    }
+    let response = request
+        .send()
+        .map_err(|_| "RockServer is unavailable; using local catalog".to_owned())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "RockServer returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let body: CatalogResponse = response
+        .json()
+        .map_err(|_| "RockServer returned invalid catalog JSON".to_owned())?;
+    let stations: Vec<Station> = body
+        .stations
+        .into_iter()
+        .map(|item| {
+            let url = item.stream_url;
+            let mut station = Station::from_primary(
+                item.id,
+                item.name,
+                url,
+                item.tags.join(", "),
+                item.country_code.unwrap_or_default(),
+                item.bitrate_kbps.unwrap_or(0),
+                item.codec.unwrap_or_default(),
+            );
+            station.homepage_url = item.homepage_url;
+            station.favicon_url = item.favicon_url;
+            station.language = item.language;
+            station
+        })
+        .collect();
+    Ok(CatalogBatch {
+        stations,
+        next_cursor: body.next_cursor,
+    })
+}
+
 #[derive(Serialize)]
 struct SearchRequest<'a> {
     query: &'a str,
@@ -213,6 +291,12 @@ struct SearchResponse {
     total: Option<usize>,
     #[serde(default)]
     has_more: Option<bool>,
+}
+#[derive(Deserialize)]
+struct CatalogResponse {
+    stations: Vec<StationDto>,
+    #[serde(default)]
+    next_cursor: Option<String>,
 }
 #[derive(Deserialize)]
 struct StationDto {
@@ -329,6 +413,29 @@ mod tests {
         let request = server.join().unwrap().to_ascii_lowercase();
         assert!(request.starts_with("post /api/v1/search http/1.1\r\n"));
         assert!(request.contains("authorization: bearer dev-test-token\r\n"));
+    }
+
+    #[test]
+    fn public_list_catalog_uses_catalog_endpoint_without_authorization() {
+        let (base_url, server) = serve_one(r#"{"stations":[],"next_cursor":null}"#);
+        let config = RuntimeConfig::for_test(base_url, None);
+        assert!(list_catalog(&config, None, 20).unwrap().stations.is_empty());
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.starts_with("get /api/v1/catalog/stations?limit=20 http/1.1\r\n"));
+        assert!(!request.contains("authorization:"));
+    }
+
+    #[test]
+    fn list_catalog_parses_cursor_and_batch() {
+        let body = r#"{"stations":[{"id":"st-1","name":"Station 1","stream_url":"http://stream/1"}],"next_cursor":"cursor-next"}"#;
+        let (base_url, server) = serve_one(body);
+        let config = RuntimeConfig::for_test(base_url, None);
+        let batch = list_catalog(&config, Some("cursor-prev"), 10).unwrap();
+        assert_eq!(batch.stations.len(), 1);
+        assert_eq!(batch.stations[0].id, "st-1");
+        assert_eq!(batch.next_cursor.as_deref(), Some("cursor-next"));
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.starts_with("get /api/v1/catalog/stations?limit=10&cursor=cursor-prev http/1.1\r\n"));
     }
 
     #[test]

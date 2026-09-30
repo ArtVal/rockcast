@@ -16,8 +16,9 @@ pub(crate) enum UiMsg {
         list: Vec<Station>,
         request_id: u64,
         offset: usize,
-        total: usize,
+        total: Option<usize>,
         has_more: bool,
+        next_cursor: Option<String>,
     },
     MoreStationsFailed {
         request_id: u64,

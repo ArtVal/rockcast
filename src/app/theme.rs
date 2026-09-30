@@ -19,8 +19,6 @@ pub(crate) const GREEN: Color32 = Color32::from_rgb(0x3d, 0xdc, 0x84);
 pub(crate) const ROW_H: f32 = 44.0;
 /// Diameter of the round per-row play/pause buttons.
 pub(crate) const ROW_PLAY_BTN: f32 = 30.0;
-/// Gap between the table edge and the last column controls.
-pub(crate) const ROW_PAD_RIGHT: f32 = 16.0;
 /// Type scale — the only font sizes the main window may use.
 pub(crate) const FS_MICRO: f32 = 10.5; // country badges, tiny captions
 pub(crate) const FS_SMALL: f32 = 11.5; // column headers, secondary meta

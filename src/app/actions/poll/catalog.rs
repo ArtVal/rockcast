@@ -24,6 +24,7 @@ impl RockCastApp {
         self.stations = list;
         self.station_search_total = total;
         self.station_search_offset = self.stations.len();
+        self.station_catalog_cursor = None;
         self.station_has_more = has_more;
         self.loading_more_stations = false;
         self.loading_more_error = None;
@@ -58,17 +59,22 @@ impl RockCastApp {
         &mut self,
         list: Vec<Station>,
         request_id: u64,
-        _offset: usize,
-        total: usize,
+        next_offset: usize,
+        total: Option<usize>,
         has_more: bool,
+        next_cursor: Option<String>,
     ) {
         if request_id != self.station_request_id {
             return;
         }
         self.loading_more_stations = false;
         self.loading_more_error = None;
-        self.station_search_total = Some(total);
+        if let Some(tot) = total {
+            self.station_search_total = Some(tot);
+        }
         self.station_has_more = has_more;
+        self.station_catalog_cursor = next_cursor;
+        self.station_search_offset = next_offset;
 
         if !list.is_empty() {
             let mut existing_ids: HashSet<String> =
@@ -82,10 +88,17 @@ impl RockCastApp {
                 self.stations.extend(new_stations);
             }
         }
-        self.station_search_offset = self.stations.len();
         let loaded = self.stations.len();
-        self.source = format!("RockServer · {loaded} / {total}");
-        self.status = format!("{}: {loaded} из {total}", self.lang.t().stations_count);
+        match self.station_search_total {
+            Some(tot) => {
+                self.source = format!("RockServer · {loaded} / {tot}");
+                self.status = format!("{}: {loaded} из {tot}", self.lang.t().stations_count);
+            }
+            None => {
+                self.source = format!("RockServer · {loaded}");
+                self.status = i18n::fmt1(self.lang.t().stations_count, loaded);
+            }
+        }
     }
 
     pub(super) fn handle_more_stations_failed(&mut self, request_id: u64, error: String) {

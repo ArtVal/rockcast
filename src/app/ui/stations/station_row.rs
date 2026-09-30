@@ -7,7 +7,7 @@ use eframe::egui::{
 use crate::app::{
     RockCastApp,
     theme::{
-        ACCENT, BORDER, FG, FS_ROW, GOLD_STAR, MUTED, PANEL_2, ROW_H, ROW_PAD_RIGHT, ROW_PLAY_BTN,
+        ACCENT, BORDER, FG, FS_ROW, GOLD_STAR, MUTED, PANEL_2, ROW_H, ROW_PLAY_BTN,
         format_country_code, station_color, truncate,
     },
 };
@@ -231,10 +231,7 @@ impl RockCastApp {
 
             // 1-Click Play/Pause Button on each row — always visible
             let play_btn_rect = Rect::from_center_size(
-                Pos2::new(
-                    row_rect.left() + row_w - ROW_PAD_RIGHT - ROW_PLAY_BTN * 0.5,
-                    y,
-                ),
+                Pos2::new(row_rect.left() + layout.play_center_x, y),
                 Vec2::splat(ROW_PLAY_BTN),
             );
             let play_resp = ui.interact(
