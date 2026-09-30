@@ -126,17 +126,10 @@ impl RockCastApp {
         if !self.loading_devices {
             self.refresh_devices();
         }
-        // Refresh the catalog source label without a full RB request.
+        // Refresh the catalog source label on language switch.
         let n = self.stations.len();
-        if n > 0 {
-            let localish = self.source.contains("локаль")
-                || self.source.contains("local catalog")
-                || !self.source.contains("Radio Browser");
-            self.source = if localish {
-                i18n::fmt1(lang.t().local_catalog, n)
-            } else {
-                i18n::fmt1(lang.t().catalog_plus_rb, n)
-            };
+        if n > 0 && (self.source.contains("локаль") || self.source.contains("local catalog")) {
+            self.source = i18n::fmt1(lang.t().local_catalog, n);
         }
     }
 }

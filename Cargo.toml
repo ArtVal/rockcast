@@ -28,7 +28,6 @@ symphonia-adapter-fdk-aac = { version = "0.1.3", default-features = false }
 fdk-aac = "0.8"
 thiserror = "2"
 tungstenite = { version = "0.29", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
-webpki-roots = "1"
 time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

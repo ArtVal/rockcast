@@ -6,7 +6,7 @@ use crate::{
     i18n::Lang,
     output::scan_streaming,
     rockserver::RuntimeConfig,
-    stations::{Station, enrich_stations, load_catalog},
+    stations::{Station, load_catalog},
 };
 
 use super::super::{RockCastApp, messages::UiMsg};
@@ -152,21 +152,12 @@ impl RockCastApp {
                 }
 
                 let (catalog, source) = load_catalog(lang);
-                let _ = tx.send(UiMsg::Stations {
-                    list: catalog.clone(),
-                    source,
-                    request_id,
-                    finished: false,
-                    total: None,
-                    has_more: false,
-                });
-                let (merged, source) = enrich_stations(catalog, lang);
                 if cancel.is_cancelled() {
                     return;
                 }
-                let n = merged.len();
+                let n = catalog.len();
                 let _ = tx.send(UiMsg::Stations {
-                    list: merged,
+                    list: catalog,
                     source,
                     request_id,
                     finished: true,

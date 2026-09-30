@@ -70,7 +70,6 @@ pub struct Strings {
     pub this_pc: &'static str,
     pub pc_speakers: &'static str,
     pub local_catalog: &'static str, // "local catalog · {} stations"
-    pub catalog_plus_rb: &'static str, // "catalog + Radio Browser · {} stations"
     pub cast_none: &'static str,     // "Local: {}. No Chromecast found..."
     pub cast_found: &'static str,    // "Found: {} local + {} Cast. Selected: {}"
     pub cast_err: &'static str,      // "Local: {}. Cast search: {}"
@@ -165,7 +164,6 @@ pub static RU: Strings = Strings {
     this_pc: "Этот ПК",
     pc_speakers: "Динамики компьютера",
     local_catalog: "локальный каталог · {} станций",
-    catalog_plus_rb: "каталог + Radio Browser · {} станций",
     cast_none: "Локальных: {}. Chromecast не найдены (проверьте Wi-Fi / JBL).",
     cast_found: "Найдено: {} локальных + {} Cast. Выбрано: {}",
     cast_err: "Локальных: {}. Поиск Cast: {}",
@@ -260,7 +258,6 @@ pub static EN: Strings = Strings {
     this_pc: "This PC",
     pc_speakers: "Computer speakers",
     local_catalog: "local catalog · {} stations",
-    catalog_plus_rb: "catalog + Radio Browser · {} stations",
     cast_none: "Local: {}. No Chromecast found (check Wi-Fi / JBL).",
     cast_found: "Found: {} local + {} Cast. Selected: {}",
     cast_err: "Local: {}. Cast search: {}",

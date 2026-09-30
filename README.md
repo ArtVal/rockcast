@@ -10,7 +10,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 - **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
 - **Via PC relay** — optional: PC fetches the station (e.g. through VPN) and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
-- **Station catalog** — pinned schema-v1 JSON snapshot plus optional enrichment from [Radio Browser](https://www.radio-browser.info/)
+- **Station catalog** — pinned schema-v1 JSON snapshot, instant offline startup, and server-backed search via RockServer
 - **Station icons (MVP)** — direct, bounded favicon/logo loading from station metadata with a local cache; RockServer-hosted icons are planned
 - **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata, shown with a green live dot and an animated equalizer on the playing row; the observed title is also published to the account-owned RockServer device directory for RockMobile
 - **Rock-styled UI** — 44 px station rows with always-visible round play buttons, filter/genre chips, a unified player deck (station art, transport button on the panel axis, full-height clickable spectrum, volume in the status footer) and a card-style «Account & devices» window; design references live in `design/mockups/`
@@ -83,7 +83,7 @@ Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
 
 Detailed Russian-language instructions, including voice commands: **[docs/user-manual.html](docs/user-manual.html)**. Open the file in a browser.
 
-1. **Wait for stations** — the local catalog loads immediately; Radio Browser enrichment may follow in the background.
+1. **Wait for stations** — the local catalog loads immediately on startup; search and voice find more stations via RockServer.
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
 4. **Via PC** (Cast only) — enable if the station needs VPN on the PC; RockCast relays audio to the speaker over Wi‑Fi.
@@ -147,7 +147,7 @@ SomaFM — Metal Detector | https://ice6.somafm.com/metal-128-mp3 | metal,heavy 
 
 - Lines starting with `#` are comments.
 - At least `name` and `url` are required (`http://` or `https://`).
-- Playlist URLs (`.m3u`, `.pls`, …) from Radio Browser are skipped.
+- Playlist URLs (`.m3u`, `.pls`, …) are skipped.
 
 Existing `stations.txt` overrides retain their current behavior for one release cycle. This is a
 documented legacy exception owned by the RockCast maintainers to protect offline user overrides;
@@ -166,9 +166,6 @@ repeated on every UI redraw. The embedded catalog currently leaves these
 metadata fields empty, so icons appear as metadata is supplied by a catalog or
 RockServer response.
 
-### Radio Browser
-
-After the local list appears, RockCast may query Radio Browser for additional metal/rock stations and merge them (deduped by URL, capped for UI size).
 
 ## Settings
 
@@ -183,7 +180,7 @@ Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq
 
 ## RockServer and voice control
 
-Official RockCast releases use the production RockServer at `https://rockplatform.win` automatically. Public station search calls `POST /api/v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast publishes its embedded local catalog first; if the public API is unavailable, it continues with the same local catalog plus Radio Browser fallback and playback remains independent of RockServer.
+Official RockCast releases use the production RockServer at `https://rockplatform.win` automatically. Public station search calls `POST /api/v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast publishes its embedded local catalog first; if the public API is unavailable, it continues with the same local catalog and playback remains independent of RockServer.
 
 The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit and connects to public `wss://rockplatform.win/api/v1/voice/stream` without Bearer authorization. HTTPS is always upgraded to WSS, preserving TLS. The official runtime uses the compatible buffered SpeechKit v1 request. Input-device selection/testing and cancellation after upload begins are not implemented yet.
 
@@ -223,7 +220,7 @@ rockcast/
     ├── playback/         # PlaybackController + phase/volume
     ├── local/            # PC playback (cpal + decode)
     ├── observers/        # ICY + spectrum taps for Cast
-    ├── stations/         # catalog + Radio Browser
+    ├── stations/         # local catalog loader
     ├── relay/            # LAN HTTP relay PC → Cast
     ├── voice/            # RockServer voice search
     ├── i18n.rs           # EN / RU strings
@@ -283,7 +280,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 | No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
 | Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
 | Station needs VPN, silent on JBL | Enable **Via PC**; allow inbound LAN (Windows Firewall / firewalld); PC and JBL on same Wi‑Fi |
-| Empty station list | Check `stations.txt` path / `ROCKCAST_STATIONS`; inspect logs for Radio Browser errors |
+| Empty station list | Check `stations.v1.json` / `stations.txt` path or `ROCKCAST_STATIONS` environment variable |
 | No track title | Many stations do not send ICY metadata |
 | Wrong PC audio device | Pick another entry under **Device** after **Find** |
 | Spectrum silent on Cast | Enable spectrum; Cast mode uses a separate stream tap after the receiver starts |
@@ -294,6 +291,5 @@ RockCast is licensed under the [GNU General Public License, version 3 or later (
 
 ## Acknowledgments
 
-- [Radio Browser](https://www.radio-browser.info/) — community station directory
 - [SomaFM](https://somafm.com/), Rock Antenne, and other listed stations — streams referenced in the default catalog
 - Google Cast / CASTV2 protocol community documentation

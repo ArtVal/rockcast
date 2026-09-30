@@ -1,13 +1,11 @@
-//! Rock / metal radio stations: local catalog + Radio Browser API.
+//! Rock / metal radio stations: local catalog.
 
 mod catalog;
-mod radio_browser;
 
 use crate::i18n::{self, Lang};
 
 pub(crate) use catalog::{catalog_resolver, catalog_stations};
 pub use catalog::{infer_codec, parse_stations_txt};
-pub use radio_browser::{enrich_stations, match_station};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Station {
