@@ -110,7 +110,7 @@ pub(crate) fn panel(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(PANEL)
         .corner_radius(CornerRadius::same(10))
-        .stroke(egui::Stroke::new(1.0, BORDER_SUBTLE))
+        .stroke(egui::Stroke::new(1.0_f32, BORDER_SUBTLE))
         .inner_margin(egui::Margin::same(12))
         .show(ui, add);
 }

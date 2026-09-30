@@ -32,7 +32,7 @@ impl RockCastApp {
             // Cohesive search input container
             Frame::new()
                 .fill(PANEL)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(CornerRadius::same(8))
                 .inner_margin(egui::Margin::symmetric(10, 4))
                 .show(ui, |ui| {
@@ -54,7 +54,7 @@ impl RockCastApp {
                             [edit_w, 24.0],
                             egui::TextEdit::singleline(&mut self.station_search)
                                 .hint_text("Поиск станции, группы или стиля…")
-                                .frame(false),
+                                .frame(egui::Frame::NONE),
                         );
                         let enter = response.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -120,7 +120,7 @@ impl RockCastApp {
                             ui.painter().rect_stroke(
                                 voice_rect,
                                 CornerRadius::same(6),
-                                Stroke::new(1.0, BORDER),
+                                Stroke::new(1.0_f32, BORDER),
                                 StrokeKind::Inside,
                             );
                         }
@@ -173,7 +173,7 @@ impl RockCastApp {
             let cat_btn = egui::Button::new(RichText::new(cat_label).color(FG).size(12.0))
                 .min_size(Vec2::new(catalog_btn_w, 32.0))
                 .corner_radius(CornerRadius::same(8))
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .fill(PANEL);
             if ui.add(cat_btn).clicked() {
                 outcome.return_home = true;
@@ -185,7 +185,7 @@ impl RockCastApp {
             Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(229, 96, 32, 26))
                 .stroke(Stroke::new(
-                    1.0,
+                    1.0_f32,
                     Color32::from_rgba_unmultiplied(229, 96, 32, 75),
                 ))
                 .corner_radius(CornerRadius::same(6))
@@ -216,7 +216,7 @@ impl RockCastApp {
             Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(229, 96, 32, 22))
                 .stroke(Stroke::new(
-                    1.0,
+                    1.0_f32,
                     Color32::from_rgba_unmultiplied(229, 96, 32, 60),
                 ))
                 .corner_radius(CornerRadius::same(6))

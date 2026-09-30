@@ -227,17 +227,17 @@ impl RockCastApp {
         visuals.extreme_bg_color = PANEL;
         visuals.window_stroke = Stroke::NONE;
         visuals.widgets.noninteractive.bg_stroke = Stroke::NONE;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24));
-        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT.gamma_multiply(0.5));
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24));
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.5));
         cc.egui_ctx.set_visuals(visuals);
 
-        let mut style = (*cc.egui_ctx.style()).clone();
+        let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
         style.spacing.item_spacing = Vec2::new(8.0, 6.0);
         style.spacing.button_padding = Vec2::new(10.0, 4.0);
         // Fits the deck's 196px right section: speaker + slider + percent.
         style.spacing.slider_width = 110.0;
         style.spacing.interact_size.y = 24.0;
-        cc.egui_ctx.set_style(style);
+        cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
 
         let settings = AppSettings::load();
         let volume = settings.volume.clamp(0, 100);
@@ -361,7 +361,8 @@ impl RockCastApp {
 }
 
 impl eframe::App for RockCastApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.frame_count = self.frame_count.saturating_add(1);
         if let Ok(shot_path) = std::env::var("ROCKCAST_SCREENSHOT_PATH") {
             let shot_path = shot_path.trim().to_owned();
@@ -401,7 +402,7 @@ impl eframe::App for RockCastApp {
         }
 
         self.bootstrap();
-        self.poll_messages(ctx);
+        self.poll_messages(&ctx);
         self.tick_personal_sync();
         let device_commands_pending = self.poll_device_control_commands();
         self.poll_pairing();
@@ -473,7 +474,7 @@ impl eframe::App for RockCastApp {
             ctx.request_repaint_after(UI_SLOW_REPAINT_INTERVAL);
         }
 
-        egui::TopBottomPanel::bottom("bottom")
+        egui::Panel::bottom("bottom")
             .frame(Frame::new().fill(BG).inner_margin(egui::Margin {
                 left: 16,
                 right: 16,
@@ -481,7 +482,7 @@ impl eframe::App for RockCastApp {
                 bottom: 12,
             }))
             .show_separator_line(false)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 self.draw_player_deck(ui);
             });
 
@@ -492,14 +493,14 @@ impl eframe::App for RockCastApp {
                 top: 12,
                 bottom: 8,
             }))
-            .show(ctx, |ui| {
-                self.draw_header(ctx, ui);
+            .show(ui, |ui| {
+                self.draw_header(&ctx, ui);
 
                 let list_h = ui.available_height().max(120.0);
                 self.draw_station_list(ui, list_h);
             });
-        self.draw_personal_windows(ctx);
-        self.draw_account_window(ctx);
+        self.draw_personal_windows(&ctx);
+        self.draw_account_window(&ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

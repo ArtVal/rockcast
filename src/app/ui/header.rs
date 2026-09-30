@@ -36,8 +36,8 @@ impl RockCastApp {
                 justify_content: Some(JustifyContent::SpaceBetween),
                 align_items: Some(AlignItems::Center),
                 size: Size {
-                    width: percent(1.0),
-                    height: length(32.0),
+                    width: percent(1.0_f32),
+                    height: length(32.0_f32),
                 },
                 ..Default::default()
             })
@@ -47,7 +47,7 @@ impl RockCastApp {
                     flex_shrink: 0.0,
                     size: Size {
                         width: auto(),
-                        height: length(32.0),
+                        height: length(32.0_f32),
                     },
                     ..Default::default()
                 })
@@ -78,7 +78,7 @@ impl RockCastApp {
                         ui.painter().rect_stroke(
                             badge_rect,
                             CornerRadius::same(4),
-                            egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(229, 96, 32, 90)),
+                            egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(229, 96, 32, 90)),
                             StrokeKind::Inside,
                         );
                         ui.painter().text(
@@ -96,7 +96,7 @@ impl RockCastApp {
                     flex_shrink: 0.0,
                     size: Size {
                         width: auto(),
-                        height: length(32.0),
+                        height: length(32.0_f32),
                     },
                     ..Default::default()
                 })
@@ -110,7 +110,7 @@ impl RockCastApp {
                                 .size(theme::FS_BODY),
                         )
                         .fill(PANEL_2)
-                        .stroke(egui::Stroke::new(1.0, BORDER));
+                        .stroke(egui::Stroke::new(1.0_f32, BORDER));
                         if ui.add(acc_btn).clicked() {
                             open_account = true;
                         }

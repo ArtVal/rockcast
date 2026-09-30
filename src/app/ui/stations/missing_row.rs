@@ -202,7 +202,7 @@ pub(super) fn draw_missing_favourite_row(
                 "?".to_string()
             };
             ui.painter().rect_filled(rect, CornerRadius::same(5), station_color(name).gamma_multiply(0.55));
-            ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, Color32::from_rgb(0x4a, 0x38, 0x2c)), StrokeKind::Inside);
+            ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x38, 0x2c)), StrokeKind::Inside);
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial, FontId::proportional(11.0), Color32::from_rgb(0xec, 0xe4, 0xdc));
         });
     });
@@ -268,11 +268,11 @@ pub(super) fn draw_missing_favourite_row(
         ui.centered_and_justified(|ui| {
             let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::splat(ROW_PLAY_BTN), Sense::click());
             let (fill, fg, stroke) = if busy {
-                (PANEL_2, MUTED.gamma_multiply(0.5), Stroke::new(1.0, BORDER))
+                (PANEL_2, MUTED.gamma_multiply(0.5), Stroke::new(1.0_f32, BORDER))
             } else if btn_resp.hovered() {
                 (ACCENT, Color32::WHITE, Stroke::NONE)
             } else {
-                (PANEL_2, MUTED, Stroke::new(1.0, BORDER))
+                (PANEL_2, MUTED, Stroke::new(1.0_f32, BORDER))
             };
             ui.painter().circle_filled(btn_rect.center(), ROW_PLAY_BTN * 0.5, fill);
             if stroke.width > 0.0 {

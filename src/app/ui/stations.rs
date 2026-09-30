@@ -151,7 +151,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
                             ui.label(RichText::new("★").color(MUTED).size(12.0));
                         });
@@ -159,7 +159,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
                             ui.label(RichText::new(t.col_station).color(MUTED).size(FS_SMALL));
@@ -168,7 +168,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
                             ui.label(RichText::new(t.col_tags).color(MUTED).size(FS_SMALL));
@@ -177,7 +177,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
                             ui.label(RichText::new(t.col_bitrate).color(MUTED).size(FS_SMALL));
@@ -186,7 +186,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
                             ui.label(RichText::new(t.col_country).color(MUTED).size(FS_SMALL));
                         });
@@ -194,7 +194,7 @@ impl RockCastApp {
                     header.col(|ui| {
                         let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
                         ui.painter().rect_filled(r, CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 }, PANEL_2);
-                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0_f32, Color32::from_rgb(0x3a, 0x2e, 0x24)));
                         ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
                             ui.label(RichText::new("▶").color(MUTED).size(11.0));
                         });
@@ -360,7 +360,7 @@ impl RockCastApp {
                                 ui.painter().rect_stroke(
                                     btn_rect,
                                     CornerRadius::same(15),
-                                    Stroke::new(1.0, border),
+                                    Stroke::new(1.0_f32, border),
                                     StrokeKind::Inside,
                                 );
 
@@ -407,7 +407,7 @@ impl RockCastApp {
                                 ui.painter().rect_stroke(
                                     btn_rect,
                                     CornerRadius::same(15),
-                                    Stroke::new(1.0, border),
+                                    Stroke::new(1.0_f32, border),
                                     StrokeKind::Inside,
                                 );
 
@@ -552,7 +552,7 @@ impl RockCastApp {
                 ui.painter().rect_stroke(
                     btn_rect,
                     CornerRadius::same(6),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0_f32, BORDER),
                     StrokeKind::Inside,
                 );
                 ui.painter().text(
@@ -583,7 +583,7 @@ impl RockCastApp {
                 ui.painter().rect_stroke(
                     btn_rect,
                     CornerRadius::same(6),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0_f32, BORDER),
                     StrokeKind::Inside,
                 );
                 ui.painter().text(

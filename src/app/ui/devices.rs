@@ -51,10 +51,10 @@ impl RockCastApp {
             .style(taffy::Style {
                 flex_direction: FlexDirection::Row,
                 align_items: Some(AlignItems::Center),
-                gap: length(8.0),
+                gap: length(8.0_f32),
                 size: Size {
-                    width: percent(1.0),
-                    height: length(28.0),
+                    width: percent(1.0_f32),
+                    height: length(28.0_f32),
                 },
                 ..Default::default()
             })
@@ -64,7 +64,7 @@ impl RockCastApp {
                     flex_shrink: 0.0,
                     size: Size {
                         width: auto(),
-                        height: length(28.0),
+                        height: length(28.0_f32),
                     },
                     ..Default::default()
                 })
@@ -80,12 +80,12 @@ impl RockCastApp {
                     flex_grow: 1.0,
                     flex_shrink: 1.0,
                     min_size: Size {
-                        width: length(160.0),
-                        height: length(28.0),
+                        width: length(160.0_f32),
+                        height: length(28.0_f32),
                     },
                     max_size: Size {
-                        width: length(480.0),
-                        height: length(28.0),
+                        width: length(480.0_f32),
+                        height: length(28.0_f32),
                     },
                     ..Default::default()
                 })
@@ -119,8 +119,8 @@ impl RockCastApp {
                 tui.style(taffy::Style {
                     flex_shrink: 0.0,
                     size: Size {
-                        width: length(125.0),
-                        height: length(26.0),
+                        width: length(125.0_f32),
+                        height: length(26.0_f32),
                     },
                     ..Default::default()
                 })
@@ -141,7 +141,7 @@ impl RockCastApp {
                         flex_shrink: 0.0,
                         size: Size {
                             width: auto(),
-                            height: length(28.0),
+                            height: length(28.0_f32),
                         },
                         ..Default::default()
                     })

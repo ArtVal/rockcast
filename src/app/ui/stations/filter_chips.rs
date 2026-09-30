@@ -75,7 +75,7 @@ impl RockCastApp {
             .stroke(if all_selected {
                 Stroke::NONE
             } else {
-                Stroke::new(1.0, BORDER)
+                Stroke::new(1.0_f32, BORDER)
             })
             .fill(if all_selected { ACCENT } else { PANEL });
             if ui.add(all_btn).clicked() {
@@ -101,7 +101,7 @@ impl RockCastApp {
             .stroke(if fav_selected {
                 Stroke::NONE
             } else {
-                Stroke::new(1.0, BORDER)
+                Stroke::new(1.0_f32, BORDER)
             })
             .fill(if fav_selected { ACCENT } else { PANEL });
             if ui.add(fav_btn).clicked() {
@@ -122,7 +122,7 @@ impl RockCastApp {
             .stroke(if hist_selected {
                 Stroke::NONE
             } else {
-                Stroke::new(1.0, BORDER)
+                Stroke::new(1.0_f32, BORDER)
             })
             .fill(if hist_selected { ACCENT } else { PANEL });
             if ui.add(hist_btn).clicked() {
@@ -162,7 +162,7 @@ impl RockCastApp {
                 .stroke(if selected {
                     Stroke::NONE
                 } else {
-                    Stroke::new(1.0, BORDER)
+                    Stroke::new(1.0_f32, BORDER)
                 })
                 .fill(if selected { ACCENT } else { PANEL });
                 if ui.add(genre_btn).clicked() {
@@ -286,7 +286,7 @@ impl RockCastApp {
                     RichText::new("✕ Сбросить").size(11.0).color(MUTED),
                 )
                 .corner_radius(CornerRadius::same(12))
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .fill(PANEL_2);
                 if ui
                     .add(reset_btn)

@@ -97,12 +97,12 @@ impl RockCastApp {
                 ui.painter().hline(
                     cell_rect.x_range(),
                     cell_rect.top(),
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(229, 96, 32, 120)),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(229, 96, 32, 120)),
                 );
                 ui.painter().hline(
                     cell_rect.x_range(),
                     cell_rect.bottom() - 1.0,
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(229, 96, 32, 120)),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(229, 96, 32, 120)),
                 );
             }
 
@@ -173,7 +173,7 @@ impl RockCastApp {
                     ui.painter().rect_stroke(
                         icon_rect,
                         CornerRadius::same(5),
-                        Stroke::new(1.0, Color32::from_rgb(0x4a, 0x38, 0x2c)),
+                        Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x38, 0x2c)),
                         StrokeKind::Inside,
                     );
                     ui.painter().text(
@@ -296,7 +296,7 @@ impl RockCastApp {
                 ui.painter().rect_stroke(
                     country_rect,
                     CornerRadius::same(3),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0_f32, BORDER),
                     StrokeKind::Inside,
                 );
                 ui.painter().text(
@@ -323,7 +323,7 @@ impl RockCastApp {
                     (
                         PANEL_2,
                         Color32::from_rgb(0xd5, 0xca, 0xc0),
-                        Stroke::new(1.0, BORDER),
+                        Stroke::new(1.0_f32, BORDER),
                     )
                 };
                 ui.painter()

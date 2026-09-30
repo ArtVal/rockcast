@@ -6,10 +6,10 @@ description = "RockCast — internet radio on Chromecast / Google Cast"
 
 [dependencies]
 cpal = "0.15"
-eframe = { version = "0.33", default-features = true }
-egui = "0.33"
-egui_extras = "0.33"
-egui_taffy = "0.10.0"
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "links", "wayland", "web_screen_reader", "x11"] }
+egui = "0.36.2"
+egui_extras = "0.36.2"
+egui_taffy = "0.14.0"
 image = { version = "0.25", default-features = false, features = ["ico", "jpeg", "png", "webp"] }
 env_logger = "0.11"
 if-addrs = "0.14"

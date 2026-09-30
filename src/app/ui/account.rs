@@ -229,7 +229,7 @@ impl RockCastApp {
                                 RichText::new(t.account_logout).color(DANGER).size(FS_BODY),
                             )
                             .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::new(1.0, danger_dim()))
+                            .stroke(Stroke::new(1.0_f32, danger_dim()))
                             .corner_radius(CornerRadius::same(6)),
                         )
                         .clicked()
@@ -434,7 +434,7 @@ fn icon_tile(ui: &mut egui::Ui, tex: egui::TextureId) {
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(8),
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0_f32, BORDER),
         StrokeKind::Inside,
     );
     ui.painter().image(
@@ -457,7 +457,7 @@ fn status_chip(ui: &mut egui::Ui, text: &str) {
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(9),
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(61, 220, 132, 70)),
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(61, 220, 132, 70)),
         StrokeKind::Inside,
     );
     ui.painter()
@@ -467,7 +467,7 @@ fn status_chip(ui: &mut egui::Ui, text: &str) {
 fn ghost_button(text: impl Into<String>) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text).color(FG).size(FS_BODY))
         .fill(PANEL_2)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(CornerRadius::same(6))
 }
 
@@ -479,7 +479,7 @@ fn danger_button(ui: &mut egui::Ui, text: &str, filled: bool) -> egui::Response 
     } else {
         egui::Button::new(RichText::new(text).color(DANGER).size(FS_SMALL))
             .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::new(1.0, danger_dim()))
+            .stroke(Stroke::new(1.0_f32, danger_dim()))
             .corner_radius(CornerRadius::same(6))
     };
     ui.add(btn)

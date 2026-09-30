@@ -80,7 +80,7 @@ impl RockCastApp {
 
         Frame::new()
             .fill(PANEL)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0_f32, BORDER))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
@@ -93,10 +93,10 @@ impl RockCastApp {
                         flex_direction: FlexDirection::Column,
                         align_items: Some(AlignItems::Stretch),
                         size: Size {
-                            width: percent(1.0),
+                            width: percent(1.0_f32),
                             height: auto(),
                         },
-                        gap: length(6.0),
+                        gap: length(6.0_f32),
                         ..Default::default()
                     })
                     .show(|tui| {
@@ -106,8 +106,8 @@ impl RockCastApp {
                             align_items: Some(AlignItems::Center),
                             justify_content: Some(JustifyContent::SpaceBetween),
                             size: Size {
-                                width: percent(1.0),
-                                height: length(64.0),
+                                width: percent(1.0_f32),
+                                height: length(64.0_f32),
                             },
                             ..Default::default()
                         })
@@ -118,20 +118,20 @@ impl RockCastApp {
                                 align_items: Some(AlignItems::Center),
                                 flex_grow: 1.0,
                                 flex_shrink: 1.0,
-                                flex_basis: length(0.0),
+                                flex_basis: length(0.0_f32),
                                 min_size: Size {
-                                    width: length(120.0),
-                                    height: length(64.0),
+                                    width: length(120.0_f32),
+                                    height: length(64.0_f32),
                                 },
-                                gap: length(12.0),
+                                gap: length(12.0_f32),
                                 ..Default::default()
                             })
                             .add(|tui| {
                                 // Station Art / Monogram
                                 tui.style(taffy::Style {
                                     size: Size {
-                                        width: length(48.0),
-                                        height: length(48.0),
+                                        width: length(48.0_f32),
+                                        height: length(48.0_f32),
                                     },
                                     flex_shrink: 0.0,
                                     ..Default::default()
@@ -156,7 +156,7 @@ impl RockCastApp {
                                         ui.painter().rect_stroke(
                                             logo_rect,
                                             CornerRadius::same(8),
-                                            Stroke::new(1.5, ACCENT),
+                                            Stroke::new(1.5_f32, ACCENT),
                                             StrokeKind::Inside,
                                         );
                                         ui.painter().text(
@@ -182,12 +182,12 @@ impl RockCastApp {
                                     flex_grow: 1.0,
                                     flex_shrink: 1.0,
                                     size: Size {
-                                        width: percent(1.0),
-                                        height: length(64.0),
+                                        width: percent(1.0_f32),
+                                        height: length(64.0_f32),
                                     },
                                     min_size: Size {
-                                        width: length(60.0),
-                                        height: length(44.0),
+                                        width: length(60.0_f32),
+                                        height: length(44.0_f32),
                                     },
                                     ..Default::default()
                                 })
@@ -272,8 +272,8 @@ impl RockCastApp {
                             // Section 2: Transport on panel axis (Center)
                             tui.style(taffy::Style {
                                 size: Size {
-                                    width: length(48.0),
-                                    height: length(48.0),
+                                    width: length(48.0_f32),
+                                    height: length(48.0_f32),
                                 },
                                 flex_shrink: 0.0,
                                 align_self: Some(AlignSelf::Center),
@@ -295,7 +295,7 @@ impl RockCastApp {
                                 ui.painter().circle_stroke(
                                     tp_rect.center(),
                                     24.0,
-                                    Stroke::new(1.0, ACCENT),
+                                    Stroke::new(1.0_f32, ACCENT),
                                 );
                                 let (tp_icon, tp_fg) = if playing {
                                     ("⏸", Color32::WHITE)
@@ -324,22 +324,22 @@ impl RockCastApp {
                                 align_items: Some(AlignItems::Center),
                                 flex_grow: 1.0,
                                 flex_shrink: 1.0,
-                                flex_basis: length(0.0),
+                                flex_basis: length(0.0_f32),
                                 min_size: Size {
-                                    width: length(120.0),
-                                    height: length(64.0),
+                                    width: length(120.0_f32),
+                                    height: length(64.0_f32),
                                 },
                                 ..Default::default()
                             })
                             .add(|tui| {
                                 tui.style(taffy::Style {
                                     size: Size {
-                                        width: length(240.0),
-                                        height: length(64.0),
+                                        width: length(240.0_f32),
+                                        height: length(64.0_f32),
                                     },
                                     max_size: Size {
-                                        width: percent(0.9),
-                                        height: length(64.0),
+                                        width: percent(0.9_f32),
+                                        height: length(64.0_f32),
                                     },
                                     ..Default::default()
                                 })
@@ -353,8 +353,8 @@ impl RockCastApp {
                         // Separator line
                         tui.style(taffy::Style {
                             size: Size {
-                                width: percent(1.0),
-                                height: length(1.0),
+                                width: percent(1.0_f32),
+                                height: length(1.0_f32),
                             },
                             ..Default::default()
                         })
@@ -363,7 +363,7 @@ impl RockCastApp {
                             ui.painter().hline(
                                 rect.x_range(),
                                 rect.center().y,
-                                Stroke::new(1.0, BORDER),
+                                Stroke::new(1.0_f32, BORDER),
                             );
                         });
 
@@ -373,8 +373,8 @@ impl RockCastApp {
                             align_items: Some(AlignItems::Center),
                             justify_content: Some(JustifyContent::SpaceBetween),
                             size: Size {
-                                width: percent(1.0),
-                                height: length(20.0),
+                                width: percent(1.0_f32),
+                                height: length(20.0_f32),
                             },
                             ..Default::default()
                         })
@@ -385,7 +385,7 @@ impl RockCastApp {
                                 align_items: Some(AlignItems::Center),
                                 flex_grow: 1.0,
                                 flex_shrink: 1.0,
-                                gap: length(6.0),
+                                gap: length(6.0_f32),
                                 ..Default::default()
                             })
                             .ui(|ui| {
@@ -417,7 +417,7 @@ impl RockCastApp {
                                 flex_shrink: 0.0,
                                 size: Size {
                                     width: auto(),
-                                    height: length(20.0),
+                                    height: length(20.0_f32),
                                 },
                                 ..Default::default()
                             })

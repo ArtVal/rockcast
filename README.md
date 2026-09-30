@@ -22,7 +22,7 @@ Desktop internet radio player for Windows and Linux. Play rock / metal streams o
 ## Requirements
 
 - Windows 10 / 11, or Linux (X11 or Wayland; audio via ALSA / PipeWire)
-- [Rust](https://rustup.rs/) toolchain (edition 2024 / recent stable)
+- [Rust](https://rustup.rs/) toolchain 1.98.0 (edition 2024)
 - Same Wi‑Fi / LAN as your Cast device for casting
 - Optional: Amnezia or other VPN — Cast discovery still works via subnet scan if LAN unicast is allowed
 

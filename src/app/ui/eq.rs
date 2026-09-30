@@ -31,7 +31,7 @@ impl RockCastApp {
             let peak_y = y1 - (rect.height() - 4.0) * peak;
             painter.line_segment(
                 [Pos2::new(x0, peak_y), Pos2::new(x0 + bar_w, peak_y)],
-                Stroke::new(1.5, if active { Color32::WHITE } else { BAR_DIM }),
+                Stroke::new(1.5_f32, if active { Color32::WHITE } else { BAR_DIM }),
             );
         }
         if resp.clicked() {
