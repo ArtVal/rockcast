@@ -211,6 +211,40 @@ impl RockCastApp {
                         });
                     });
                 });
+        } else if let Some(voice_q) = self.voice_search_query.clone() {
+            ui.add_space(2.0);
+            Frame::new()
+                .fill(Color32::from_rgba_unmultiplied(229, 96, 32, 22))
+                .stroke(Stroke::new(
+                    1.0,
+                    Color32::from_rgba_unmultiplied(229, 96, 32, 60),
+                ))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (mic_rect, _) =
+                            ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        ui.painter().image(
+                            self.app_icons.mic.id(),
+                            mic_rect,
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            ACCENT,
+                        );
+                        let text = format!("Распознано голосом: «{voice_q}»");
+                        ui.label(RichText::new(text).color(FG).size(12.0).strong());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .button(RichText::new("✕ Сбросить").size(11.0).color(MUTED))
+                                .on_hover_text("Очистить голосовой фильтр и вернуться к каталогу")
+                                .clicked()
+                            {
+                                self.voice_search_query = None;
+                                outcome.return_home = true;
+                            }
+                        });
+                    });
+                });
         }
 
         outcome

@@ -41,9 +41,9 @@ src/
     device.rs          DeviceTrait, LocalDeviceInfo
     cpal_util.rs       cpal stream helpers
     error.rs           LocalError
-  stations/            stations.txt + Radio Browser enrich
+  stations/            stations.v1.json schema-v1 catalog
     mod.rs             Station type + load API
-    catalog.rs         Parse bundled stations.txt
+    catalog.rs         Parse bundled stations.v1.json and overrides
     radio_browser.rs   Optional HTTPS enrichment
   station_icons.rs     server-resolved icon path or favicon fetch, decode, and cache
   settings.rs          app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
@@ -172,7 +172,7 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 
 | Path | Purpose |
 |------|---------|
-| `stations.txt` | Bundled catalog (`name \| url \| tags \| …`) |
+| `stations.v1.json` | Bundled catalog schema-v1 snapshot and override |
 | `ROCKCAST_STATIONS` | Optional override path for catalog |
 | `proto/cast_channel.proto` | Reference schema (runtime uses hand-rolled codec) |
 | `%LOCALAPPDATA%\RockCast\settings.json` | User prefs (Windows) |

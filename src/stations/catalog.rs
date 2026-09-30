@@ -1,4 +1,4 @@
-//! Versioned station catalog loader with a temporary legacy TXT adapter.
+//! Versioned station catalog loader.
 
 use super::{Station, StationStream};
 use serde::Deserialize;
@@ -10,10 +10,6 @@ use std::{
 pub const PINNED_CATALOG_VERSION: &str = "2026.08.2";
 pub const PINNED_CATALOG_SHA256: &str =
     "3fa20dca94fc059bd433a47b9fba9bb6d5e5e1aa2957a5ffb58b2a7b20b1d74d";
-/// Remove in RM-004-I after the first schema-v1 release has completed one release
-/// cycle, and never before 2026-10-31.
-pub const LEGACY_TXT_REMOVAL: &str =
-    "RM-004-I after one schema-v1 release cycle, not before 2026-10-31";
 const EMBEDDED_CATALOG: &str = include_str!("../../assets/catalog/stations.v1.json");
 const EMBEDDED_MANIFEST: &str = include_str!("../../assets/catalog/manifest.json");
 
@@ -146,25 +142,15 @@ fn resolver_from_document(
 }
 
 fn parse_override_with_resolver(
-    path: &Path,
+    _path: &Path,
     raw: &str,
 ) -> Result<(Vec<Station>, crate::personal_data::CatalogResolver), CatalogError> {
-    if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-        || !raw.trim_start().starts_with('{')
-    {
-        let stations = parse_stations_txt(raw);
-        let resolver = crate::personal_data::CatalogResolver::from_stations(&stations, None);
-        Ok((stations, resolver))
-    } else {
-        let document = parse_document(raw)?;
-        // Keep the public schema parser as the single station-validation path;
-        // the second parsed document carries only lifecycle metadata for profiles.
-        let stations = parse_stations_json(raw)?;
-        let resolver = resolver_from_document(&stations, document);
-        Ok((stations, resolver))
-    }
+    let document = parse_document(raw)?;
+    // Keep the public schema parser as the single station-validation path;
+    // the second parsed document carries only lifecycle metadata for profiles.
+    let stations = parse_stations_json(raw)?;
+    let resolver = resolver_from_document(&stations, document);
+    Ok((stations, resolver))
 }
 
 fn parse_embedded_catalog() -> Result<Vec<Station>, CatalogError> {
@@ -318,50 +304,11 @@ fn override_paths(
     }
     paths
 }
-fn source_paths(dir: &Path) -> [PathBuf; 2] {
-    [dir.join("stations.v1.json"), dir.join("stations.txt")]
+fn source_paths(dir: &Path) -> [PathBuf; 1] {
+    [dir.join("stations.v1.json")]
 }
 fn appdata_catalog_path() -> Option<PathBuf> {
     crate::settings::app_dir().map(|dir| dir.join("stations.v1.json"))
-}
-
-/// Existing TXT overrides remain supported only during the transition described by
-/// LEGACY_TXT_REMOVAL. Format: name | url | tags | bitrate | codec | country.
-pub fn parse_stations_txt(raw: &str) -> Vec<Station> {
-    log::warn!(
-        "stations.txt transition adapter in use; remove {}",
-        LEGACY_TXT_REMOVAL
-    );
-    let mut out = Vec::new();
-    for (lineno, line) in raw.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('|').map(str::trim).collect();
-        if parts.len() < 2 {
-            log::warn!("stations.txt:{lineno}: need at least name|url");
-            continue;
-        }
-        let (name, url) = (parts[0].to_owned(), parts[1].to_owned());
-        if name.is_empty() || !is_http_url(&url) {
-            log::warn!("stations.txt:{lineno}: skip (empty name or URL)");
-            continue;
-        }
-        out.push(Station::from_primary(
-            format!("legacy-{}", &sha256_hex(url.as_bytes())[..16]),
-            name,
-            url,
-            parts.get(2).copied().unwrap_or("").to_owned(),
-            parts.get(5).copied().unwrap_or("").to_owned(),
-            parts
-                .get(3)
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(128),
-            parts.get(4).copied().unwrap_or("mp3").to_owned(),
-        ));
-    }
-    out
 }
 
 /// The catalog release tool hashes canonical UTF-8/LF JSON. Git may materialize
@@ -433,7 +380,7 @@ pub fn infer_codec(codec: &str, url: &str) -> String {
     }
     normalized
 }
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
         0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
@@ -540,14 +487,6 @@ mod tests {
         );
     }
     #[test]
-    fn txt_transition_preserves_playback_url() {
-        let station =
-            &parse_stations_txt("Name | https://example.test/live | rock | 128 | mp3 | US")[0];
-        assert_eq!(station.url, "https://example.test/live");
-        assert!(station.id.starts_with("legacy-"));
-    }
-
-    #[test]
     fn dedupe_and_order_keep_the_selected_playback_url() {
         let stations = vec![
             Station::from_primary(
@@ -575,10 +514,9 @@ mod tests {
     }
 
     #[test]
-    fn json_then_txt_is_the_override_order_within_each_source() {
+    fn json_is_the_override_source_within_each_source() {
         let paths = source_paths(Path::new("override"));
-        assert_eq!(paths[0], PathBuf::from("override/stations.v1.json"));
-        assert_eq!(paths[1], PathBuf::from("override/stations.txt"));
+        assert_eq!(paths, [PathBuf::from("override/stations.v1.json")]);
     }
 
     #[test]
@@ -594,11 +532,8 @@ mod tests {
             vec![
                 PathBuf::from("env.json"),
                 PathBuf::from("exe/stations.v1.json"),
-                PathBuf::from("exe/stations.txt"),
                 PathBuf::from("cwd/stations.v1.json"),
-                PathBuf::from("cwd/stations.txt"),
                 PathBuf::from("appdata/stations.v1.json"),
-                PathBuf::from("appdata/stations.txt"),
             ]
         );
     }

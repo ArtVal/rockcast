@@ -43,6 +43,10 @@ pub struct AppSettings {
     pub cast_relay: bool,
     #[serde(default)]
     pub language: crate::i18n::Lang,
+    #[serde(default)]
+    pub station_name_col_w: Option<f32>,
+    #[serde(default)]
+    pub station_meta_col_w: Option<f32>,
 }
 
 enum SaveCommand {
@@ -215,7 +219,7 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::rename(source, destination)
 }
 
-/// Settings, log, and the editable `stations.txt` copy.
+/// Settings, log, and the editable `stations.v1.json` copy.
 ///
 /// - Windows: `%LOCALAPPDATA%\RockCast`
 /// - Unix: `$XDG_CONFIG_HOME/rockcast`, else `~/.config/rockcast`

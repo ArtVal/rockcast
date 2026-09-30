@@ -129,30 +129,15 @@ Use the same schema-v1 JSON document for custom overrides. Overrides are explici
 un-pinned full-catalog authority: before replacing one, keep a local backup; remove or rename it to
 return immediately to the checksum-verified bundled baseline. Search precedence remains:
 
-1. `ROCKCAST_STATIONS` environment variable (full path; JSON or legacy TXT)
-2. `stations.v1.json`, then `stations.txt`, next to the executable
-3. `stations.v1.json`, then `stations.txt`, in the current working directory
-4. `stations.v1.json`, then `stations.txt`, in app data
+1. `ROCKCAST_STATIONS` environment variable (full path to JSON override)
+2. `stations.v1.json` next to the executable
+3. `stations.v1.json` in the current working directory
+4. `stations.v1.json` in app data
 
 If no override exists, RockCast creates an editable `stations.v1.json` app-data copy from the
 vendored snapshot. JSON overrides accept forward-compatible unknown optional fields but require
 schemaVersion 1, unique stable IDs, valid HTTP(S) streams, and exactly one primary stream.
-
-### Legacy TXT transition
-
-```text
-# name | url | tags | bitrate | codec | country
-SomaFM — Metal Detector | https://ice6.somafm.com/metal-128-mp3 | metal,heavy metal | 128 | mp3 | USA
-```
-
-- Lines starting with `#` are comments.
-- At least `name` and `url` are required (`http://` or `https://`).
-- Playlist URLs (`.m3u`, `.pls`, …) are skipped.
-
-Existing `stations.txt` overrides retain their current behavior for one release cycle. This is a
-documented legacy exception owned by the RockCast maintainers to protect offline user overrides;
-it has a removal date of **2026-10-31** and must not be extended silently. App-data locations are Windows
-`%LOCALAPPDATA%\RockCast` and Linux `$XDG_CONFIG_HOME/rockcast` (or `~/.config/rockcast`).
+App-data locations are Windows `%LOCALAPPDATA%\RockCast` and Linux `$XDG_CONFIG_HOME/rockcast` (or `~/.config/rockcast`).
 
 ### Station icons (MVP)
 
@@ -280,7 +265,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 | No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
 | Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
 | Station needs VPN, silent on JBL | Enable **Via PC**; allow inbound LAN (Windows Firewall / firewalld); PC and JBL on same Wi‑Fi |
-| Empty station list | Check `stations.v1.json` / `stations.txt` path or `ROCKCAST_STATIONS` environment variable |
+| Empty station list | Check `stations.v1.json` path or `ROCKCAST_STATIONS` environment variable |
 | No track title | Many stations do not send ICY metadata |
 | Wrong PC audio device | Pick another entry under **Device** after **Find** |
 | Spectrum silent on Cast | Enable spectrum; Cast mode uses a separate stream tap after the receiver starts |

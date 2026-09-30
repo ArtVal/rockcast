@@ -76,8 +76,12 @@ impl RockCastApp {
             UiMsg::VoiceResult(result) => self.handle_voice_result(result),
             UiMsg::PairingStarted { name, result } => self.handle_pairing_started(name, result),
             UiMsg::AccountLoaded(result) => self.handle_account_loaded(result),
-            UiMsg::StationResolved { station_id, result } => {
-                self.handle_station_resolved(station_id, result);
+            UiMsg::StationResolved {
+                station_id,
+                result,
+                auto_play,
+            } => {
+                self.handle_station_resolved(station_id, result, auto_play);
             }
             UiMsg::PersonalSyncResult { generation, result } => {
                 self.handle_personal_sync_result(generation, result);

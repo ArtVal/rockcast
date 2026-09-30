@@ -21,5 +21,6 @@
   The local-first loader verifies its manifest, version, and canonical checksum before use,
   preserves the primary stream playback URL, and retains alternate stream metadata.
 - RM-004-F: JSON overrides now follow the existing environment, executable, current-directory,
-  and app-data source precedence. Legacy TXT overrides remain available only through RM-004-I:
-  remove them after one schema-v1 release cycle, never before 2026-10-31.
+  and app-data source precedence.
+- RM-004-I: Completed retirement of the legacy `stations.txt` transition adapter; catalog overrides
+  exclusively use `stations.v1.json`.

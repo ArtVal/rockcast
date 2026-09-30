@@ -128,6 +128,34 @@ impl PersonalDataStore {
         }
         Ok(existed)
     }
+    /// Toggles a favourite by station id and last known name when the station is
+    /// not present in the currently loaded catalog list.
+    pub fn toggle_favourite_by_id(
+        &mut self,
+        station_id: &str,
+        name: &str,
+    ) -> Result<bool, ProfileError> {
+        if self.is_favourite(station_id) {
+            self.remove_favourite(station_id)?;
+            return Ok(false);
+        }
+        if self.profile.favourites.len() >= MAX_FAVOURITES {
+            return Err(ProfileError::Invalid("favourites limit reached".into()));
+        }
+        let ts = now()?;
+        self.profile.favourites.push(Favourite {
+            record_id: Uuid::new_v4(),
+            station_id: station_id.to_string(),
+            added_at: ts.clone(),
+            updated_at: ts,
+            metadata: DisplayMetadata {
+                last_known_name: Some(name.to_string()),
+                catalog_version: self.resolver.catalog_version.clone(),
+            },
+        });
+        self.save()?;
+        Ok(true)
+    }
     pub fn record_play(&mut self, station: &crate::stations::Station) -> Result<(), ProfileError> {
         let ts = now()?;
         let started = parse_time(&ts)?;

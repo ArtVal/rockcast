@@ -47,6 +47,7 @@ impl RockCastApp {
 
     /// Removes a favourite that has no station row in the loaded catalog
     /// (the muted rows of the Favourites filter).
+    #[allow(dead_code)]
     pub(in crate::app) fn remove_missing_favourite(&mut self, station_id: &str, name: &str) {
         let Some(store) = self.personal_data.as_mut() else {
             return;
@@ -59,6 +60,19 @@ impl RockCastApp {
             Ok(false) => {}
             Err(error) => self.status = format!("Favourites unavailable: {error}"),
         }
+    }
+
+    /// Toggles favourite state for a missing row that has no full Station object loaded.
+    pub(in crate::app) fn toggle_missing_favourite(&mut self, station_id: &str, name: &str) {
+        let Some(store) = self.personal_data.as_mut() else {
+            return;
+        };
+        match store.toggle_favourite_by_id(station_id, name) {
+            Ok(true) => self.status = format!("Added to favourites: {name}"),
+            Ok(false) => self.status = format!("Removed from favourites: {name}"),
+            Err(error) => self.status = format!("Favourites unavailable: {error}"),
+        }
+        self.schedule_personal_sync();
     }
 
     /// Checks if a station ID is saved in local favourites.

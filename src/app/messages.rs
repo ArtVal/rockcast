@@ -52,6 +52,7 @@ pub(crate) enum UiMsg {
     StationResolved {
         station_id: String,
         result: Result<Station, String>,
+        auto_play: bool,
     },
     PersonalSyncResult {
         generation: u64,

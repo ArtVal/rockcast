@@ -186,9 +186,9 @@ impl RockCastApp {
                         .iter()
                         .filter(|s| s.country.eq_ignore_ascii_case(c))
                         .count();
-                    format!("Страна: {c} ({c_matches}) ▾")
+                    format!("Страна: {c} ({c_matches})")
                 }
-                None => "Страна ▾".to_string(),
+                None => "Страна".to_string(),
             };
             egui::ComboBox::from_id_salt("country_facet")
                 .selected_text(
@@ -243,9 +243,9 @@ impl RockCastApp {
             let bitrate_text = match self.selected_min_bitrate {
                 Some(b) => {
                     let b_matches = self.stations.iter().filter(|s| s.bitrate >= b).count();
-                    format!("≥ {b}k ({b_matches}) ▾")
+                    format!("≥ {b}k ({b_matches})")
                 }
-                None => "Битрейт ▾".to_string(),
+                None => "Битрейт".to_string(),
             };
             egui::ComboBox::from_id_salt("bitrate_facet")
                 .selected_text(

@@ -17,6 +17,7 @@ impl RockCastApp {
             self.stop();
         }
         self.voice_busy = true;
+        self.voice_search_query = None;
         self.station_request_id = self.station_request_id.wrapping_add(1);
         self.loading_stations = false;
         self.loading_more_stations = false;
@@ -71,6 +72,7 @@ impl RockCastApp {
             recording.store(false, Ordering::Release);
         }
         self.voice_busy = false;
+        self.voice_search_query = None;
         self.status = "Голосовой ввод отменён".into();
     }
 }

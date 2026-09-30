@@ -11,41 +11,133 @@ use crate::{
 
 use super::super::{RockCastApp, messages::UiMsg};
 
-/// Resolves one favourite known only from its profile record: checks the
-/// local catalog snapshot first by ID, then queries RockServer strictly
-/// by ID (`GET /api/v1/catalog/stations/{station_id}`). No search by name.
+fn normalize_for_match(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn rb_url_hash(url: &str) -> u64 {
+    url.bytes().fold(0_u64, |hash, byte| {
+        hash.wrapping_mul(109).wrapping_add(byte as u64)
+    })
+}
+
+fn match_station_candidate(candidates: &[Station], name: &str, station_id: &str) -> Option<Station> {
+    // 1. Direct ID match
+    if let Some(s) = candidates.iter().find(|s| s.id == station_id) {
+        return Some(s.clone());
+    }
+    // 2. Legacy radio-browser hash match
+    if let Some(hash_str) = station_id.strip_prefix("radio-browser-") {
+        if let Ok(expected_hash) = hash_str.parse::<u64>() {
+            if let Some(s) = candidates.iter().find(|s| {
+                rb_url_hash(&s.url) == expected_hash
+                    || s.streams.iter().any(|st| rb_url_hash(&st.url) == expected_hash)
+            }) {
+                return Some(s.clone());
+            }
+        }
+    }
+    // 3. Legacy txt sha256 prefix match
+    if let Some(expected_hex) = station_id.strip_prefix("legacy-") {
+        if let Some(s) = candidates.iter().find(|s| {
+            crate::stations::sha256_hex(s.url.as_bytes()).starts_with(expected_hex)
+                || s.streams.iter().any(|st| {
+                    crate::stations::sha256_hex(st.url.as_bytes()).starts_with(expected_hex)
+                })
+        }) {
+            return Some(s.clone());
+        }
+    }
+    // 4. Exact normalized name match
+    let target_norm = normalize_for_match(name);
+    if !target_norm.is_empty() {
+        if let Some(s) = candidates.iter().find(|s| normalize_for_match(&s.name) == target_norm) {
+            return Some(s.clone());
+        }
+        // Unambiguous substring match
+        let matches: Vec<&Station> = candidates
+            .iter()
+            .filter(|s| {
+                let cand_norm = normalize_for_match(&s.name);
+                cand_norm.contains(&target_norm) || target_norm.contains(&cand_norm)
+            })
+            .collect();
+        if matches.len() == 1 {
+            return Some((*matches[0]).clone());
+        }
+    }
+    None
+}
+
+/// Resolves one favourite known only from its profile record:
+/// 1. Checks local catalog snapshot first by ID, legacy IDs, or name.
+/// 2. Queries RockServer strictly by ID.
+/// 3. Falls back to querying RockServer search by sanitized name, matching by URL hash or name.
 fn resolve_missing_station(
     config: &RuntimeConfig,
     station_id: &str,
     name: &str,
 ) -> Result<Station, String> {
-    if let Some(station) = crate::stations::catalog_stations()
-        .into_iter()
-        .find(|s| {
-            s.id == station_id
-                || s.legacy_ids.iter().any(|lid| {
-                    lid == station_id
-                        || lid.strip_prefix("rockmobile:rockcast-")
-                            .is_some_and(|hash| station_id == format!("legacy-{hash}"))
-                })
-        })
-    {
+    // 1. Local catalog snapshot check
+    let local = crate::stations::catalog_stations();
+    if let Some(station) = match_station_candidate(&local, name, station_id) {
         return Ok(station);
     }
-    crate::rockserver::get_station(config, station_id)
-        .map_err(|e| format!("Станция «{name}» ({station_id}) не найдена: {e}"))
+    if let Some(station) = local.into_iter().find(|s| {
+        s.id == station_id
+            || s.legacy_ids.iter().any(|lid| {
+                lid == station_id
+                    || lid.strip_prefix("rockmobile:rockcast-")
+                        .is_some_and(|hash| station_id == format!("legacy-{hash}"))
+            })
+    }) {
+        return Ok(station);
+    }
+
+    // 2. Direct ID lookup on RockServer
+    if let Ok(station) = crate::rockserver::get_station(config, station_id) {
+        return Ok(station);
+    }
+
+    // 3. Fallback: search RockServer by sanitized station name
+    let clean_query: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    let clean_query = clean_query.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !clean_query.is_empty() {
+        for locale in ["ru", "en"] {
+            if let Ok(batch) = crate::rockserver::search(config, &clean_query, locale, 20, 0) {
+                if let Some(station) = match_station_candidate(&batch.stations, name, station_id) {
+                    return Ok(station);
+                }
+            }
+        }
+    }
+
+    Err(format!("Станция «{name}» ({station_id}) не найдена на сервере"))
 }
 
 impl RockCastApp {
-    /// Starts a background lookup for a favourite whose station is not in the
-    /// loaded list; the muted row's play button leads here.
-    pub(in crate::app) fn begin_resolve_missing_station(&mut self, station_id: &str, name: &str) {
+    /// Starts a background lookup for a station not in the loaded list;
+    /// if `auto_play` is true, status is updated and playback starts once resolved.
+    pub(in crate::app) fn begin_resolve_missing_station(
+        &mut self,
+        station_id: &str,
+        name: &str,
+        auto_play: bool,
+    ) {
         if self.resolving_stations.contains(station_id) {
             return;
         }
         self.resolving_stations.insert(station_id.to_owned());
-        self.status = format!("Ищу станцию «{name}»…");
-        log::info!("favourite resolve started: station_id={station_id} name={name}");
+        if auto_play {
+            self.status = format!("Ищу станцию «{name}»…");
+        }
+        log::info!("station resolve started: station_id={station_id} name={name} auto_play={auto_play}");
         let ui_tx = self.ui_tx.clone();
         let rockserver = self.rockserver.clone();
         let request_id = station_id.to_owned();
@@ -57,6 +149,7 @@ impl RockCastApp {
                 let _ = ui_tx.send(UiMsg::StationResolved {
                     station_id: request_id,
                     result,
+                    auto_play,
                 });
             })
             .is_err()
@@ -102,6 +195,11 @@ impl RockCastApp {
         let lang = self.lang;
         let rockserver = self.rockserver.clone();
         let query = query.trim().to_owned();
+        self.active_search_query = if query.is_empty() {
+            None
+        } else {
+            Some(query.clone())
+        };
         if self
             .background
             .spawn(move |cancel| {
@@ -181,7 +279,7 @@ impl RockCastApp {
         let request_id = self.station_request_id;
         let offset = self.station_search_offset;
         let cursor = self.station_catalog_cursor.clone();
-        let query = self.global_station_query();
+        let query = self.active_search_query.clone().unwrap_or_default();
         self.loading_more_stations = true;
         self.loading_more_error = None;
         let tx = self.ui_tx.clone();
@@ -310,4 +408,57 @@ fn station_matches(station: &crate::stations::Station, query: &str) -> bool {
         .to_lowercase()
         .split_whitespace()
         .all(|term| haystack.contains(term))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_station(id: &str, name: &str, url: &str) -> Station {
+        Station::from_primary(
+            id.to_string(),
+            name.to_string(),
+            url.to_string(),
+            "rock".to_string(),
+            "RU".to_string(),
+            128,
+            "mp3".to_string(),
+        )
+    }
+
+    #[test]
+    fn match_station_candidate_matches_by_id() {
+        let candidates = vec![test_station("rb-123", "Station Name", "https://stream/1")];
+        let matched = match_station_candidate(&candidates, "Different Name", "rb-123");
+        assert_eq!(matched.unwrap().id, "rb-123");
+    }
+
+    #[test]
+    fn match_station_candidate_matches_by_radio_browser_hash() {
+        let url = "https://streaming.exclusive.radio/er/blacksabbath/icecast.audio";
+        let expected_hash = rb_url_hash(url);
+        let station_id = format!("radio-browser-{expected_hash}");
+
+        let candidates = vec![test_station("rb-black-sabbath", "Exclusive Radio – Black Sabbath", url)];
+        let matched = match_station_candidate(&candidates, "Exclusive Radio – Black Sabbath", &station_id);
+        assert_eq!(matched.unwrap().id, "rb-black-sabbath");
+    }
+
+    #[test]
+    fn match_station_candidate_matches_by_legacy_txt_sha() {
+        let url = "https://listen.181fm.com/181-hairband_128k.mp3";
+        let sha_prefix = &crate::stations::sha256_hex(url.as_bytes())[..16];
+        let station_id = format!("legacy-{sha_prefix}");
+
+        let candidates = vec![test_station("181-fm-hair-band", "181.FM — Hair Band", url)];
+        let matched = match_station_candidate(&candidates, "181.FM — Hair Band", &station_id);
+        assert_eq!(matched.unwrap().id, "181-fm-hair-band");
+    }
+
+    #[test]
+    fn match_station_candidate_matches_by_normalized_name_with_dashes() {
+        let candidates = vec![test_station("rb-target", "Exclusive Radio — Black Sabbath", "https://new-stream/url")];
+        let matched = match_station_candidate(&candidates, "Exclusive Radio – Black Sabbath", "radio-browser-99999");
+        assert_eq!(matched.unwrap().id, "rb-target");
+    }
 }

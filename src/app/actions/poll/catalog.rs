@@ -21,6 +21,7 @@ impl RockCastApp {
         if request_id != self.station_request_id {
             return;
         }
+        let batch_count = list.len();
         let playing_id = self.playback_station_id.as_deref();
         let playing_url = self.settings.station_url.as_deref();
         preserve_playing_station(
@@ -32,7 +33,7 @@ impl RockCastApp {
         );
         self.stations = list;
         self.station_search_total = total;
-        self.station_search_offset = self.stations.len();
+        self.station_search_offset = batch_count;
         self.station_catalog_cursor = None;
         self.station_has_more = has_more;
         self.loading_more_stations = false;
@@ -88,12 +89,7 @@ impl RockCastApp {
         self.station_search_offset = next_offset;
 
         if !list.is_empty() {
-            let mut existing_ids: HashSet<String> =
-                self.stations.iter().map(|s| s.id.clone()).collect();
-            let new_stations: Vec<Station> = list
-                .into_iter()
-                .filter(|s| existing_ids.insert(s.id.clone()))
-                .collect();
+            let new_stations = deduplicate_new_stations(&self.stations, list);
             if !new_stations.is_empty() {
                 self.queue_station_icons(&new_stations);
                 self.stations.extend(new_stations);
@@ -145,12 +141,13 @@ impl RockCastApp {
         &mut self,
         station_id: String,
         result: Result<Station, String>,
+        auto_play: bool,
     ) {
         self.resolving_stations.remove(&station_id);
         match result {
             Ok(station) => {
                 log::info!(
-                    "favourite resolved: station_id={station_id} -> {} name='{}'",
+                    "station resolved: station_id={station_id} -> {} name='{}' auto_play={auto_play}",
                     station.id,
                     station.name
                 );
@@ -167,21 +164,27 @@ impl RockCastApp {
                     self.status = format!("Станция «{name}» переехала — избранное обновлено");
                     self.schedule_personal_sync();
                 }
+                self.queue_station_icons(&[station.clone()]);
                 let index = match self.stations.iter().position(|s| s.id == station.id) {
                     Some(index) => index,
                     None => {
-                        self.stations.insert(0, station);
-                        0
+                        self.stations.push(station);
+                        self.stations.len() - 1
                     }
                 };
-                self.selected_station = Some(index);
-                self.scroll_to_station = Some(index);
-                self.mark_settings_dirty();
-                self.play();
+                if auto_play {
+                    self.selected_station = Some(index);
+                    self.scroll_to_station = Some(index);
+                    self.mark_settings_dirty();
+                    self.play();
+                }
             }
             Err(message) => {
-                log::info!("favourite resolve failed: station_id={station_id}: {message}");
-                self.status = message;
+                log::info!("station resolve failed: station_id={station_id}: {message}");
+                self.failed_resolving_stations.insert(station_id);
+                if auto_play {
+                    self.status = message;
+                }
             }
         }
     }
@@ -212,6 +215,40 @@ pub(crate) fn preserve_playing_station(
             }
         }
     }
+}
+
+pub(super) fn deduplicate_new_stations(existing: &[Station], list: Vec<Station>) -> Vec<Station> {
+    let mut existing_ids: HashSet<String> = HashSet::new();
+    let mut existing_urls: HashSet<String> = HashSet::new();
+    for s in existing {
+        existing_ids.insert(s.id.clone());
+        for lid in &s.legacy_ids {
+            existing_ids.insert(lid.clone());
+        }
+        let norm_url = s.url.trim().trim_end_matches('/').to_lowercase();
+        if !norm_url.is_empty() {
+            existing_urls.insert(norm_url);
+        }
+    }
+    list.into_iter()
+        .filter(|s| {
+            let id_dup = existing_ids.contains(&s.id)
+                || s.legacy_ids.iter().any(|lid| existing_ids.contains(lid));
+            let norm_url = s.url.trim().trim_end_matches('/').to_lowercase();
+            let url_dup = !norm_url.is_empty() && existing_urls.contains(&norm_url);
+            if id_dup || url_dup {
+                return false;
+            }
+            existing_ids.insert(s.id.clone());
+            for lid in &s.legacy_ids {
+                existing_ids.insert(lid.clone());
+            }
+            if !norm_url.is_empty() {
+                existing_urls.insert(norm_url);
+            }
+            true
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -284,6 +321,45 @@ mod tests {
 
         assert_eq!(list.len(), 1);
         assert_eq!(total, Some(10));
+    }
+
+    #[test]
+    fn deduplicate_new_stations_filters_same_id() {
+        let s1 = test_station("st-1", "Station 1", "http://stream.test/1");
+        let s2 = test_station("st-2", "Station 2", "http://stream.test/2");
+        let s1_duplicate = test_station("st-1", "Station 1 Dup", "http://stream.test/1-alt");
+
+        let existing = vec![s1.clone()];
+        let new_batch = vec![s1_duplicate, s2.clone()];
+        let result = deduplicate_new_stations(&existing, new_batch);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "st-2");
+    }
+
+    #[test]
+    fn deduplicate_new_stations_filters_same_url() {
+        let s1 = test_station("st-1", "Station 1", "http://stream.test/1");
+        let s2_same_url = test_station("st-2", "Station 2", "http://stream.test/1/");
+
+        let existing = vec![s1.clone()];
+        let new_batch = vec![s2_same_url];
+        let result = deduplicate_new_stations(&existing, new_batch);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn deduplicate_new_stations_filters_legacy_id() {
+        let mut s1 = test_station("st-1", "Station 1", "http://stream.test/1");
+        s1.legacy_ids = vec!["legacy-12345".to_string()];
+        let s2_with_legacy = test_station("legacy-12345", "Station Legacy", "http://stream.test/alt");
+
+        let existing = vec![s1.clone()];
+        let new_batch = vec![s2_with_legacy];
+        let result = deduplicate_new_stations(&existing, new_batch);
+
+        assert!(result.is_empty());
     }
 }
 

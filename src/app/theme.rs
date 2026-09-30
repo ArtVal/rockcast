@@ -25,12 +25,6 @@ pub(crate) const FS_SMALL: f32 = 11.5; // column headers, secondary meta
 pub(crate) const FS_BODY: f32 = 12.5; // buttons, tags, status line
 pub(crate) const FS_ROW: f32 = 13.5; // station names
 pub(crate) const FS_TITLE: f32 = 18.0; // app title, account window title
-pub(crate) const COL_RESIZE_HIT_W: f32 = 10.0;
-pub(crate) const NAME_COL_MIN: f32 = 120.0;
-pub(crate) const NAME_COL_MAX: f32 = 360.0;
-pub(crate) const TAGS_COL_MIN: f32 = 110.0;
-pub(crate) const META_COL_MIN: f32 = 78.0;
-pub(crate) const COUNTRY_COL_W: f32 = 44.0;
 /// EQ bar animation target rate (~20 FPS).
 pub(crate) const EQ_REPAINT_INTERVAL: Duration = Duration::from_millis(50);
 /// Background polling while playback/loading is active.
@@ -131,3 +125,4 @@ pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
         out
     }
 }
+

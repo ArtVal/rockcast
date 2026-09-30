@@ -1,23 +1,36 @@
 //! egui player controls and now playing panel.
 
 use eframe::egui::{
-    Align, Color32, CornerRadius, FontId, Frame, Layout, Pos2, Rect, RichText, Sense, Stroke,
+    Color32, CornerRadius, FontId, Frame, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, Ui, Vec2,
+};
+use egui_taffy::{
+    taffy::{
+        self,
+        prelude::{auto, length, percent, AlignItems, AlignSelf, FlexDirection, JustifyContent, Size},
+    },
+    tui, TuiBuilderLogic,
 };
 
 use super::super::RockCastApp;
 use super::super::theme::*;
 
 impl RockCastApp {
-    /// Renders the unified rock-styled player deck:
+    /// Renders the unified rock-styled player deck using egui-taffy:
     /// station info (left) · transport on the panel axis (center) ·
     /// spectrum centered in the right half · status footer with volume.
     pub(in crate::app) fn draw_player_deck(&mut self, ui: &mut Ui) {
         let t = self.lang.t();
         let (initial, icon_texture_id, fallback_st_name) = {
             let current_st = self
-                .selected_station
+                .resolve_playing_station_index()
                 .and_then(|i| self.stations.get(i))
+                .or_else(|| {
+                    self.playback_station_id
+                        .as_deref()
+                        .and_then(|id| self.stations.iter().find(|s| s.id == id))
+                })
+                .or_else(|| self.selected_station.and_then(|i| self.stations.get(i)))
                 .or_else(|| self.stations.iter().find(|s| s.name == self.station_now));
             let init = current_st.map_or_else(
                 || "RC".to_string(),
@@ -43,296 +56,418 @@ impl RockCastApp {
             (init, tex, name)
         };
 
+        let playing = self.playing;
+        let can_play = self.can_start_play();
+        let playing_idx = self.resolve_playing_station_index();
+        let st_name = if self.station_now.is_empty() {
+            fallback_st_name.clone()
+        } else {
+            self.station_now.clone()
+        };
+        let track_display = if self.track.is_empty() {
+            "Прямой эфир".to_string()
+        } else {
+            self.track.clone()
+        };
+        let line2 = if playing {
+            track_display
+        } else {
+            t.stopped.to_string()
+        };
+
+        let mut scroll_to_playing = false;
+        let mut toggle_transport = false;
+
         Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0, BORDER))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    let full_w = ui.available_width();
-                    // One 64px row on a single vertical center line: the logo
-                    // and transport button are 48px inside it, the spectrum
-                    // spans the full row height.
-                    let row_h = 64.0;
-                    let (deck_rect, _) =
-                        ui.allocate_exact_size(Vec2::new(full_w, row_h), Sense::hover());
-                    let cy = deck_rect.center().y;
+                let mut needs_marquee_repaint = false;
+                let now = ui.input(|i| i.time) as f32;
 
-                    // --- SECTION 1: Station Info (Left) ---
-                    let tp_left_x = deck_rect.center().x - 24.0;
-                    let left_w = (tp_left_x - 24.0 - deck_rect.left()).max(180.0);
-                    let left_rect = Rect::from_min_size(deck_rect.min, Vec2::new(left_w, row_h));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect), |ui| {
-                        // Station art / monogram — 48px, centered like every
-                        // other element in the row.
-                        let logo_rect = Rect::from_center_size(
-                            Pos2::new(left_rect.left() + 24.0, cy),
-                            Vec2::splat(48.0),
-                        );
-                        if let Some(tex_id) = icon_texture_id {
-                            ui.painter().image(
-                                tex_id,
-                                logo_rect,
-                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                                Color32::WHITE,
-                            );
-                        } else {
-                            let monogram_bg = station_color(&fallback_st_name);
-                            ui.painter()
-                                .rect_filled(logo_rect, CornerRadius::same(8), monogram_bg);
-                            ui.painter().rect_stroke(
-                                logo_rect,
-                                CornerRadius::same(8),
-                                Stroke::new(1.5, ACCENT),
-                                StrokeKind::Inside,
-                            );
-                            ui.painter().text(
-                                logo_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                initial,
-                                FontId::proportional(FS_ROW),
-                                Color32::from_rgb(0xfa, 0xee, 0xe4),
-                            );
-                        }
+                tui(ui, ui.id().with("player_deck"))
+                    .reserve_available_width()
+                    .style(taffy::Style {
+                        flex_direction: FlexDirection::Column,
+                        align_items: Some(AlignItems::Stretch),
+                        size: Size {
+                            width: percent(1.0),
+                            height: auto(),
+                        },
+                        gap: length(6.0),
+                        ..Default::default()
+                    })
+                    .show(|tui| {
+                        // --- ROW 1: Controls (Station Info, Transport, Spectrum) ---
+                        tui.style(taffy::Style {
+                            flex_direction: FlexDirection::Row,
+                            align_items: Some(AlignItems::Center),
+                            justify_content: Some(JustifyContent::SpaceBetween),
+                            size: Size {
+                                width: percent(1.0),
+                                height: length(64.0),
+                            },
+                            ..Default::default()
+                        })
+                        .add(|tui| {
+                            // Section 1: Station Info (Left)
+                            tui.style(taffy::Style {
+                                flex_direction: FlexDirection::Row,
+                                align_items: Some(AlignItems::Center),
+                                flex_grow: 1.0,
+                                flex_shrink: 1.0,
+                                flex_basis: length(0.0),
+                                min_size: Size {
+                                    width: length(120.0),
+                                    height: length(64.0),
+                                },
+                                gap: length(12.0),
+                                ..Default::default()
+                            })
+                            .add(|tui| {
+                                // Station Art / Monogram
+                                tui.style(taffy::Style {
+                                    size: Size {
+                                        width: length(48.0),
+                                        height: length(48.0),
+                                    },
+                                    flex_shrink: 0.0,
+                                    ..Default::default()
+                                })
+                                .ui(|ui| {
+                                    let (logo_rect, logo_resp) =
+                                        ui.allocate_exact_size(Vec2::splat(48.0), Sense::click());
+                                    if let Some(tex_id) = icon_texture_id {
+                                        ui.painter().image(
+                                            tex_id,
+                                            logo_rect,
+                                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                            Color32::WHITE,
+                                        );
+                                    } else {
+                                        let monogram_bg = station_color(&fallback_st_name);
+                                        ui.painter().rect_filled(
+                                            logo_rect,
+                                            CornerRadius::same(8),
+                                            monogram_bg,
+                                        );
+                                        ui.painter().rect_stroke(
+                                            logo_rect,
+                                            CornerRadius::same(8),
+                                            Stroke::new(1.5, ACCENT),
+                                            StrokeKind::Inside,
+                                        );
+                                        ui.painter().text(
+                                            logo_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            &initial,
+                                            FontId::proportional(FS_ROW),
+                                            Color32::from_rgb(0xfa, 0xee, 0xe4),
+                                        );
+                                    }
+                                    if logo_resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    if logo_resp.clicked() {
+                                        scroll_to_playing = true;
+                                    }
+                                    let _ = logo_resp
+                                        .on_hover_text("Показать текущую станцию в списке");
+                                });
 
-                        // Two text lines, precisely centered on the row axis.
-                        let st_name = if self.station_now.is_empty() {
-                            fallback_st_name.as_str()
-                        } else {
-                            &self.station_now
-                        };
-                        let track_display = if self.track.is_empty() {
-                            "Прямой эфир"
-                        } else {
-                            &self.track
-                        };
-                        let line2 = if self.playing {
-                            track_display
-                        } else {
-                            t.stopped
-                        };
-                        let text_x = left_rect.left() + 60.0;
-                        let text_w = (left_rect.right() - text_x - 8.0).max(60.0);
-                        let name_font = FontId::proportional(FS_ROW);
-                        let track_font = FontId::proportional(FS_BODY);
-                        let name_h = ui
-                            .painter()
-                            .layout_no_wrap(st_name.to_owned(), name_font.clone(), FG)
-                            .size()
-                            .y;
-                        let track_h = ui
-                            .painter()
-                            .layout_no_wrap(line2.to_owned(), track_font.clone(), FG)
-                            .size()
-                            .y;
-                        let gap = 4.0;
-                        let pad = ((row_h - name_h - gap - track_h) * 0.5).max(0.0);
+                                // Station Marquee Text
+                                tui.style(taffy::Style {
+                                    flex_grow: 1.0,
+                                    flex_shrink: 1.0,
+                                    size: Size {
+                                        width: percent(1.0),
+                                        height: length(64.0),
+                                    },
+                                    min_size: Size {
+                                        width: length(60.0),
+                                        height: length(44.0),
+                                    },
+                                    ..Default::default()
+                                })
+                                .ui(|ui| {
+                                    let full_rect = ui.max_rect();
+                                    let text_resp = ui.interact(
+                                        full_rect,
+                                        ui.id().with("deck_text"),
+                                        Sense::click(),
+                                    );
+                                    let hovered = text_resp.hovered();
+                                    if hovered {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    if text_resp.clicked() {
+                                        scroll_to_playing = true;
+                                    }
+                                    let _ = text_resp
+                                        .on_hover_text(format!("{st_name}\n{}", t.track_hint));
 
-                        let logo_resp = ui
-                            .interact(logo_rect, ui.id().with("deck_logo"), Sense::click())
-                            .on_hover_text("Показать текущую станцию в списке");
-                        let text_rect = Rect::from_min_size(
-                            Pos2::new(text_x, left_rect.min.y),
-                            Vec2::new(text_w, row_h),
-                        );
-                        let text_resp = ui
-                            .interact(text_rect, ui.id().with("deck_text"), Sense::click())
-                            .on_hover_text("Показать текущую станцию в списке");
+                                    let name_font = FontId::proportional(FS_ROW);
+                                    let track_font = FontId::proportional(FS_BODY);
+                                    let name_h = ui
+                                        .painter()
+                                        .layout_no_wrap(st_name.clone(), name_font.clone(), FG)
+                                        .size()
+                                        .y;
+                                    let track_h = ui
+                                        .painter()
+                                        .layout_no_wrap(line2.clone(), track_font.clone(), FG)
+                                        .size()
+                                        .y;
+                                    let gap = 4.0;
+                                    let pad = ((full_rect.height() - name_h - gap - track_h) * 0.5)
+                                        .max(0.0);
+                                    let name_y = full_rect.min.y + pad + name_h * 0.5;
+                                    let track_y = name_y + name_h * 0.5 + gap + track_h * 0.5;
 
-                        let station_info_hovered = logo_resp.hovered() || text_resp.hovered();
-                        if station_info_hovered {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
+                                    let name_color = if hovered { Color32::WHITE } else { FG };
+                                    let text_painter = ui.painter_at(full_rect);
+                                    let name_scrolls = draw_marquee_line(
+                                        &text_painter,
+                                        full_rect,
+                                        name_y,
+                                        &st_name,
+                                        name_font,
+                                        name_color,
+                                        now,
+                                    );
 
-                        if text_resp.clicked() || logo_resp.clicked() {
-                            let playing_idx = self.selected_station.or_else(|| {
-                                self.stations.iter().position(|s| s.name == self.station_now)
-                            });
-                            if let Some(idx) = playing_idx {
-                                self.scroll_to_station = Some(idx);
-                                ui.ctx().request_repaint();
-                            }
-                        }
+                                    let track_clip_left =
+                                        full_rect.left() + if playing { 12.0 } else { 0.0 };
+                                    let track_clip = Rect::from_min_max(
+                                        Pos2::new(track_clip_left, full_rect.top()),
+                                        Pos2::new(full_rect.right(), full_rect.bottom()),
+                                    );
+                                    let track_color = if playing { ACCENT } else { MUTED };
+                                    let track_scrolls = draw_marquee_line(
+                                        &ui.painter_at(track_clip),
+                                        track_clip,
+                                        track_y,
+                                        &line2,
+                                        track_font,
+                                        track_color,
+                                        now,
+                                    );
 
-                        let name_y = left_rect.min.y + pad + name_h * 0.5;
-                        let track_y = name_y + name_h * 0.5 + gap + track_h * 0.5;
-                        let now = ui.input(|i| i.time) as f32;
-                        // Long names/titles scroll marquee-style inside the
-                        // text zone instead of bleeding into the transport
-                        // button and the spectrum.
-                        let text_painter = ui.painter_at(text_rect);
-                        let name_color = if station_info_hovered { Color32::WHITE } else { FG };
-                        let name_scrolls = draw_marquee_line(
-                            &text_painter,
-                            text_rect,
-                            name_y,
-                            st_name,
-                            name_font,
-                            name_color,
-                            now,
-                        );
-                        let track_clip_left = text_x + if self.playing { 12.0 } else { 0.0 };
-                        let track_clip = Rect::from_min_max(
-                            Pos2::new(track_clip_left, text_rect.top()),
-                            Pos2::new(text_rect.right(), text_rect.bottom()),
-                        );
-                        let track_color = if self.playing { ACCENT } else { MUTED };
-                        let track_scrolls = draw_marquee_line(
-                            &ui.painter_at(track_clip),
-                            track_clip,
-                            track_y,
-                            line2,
-                            track_font,
-                            track_color,
-                            now,
-                        );
-                        if self.playing {
-                            ui.painter().circle_filled(
-                                Pos2::new(text_x + 3.5, track_y),
-                                3.5,
-                                Color32::from_rgb(0x34, 0xd3, 0x99),
-                            );
-                        }
-                        if name_scrolls || track_scrolls {
-                            // Keep the marquee animating even without playback.
-                            ui.ctx()
-                                .request_repaint_after(std::time::Duration::from_millis(50));
-                        }
-                        let _ = text_resp.on_hover_text(format!("{st_name}\n{}", t.track_hint));
-                    });
+                                    if playing {
+                                        ui.painter().circle_filled(
+                                            Pos2::new(full_rect.left() + 3.5, track_y),
+                                            3.5,
+                                            Color32::from_rgb(0x34, 0xd3, 0x99),
+                                        );
+                                    }
 
-                    // --- SECTION 2: Transport on the panel axis ---
-                    {
-                        let tp_rect = Rect::from_center_size(
-                            Pos2::new(deck_rect.center().x, cy),
-                            Vec2::splat(48.0),
-                        );
-                        let tp_resp =
-                            ui.interact(tp_rect, ui.id().with("deck_transport"), Sense::click());
-                        let can_play = self.can_start_play();
-                        let fill = if self.playing || (can_play && tp_resp.hovered()) {
-                            if tp_resp.hovered() {
-                                Color32::from_rgb(0xf0, 0x70, 0x30)
-                            } else {
-                                ACCENT
-                            }
-                        } else {
-                            PANEL_2
-                        };
-                        ui.painter().circle_filled(tp_rect.center(), 24.0, fill);
-                        ui.painter().circle_stroke(
-                            tp_rect.center(),
-                            24.0,
-                            Stroke::new(1.0, ACCENT),
-                        );
-                        let (tp_icon, tp_fg) = if self.playing {
-                            ("⏸", Color32::WHITE)
-                        } else if can_play {
-                            ("▶", Color32::WHITE)
-                        } else {
-                            ("▶", MUTED)
-                        };
-                        let x_off = if self.playing { 0.0 } else { 1.5 };
-                        ui.painter().text(
-                            Pos2::new(tp_rect.center().x + x_off, tp_rect.center().y),
-                            egui::Align2::CENTER_CENTER,
-                            tp_icon,
-                            FontId::proportional(19.0),
-                            tp_fg,
-                        );
-                        if tp_resp.clicked() && !self.shutting_down {
-                            if self.playing {
-                                log::info!("UI deck transport: stop");
-                                self.stop();
-                            } else if can_play {
-                                log::info!("UI deck transport: play");
-                                self.play();
-                            }
-                        }
-                    }
-
-                    // --- SECTION 3: Spectrum centered in the right half ---
-                    {
-                        let half_center_x = (deck_rect.center().x + deck_rect.right()) * 0.5;
-                        let space_left = deck_rect.center().x + 24.0 + 16.0;
-                        let space_right = deck_rect.right() - 8.0;
-                        let eq_w = ((space_right - space_left) * 0.85).clamp(0.0, 280.0);
-                        if eq_w >= 100.0 {
-                            let eq_area = Rect::from_center_size(
-                                Pos2::new(half_center_x, cy),
-                                Vec2::new(eq_w, row_h),
-                            );
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(eq_area), |ui| {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    self.draw_eq(ui, Vec2::new(eq_w, row_h));
+                                    if name_scrolls || track_scrolls {
+                                        needs_marquee_repaint = true;
+                                    }
                                 });
                             });
-                        }
-                    }
 
-                    // --- Footer: status line + volume (left of RockServer) ---
-                    ui.add_space(6.0);
-                    let sep_y = ui.cursor().top();
-                    ui.painter()
-                        .hline(ui.max_rect().x_range(), sep_y, Stroke::new(1.0, BORDER));
-                    ui.add_space(4.0);
-
-                    ui.horizontal(|ui| {
-                        let (dot_rect, _) =
-                            ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
-                        let status_dot_color = if self.playing {
-                            Color32::from_rgb(0x34, 0xd3, 0x99)
-                        } else {
-                            MUTED
-                        };
-                        ui.painter()
-                            .circle_filled(dot_rect.center(), 3.5, status_dot_color);
-                        ui.add_space(2.0);
-
-                        let srv_label = if self.rockserver.base_url().contains("localhost")
-                            || self.rockserver.base_url().contains("127.0.0.1")
-                        {
-                            "RockServer Local"
-                        } else {
-                            "RockServer Cloud"
-                        };
-                        // Reserve fixed space for the right-side group so the
-                        // status label can never push it off the panel.
-                        let right_side_w = 300.0;
-                        let status_w = (ui.available_width() - right_side_w).max(120.0);
-                        let status = truncate(&self.status, 90);
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(status_w, 16.0),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(status).color(MUTED).size(FS_SMALL),
-                                    )
-                                    .truncate(),
+                            // Section 2: Transport on panel axis (Center)
+                            tui.style(taffy::Style {
+                                size: Size {
+                                    width: length(48.0),
+                                    height: length(48.0),
+                                },
+                                flex_shrink: 0.0,
+                                align_self: Some(AlignSelf::Center),
+                                ..Default::default()
+                            })
+                            .ui(|ui| {
+                                let (tp_rect, tp_resp) =
+                                    ui.allocate_exact_size(Vec2::splat(48.0), Sense::click());
+                                let fill = if playing || (can_play && tp_resp.hovered()) {
+                                    if tp_resp.hovered() {
+                                        Color32::from_rgb(0xf0, 0x70, 0x30)
+                                    } else {
+                                        ACCENT
+                                    }
+                                } else {
+                                    PANEL_2
+                                };
+                                ui.painter().circle_filled(tp_rect.center(), 24.0, fill);
+                                ui.painter().circle_stroke(
+                                    tp_rect.center(),
+                                    24.0,
+                                    Stroke::new(1.0, ACCENT),
                                 );
+                                let (tp_icon, tp_fg) = if playing {
+                                    ("⏸", Color32::WHITE)
+                                } else if can_play {
+                                    ("▶", Color32::WHITE)
+                                } else {
+                                    ("▶", MUTED)
+                                };
+                                let x_off = if playing { 0.0 } else { 1.5 };
+                                ui.painter().text(
+                                    Pos2::new(tp_rect.center().x + x_off, tp_rect.center().y),
+                                    egui::Align2::CENTER_CENTER,
+                                    tp_icon,
+                                    FontId::proportional(19.0),
+                                    tp_fg,
+                                );
+                                if tp_resp.clicked() {
+                                    toggle_transport = true;
+                                }
+                            });
+
+                            // Section 3: Spectrum centered in right half via Taffy
+                            tui.style(taffy::Style {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: Some(JustifyContent::Center),
+                                align_items: Some(AlignItems::Center),
+                                flex_grow: 1.0,
+                                flex_shrink: 1.0,
+                                flex_basis: length(0.0),
+                                min_size: Size {
+                                    width: length(120.0),
+                                    height: length(64.0),
+                                },
+                                ..Default::default()
+                            })
+                            .add(|tui| {
+                                tui.style(taffy::Style {
+                                    size: Size {
+                                        width: length(240.0),
+                                        height: length(64.0),
+                                    },
+                                    max_size: Size {
+                                        width: percent(0.9),
+                                        height: length(64.0),
+                                    },
+                                    ..Default::default()
+                                })
+                                .ui(|ui| {
+                                    let size = ui.available_size();
+                                    self.draw_eq(ui, size);
+                                });
+                            });
+                        });
+
+                        // Separator line
+                        tui.style(taffy::Style {
+                            size: Size {
+                                width: percent(1.0),
+                                height: length(1.0),
                             },
-                        );
-
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(srv_label).color(MUTED).size(FS_MICRO));
-                            ui.add_space(10.0);
-
-                            ui.label(
-                                RichText::new(format!("{:>3}%", self.volume))
-                                    .color(MUTED)
-                                    .monospace()
-                                    .size(FS_SMALL),
+                            ..Default::default()
+                        })
+                        .ui(|ui| {
+                            let rect = ui.max_rect();
+                            ui.painter().hline(
+                                rect.x_range(),
+                                rect.center().y,
+                                Stroke::new(1.0, BORDER),
                             );
-                            ui.add_space(6.0);
-                            self.draw_thin_volume_slider(ui, 130.0);
-                            ui.add_space(6.0);
-                            self.draw_mute_button(ui);
+                        });
+
+                        // Footer: status line + volume
+                        tui.style(taffy::Style {
+                            flex_direction: FlexDirection::Row,
+                            align_items: Some(AlignItems::Center),
+                            justify_content: Some(JustifyContent::SpaceBetween),
+                            size: Size {
+                                width: percent(1.0),
+                                height: length(20.0),
+                            },
+                            ..Default::default()
+                        })
+                        .add(|tui| {
+                            // Left: Status dot and message
+                            tui.style(taffy::Style {
+                                flex_direction: FlexDirection::Row,
+                                align_items: Some(AlignItems::Center),
+                                flex_grow: 1.0,
+                                flex_shrink: 1.0,
+                                gap: length(6.0),
+                                ..Default::default()
+                            })
+                            .ui(|ui| {
+                                ui.horizontal_centered(|ui| {
+                                    let (dot_rect, _) =
+                                        ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                                    let status_dot_color = if playing {
+                                        Color32::from_rgb(0x34, 0xd3, 0x99)
+                                    } else {
+                                        MUTED
+                                    };
+                                    ui.painter().circle_filled(
+                                        dot_rect.center(),
+                                        3.5,
+                                        status_dot_color,
+                                    );
+                                    let status = truncate(&self.status, 90);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(status).color(MUTED).size(FS_SMALL),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                            });
+
+                            // Right: Volume and RockServer label
+                            tui.style(taffy::Style {
+                                flex_shrink: 0.0,
+                                size: Size {
+                                    width: auto(),
+                                    height: length(20.0),
+                                },
+                                ..Default::default()
+                            })
+                            .ui(|ui| {
+                                ui.horizontal_centered(|ui| {
+                                    self.draw_mute_button(ui);
+                                    ui.add_space(4.0);
+                                    self.draw_thin_volume_slider(ui, 130.0);
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        RichText::new(format!("{:>3}%", self.volume))
+                                            .color(MUTED)
+                                            .monospace()
+                                            .size(FS_SMALL),
+                                    );
+                                    ui.add_space(8.0);
+                                    let srv_label = if self.rockserver.base_url().contains("localhost")
+                                        || self.rockserver.base_url().contains("127.0.0.1")
+                                    {
+                                        "RockServer Local"
+                                    } else {
+                                        "RockServer Cloud"
+                                    };
+                                    ui.label(RichText::new(srv_label).color(MUTED).size(FS_MICRO));
+                                });
+                            });
                         });
                     });
-                });
+
+                if needs_marquee_repaint {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(50));
+                }
             });
+
+        if scroll_to_playing {
+            if let Some(idx) = playing_idx {
+                self.scroll_to_station = Some(idx);
+                ui.ctx().request_repaint();
+            }
+        }
+        if toggle_transport && !self.shutting_down {
+            if self.playing {
+                log::info!("UI deck transport: stop");
+                self.stop();
+            } else if self.can_start_play() {
+                log::info!("UI deck transport: play");
+                self.play();
+            }
+        }
     }
 
     /// Draws the embedded speaker icon with 1-click mute/unmute.

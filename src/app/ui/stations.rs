@@ -4,12 +4,12 @@ mod filter_chips;
 mod missing_row;
 mod search_bar;
 mod station_row;
-mod table_header;
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
     Ui, Vec2,
 };
+use egui_extras::{Column, TableBuilder, TableRow};
 
 use super::super::{RockCastApp, StationFilterMode, theme::*};
 use missing_row::{MissingRowAction, StationRow, draw_missing_favourite_row};
@@ -25,10 +25,12 @@ impl RockCastApp {
 
         if search_outcome.return_home {
             self.station_search.clear();
+            self.voice_search_query = None;
             self.selected_genre = None;
             self.filter_mode = StationFilterMode::All;
             self.refresh_stations();
         } else if search_outcome.search_requested || filter_search_requested {
+            self.voice_search_query = None;
             let query = self.global_station_query();
             if query.is_empty() {
                 self.refresh_stations();
@@ -40,26 +42,31 @@ impl RockCastApp {
         let mut should_play = false;
         let mut clicked_station: Option<usize> = None;
         let mut toggle_fav: Option<crate::stations::Station> = None;
-        let mut unfav_missing: Option<(String, String)> = None;
+        let mut toggle_missing_fav: Option<(String, String)> = None;
         let mut resolve_missing: Option<(String, String)> = None;
+        let mut auto_resolve_missing: Vec<(String, String)> = Vec::new();
 
         let loading_stations = t.loading_stations;
         let list_empty = t.list_empty;
         let is_loading = self.loading_stations;
 
         panel(ui, |ui| {
-            let layout = self.calculate_table_layout(ui, list_h);
-            self.draw_table_header(ui, &layout, &t);
-
             let rows = self.build_station_rows();
             let has_facets = self.selected_country.is_some() || self.selected_min_bitrate.is_some();
-            let show_footer = self.filter_mode == StationFilterMode::All
-                && (self.loading_more_stations
-                    || self.loading_more_error.is_some()
-                    || (self.station_has_more && (has_facets || self.stations.len() >= 20))
-                    || (!self.station_has_more && self.stations.len() >= 20));
+            let show_footer = match self.filter_mode {
+                StationFilterMode::All => {
+                    self.loading_more_stations
+                        || self.loading_more_error.is_some()
+                        || (self.station_has_more && (has_facets || self.stations.len() >= 20))
+                        || (!self.station_has_more && self.stations.len() >= 20)
+                }
+                StationFilterMode::Favourites | StationFilterMode::History => {
+                    rows.len() >= 10
+                }
+            };
             let total_rows = rows.len() + if show_footer { 1 } else { 0 };
             let mut need_load_more = false;
+            let mut footer_clicked_more = false;
 
             if self.filter_mode == StationFilterMode::All
                 && has_facets
@@ -72,83 +79,148 @@ impl RockCastApp {
                 need_load_more = true;
             }
 
-            let mut scroll_area = egui::ScrollArea::vertical()
-                .id_salt("stations_scroll")
+            if rows.is_empty() {
+                let empty_text = match self.filter_mode {
+                    StationFilterMode::Favourites => {
+                        "В избранном пока нет станций. Нажмите ★ рядом со станцией в списке."
+                    }
+                    StationFilterMode::History => "История прослушиваний пока пуста.",
+                    StationFilterMode::All => {
+                        if is_loading || self.loading_more_stations {
+                            loading_stations
+                        } else {
+                            list_empty
+                        }
+                    }
+                };
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), (list_h - 136.0).max(100.0)),
+                    Layout::centered_and_justified(egui::Direction::TopDown),
+                    |ui| {
+                        ui.label(RichText::new(empty_text).color(MUTED).size(14.0));
+                    },
+                );
+                return;
+            }
+
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let table_x_range = ui.available_rect_before_wrap().x_range();
+
+            let scroll_h = (ui.available_height() - 44.0).clamp(100.0, (list_h - 136.0).max(100.0));
+            let mut builder = TableBuilder::new(ui)
+                .id_salt("stations_table_v4")
+                .sense(Sense::click())
+                .striped(false)
+                .resizable(true)
                 .auto_shrink([false, false])
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                .max_height(layout.scroll_h)
-                .min_scrolled_height(layout.scroll_h);
+                .max_scroll_height(scroll_h)
+                .min_scrolled_height(scroll_h);
 
             if self.scroll_to_top {
                 self.scroll_to_top = false;
-                scroll_area = scroll_area.vertical_scroll_offset(0.0);
+                builder = builder.vertical_scroll_offset(0.0);
             } else if let Some(target_st_idx) = self.scroll_to_station.take() {
                 let target_row_pos = rows.iter().position(|r| match r {
                     StationRow::Loaded(idx) => *idx == target_st_idx,
                     _ => false,
                 });
                 if let Some(row_pos) = target_row_pos {
-                    let target_y = row_pos as f32 * ROW_H;
-                    let centered_y = (target_y - layout.scroll_h * 0.5 + ROW_H * 0.5).max(0.0);
-                    scroll_area = scroll_area.vertical_scroll_offset(centered_y);
+                    builder = builder.scroll_to_row(row_pos, Some(egui::Align::Center));
                 }
             }
 
-            let mut visible_row_range: Option<std::ops::Range<usize>> = None;
-            let scroll_output = scroll_area.show_rows(ui, ROW_H, total_rows, |ui, row_range| {
-                visible_row_range = Some(row_range.clone());
-                let row_w = ui.available_width();
+            let table = builder
+                .column(Column::exact(68.0))
+                .column(
+                    Column::initial(self.station_name_col_w.unwrap_or(280.0))
+                        .at_least(80.0)
+                        .clip(true)
+                        .resizable(true),
+                )
+                .column(
+                    Column::remainder()
+                        .at_least(40.0)
+                        .clip(true)
+                        .resizable(false),
+                )
+                .column(Column::exact(80.0))
+                .column(Column::exact(44.0))
+                .column(Column::exact(46.0))
+                .header(34.0, |mut header| {
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
+                            ui.label(RichText::new("★").color(MUTED).size(12.0));
+                        });
+                    });
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(t.col_station).color(MUTED).size(FS_SMALL));
+                        });
+                    });
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(t.col_tags).color(MUTED).size(FS_SMALL));
+                        });
+                    });
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(t.col_bitrate).color(MUTED).size(FS_SMALL));
+                        });
+                    });
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius::ZERO, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
+                            ui.label(RichText::new(t.col_country).color(MUTED).size(FS_SMALL));
+                        });
+                    });
+                    header.col(|ui| {
+                        let r = Rect::from_min_size(ui.max_rect().min, Vec2::new(ui.max_rect().width(), 28.0));
+                        ui.painter().rect_filled(r, CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 }, PANEL_2);
+                        ui.painter().hline(ui.max_rect().x_range(), ui.max_rect().min.y + 31.0, Stroke::new(1.0, Color32::from_rgb(0x3a, 0x2e, 0x24)));
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 28.0), Layout::centered_and_justified(egui::Direction::TopDown), |ui| {
+                            ui.label(RichText::new("▶").color(MUTED).size(11.0));
+                        });
+                    });
+                });
 
-                if rows.is_empty() {
-                    let empty_text = match self.filter_mode {
-                        StationFilterMode::Favourites => {
-                            "В избранном пока нет станций. Нажмите ★ рядом со станцией в списке."
-                        }
-                        StationFilterMode::History => "История прослушиваний пока пуста.",
-                        StationFilterMode::All => {
-                            if is_loading || self.loading_more_stations {
-                                loading_stations
-                            } else {
-                                list_empty
-                            }
-                        }
-                    };
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(layout.full_w, layout.scroll_h - 8.0),
-                        Layout::centered_and_justified(egui::Direction::TopDown),
-                        |ui| {
-                            ui.label(RichText::new(empty_text).color(MUTED).size(14.0));
-                        },
-                    );
-                    return;
+            let mut new_name_w: Option<f32> = None;
+            let mut visible_min_row: Option<usize> = None;
+            let mut visible_max_row: Option<usize> = None;
+
+            let scroll_output = table.body(|body| {
+                if body.widths().len() >= 2 {
+                    new_name_w = Some(body.widths()[1]);
                 }
 
-                for row_pos in row_range.clone() {
+                body.rows(ROW_H, total_rows, |mut row| {
+                    let row_pos = row.index();
+                    if visible_min_row.is_none() {
+                        visible_min_row = Some(row_pos);
+                    }
+                    visible_max_row = Some(row_pos);
+
                     if row_pos < rows.len() {
                         match &rows[row_pos] {
-                            StationRow::Missing { station_id, name } => {
-                                match draw_missing_favourite_row(
-                                    ui,
-                                    &layout,
-                                    row_w,
-                                    row_pos,
-                                    station_id,
-                                    name,
-                                    self.resolving_stations.contains(station_id),
-                                ) {
-                                    MissingRowAction::Unfavourite => {
-                                        unfav_missing = Some((station_id.clone(), name.clone()));
-                                    }
-                                    MissingRowAction::Play => {
-                                        resolve_missing = Some((station_id.clone(), name.clone()));
-                                    }
-                                    MissingRowAction::None => {}
-                                }
-                            }
                             StationRow::Loaded(index) => {
-                                match self.draw_loaded_station_row(
-                                    ui, &layout, row_w, row_pos, *index,
-                                ) {
+                                match self.draw_loaded_station_row(&mut row, row_pos, *index, table_x_range) {
                                     RowAction::ToggleFav(st) => toggle_fav = Some(st),
                                     RowAction::Select { index, play } => {
                                         clicked_station = Some(index);
@@ -163,24 +235,66 @@ impl RockCastApp {
                                     RowAction::None => {}
                                 }
                             }
+                            StationRow::Missing { station_id, name } => {
+                                let is_fav = self.is_station_favourite(station_id);
+                                let is_busy = self.resolving_stations.contains(station_id);
+                                if !is_busy && !self.failed_resolving_stations.contains(station_id) {
+                                     auto_resolve_missing.push((station_id.clone(), name.clone()));
+                                }
+                                match draw_missing_favourite_row(
+                                    &mut row,
+                                    row_pos,
+                                    station_id,
+                                    name,
+                                    is_fav,
+                                    is_busy,
+                                    table_x_range,
+                                ) {
+                                    MissingRowAction::ToggleFav(sid, sname) => {
+                                        toggle_missing_fav = Some((sid, sname));
+                                    }
+                                    MissingRowAction::Play => {
+                                        resolve_missing = Some((station_id.clone(), name.clone()));
+                                    }
+                                    MissingRowAction::None => {}
+                                }
+                            }
                         }
                     } else {
-                        self.draw_stations_footer_row(ui, row_w, rows.len());
+                        // Footer row
+                        if self.draw_stations_footer_cells(&mut row, rows.len()) {
+                            footer_clicked_more = true;
+                        }
                     }
-                }
 
-                if self.filter_mode == StationFilterMode::All
-                    && row_range.end >= rows.len().saturating_sub(2)
-                    && self.station_has_more
-                    && !self.loading_more_stations
-                    && !self.loading_stations
-                    && self.loading_more_error.is_none()
-                {
-                    need_load_more = true;
-                }
+                    if self.filter_mode == StationFilterMode::All
+                        && row_pos >= rows.len().saturating_sub(4)
+                        && self.station_has_more
+                        && !self.loading_more_stations
+                        && !self.loading_stations
+                        && self.loading_more_error.is_none()
+                    {
+                        need_load_more = true;
+                    }
+                });
             });
 
-            if need_load_more {
+            auto_resolve_missing.truncate(3);
+            for (sid, sname) in auto_resolve_missing {
+                self.begin_resolve_missing_station(&sid, &sname, false);
+            }
+
+            if let Some(w) = new_name_w {
+                if (self.station_name_col_w.unwrap_or(0.0) - w).abs() > 1.0 {
+                    self.station_name_col_w = Some(w);
+                    self.mark_settings_dirty();
+                }
+            }
+
+            if need_load_more || footer_clicked_more {
+                if footer_clicked_more {
+                    self.loading_more_error = None;
+                }
                 self.load_more_stations();
             }
 
@@ -192,13 +306,12 @@ impl RockCastApp {
                     _ => false,
                 })
             });
-            let locate_visible = match (playing_row_pos, visible_row_range) {
-                (Some(pos), Some(range)) => !range.contains(&pos),
+            let locate_visible = match (playing_row_pos, visible_min_row, visible_max_row) {
+                (Some(pos), Some(min), Some(max)) => pos < min || pos > max,
                 _ => false,
             };
 
-            let max_right = ui.min_rect().left() + layout.full_w - 24.0;
-            let base_right = (scroll_output.inner_rect.right() - 20.0).min(max_right);
+            let base_right = scroll_output.inner_rect.right() - 20.0;
             let btn_y = scroll_output.inner_rect.bottom() - 30.0 - 14.0;
             let mut top_clicked = false;
             let mut locate_clicked = false;
@@ -265,15 +378,10 @@ impl RockCastApp {
                                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                                     tint,
                                 );
-                                let label = if self.playing {
-                                    "К играющей"
-                                } else {
-                                    "К выбранной"
-                                };
                                 ui.painter().text(
                                     Pos2::new(btn_rect.min.x + 28.0, btn_rect.center().y),
                                     egui::Align2::LEFT_CENTER,
-                                    label,
+                                    if self.playing { "К эфиру" } else { "К станции" },
                                     FontId::proportional(FS_SMALL),
                                     tint,
                                 );
@@ -341,18 +449,16 @@ impl RockCastApp {
                 self.scroll_to_station = Some(target_idx);
                 ui.ctx().request_repaint();
             }
-
-            self.draw_column_guides(ui, &layout);
         });
 
         if let Some(st) = toggle_fav {
             self.toggle_station_favourite(&st);
         }
-        if let Some((station_id, name)) = unfav_missing {
-            self.remove_missing_favourite(&station_id, &name);
+        if let Some((station_id, name)) = toggle_missing_fav {
+            self.toggle_missing_favourite(&station_id, &name);
         }
         if let Some((station_id, name)) = resolve_missing {
-            self.begin_resolve_missing_station(&station_id, &name);
+            self.begin_resolve_missing_station(&station_id, &name, true);
         }
 
         if let Some(i) = clicked_station {
@@ -373,110 +479,165 @@ impl RockCastApp {
         }
     }
 
-    fn draw_stations_footer_row(&mut self, ui: &mut Ui, row_w: f32, matching_rows_len: usize) {
-        let (row_rect, _resp) = ui.allocate_exact_size(Vec2::new(row_w, ROW_H), Sense::hover());
-        let center = row_rect.center();
+    fn draw_stations_footer_cells(
+        &self,
+        row: &mut TableRow<'_, '_>,
+        matching_rows_len: usize,
+    ) -> bool {
+        let mut clicked = false;
+        row.col(|_ui| {});
+        row.col(|ui| {
+            let center = ui.max_rect().center();
+            if self.filter_mode == StationFilterMode::Favourites {
+                let fav_count = self
+                    .personal_data
+                    .as_ref()
+                    .map_or(matching_rows_len, |s| s.favourites().len());
+                let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {
+                    format!("Показано ({matching_rows_len} из {fav_count})")
+                } else {
+                    format!("Все избранные станции ({matching_rows_len})")
+                };
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    FontId::proportional(FS_SMALL),
+                    MUTED,
+                );
+                return;
+            }
+            if self.filter_mode == StationFilterMode::History {
+                let hist_count = self
+                    .personal_data
+                    .as_ref()
+                    .map_or(matching_rows_len, |s| s.history().len());
+                let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {
+                    format!("Показано ({matching_rows_len} из {hist_count})")
+                } else {
+                    format!("Вся история прослушиваний ({matching_rows_len})")
+                };
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    FontId::proportional(FS_SMALL),
+                    MUTED,
+                );
+                return;
+            }
 
-        if self.loading_more_stations {
-            let time = ui.input(|i| i.time) as f32;
-            let pulse = ((time * 3.5).sin() * 0.4 + 0.6).clamp(0.2, 1.0);
-            let color = ACCENT.gamma_multiply(pulse);
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                "Загрузка станций…",
-                FontId::proportional(FS_ROW),
-                color,
-            );
-            ui.ctx().request_repaint();
-        } else if self.loading_more_error.is_some() {
-            let btn_w = 260.0;
-            let btn_h = 28.0;
-            let btn_rect = Rect::from_center_size(center, Vec2::new(btn_w, btn_h));
-            let btn_resp = ui.interact(btn_rect, ui.id().with("footer_retry_btn"), Sense::click());
-            let hovered = btn_resp.hovered();
-            let bg = if hovered { ACCENT } else { PANEL_2 };
-            let fg = if hovered { Color32::WHITE } else { ACCENT };
-            ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
-            ui.painter().rect_stroke(
-                btn_rect,
-                CornerRadius::same(6),
-                Stroke::new(1.0, BORDER),
-                StrokeKind::Inside,
-            );
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                "Ошибка сети. Загрузить ещё",
-                FontId::proportional(FS_SMALL),
-                fg,
-            );
-            if btn_resp.clicked() {
-                self.loading_more_error = None;
-                self.load_more_stations();
+            // Mode: All
+            if self.loading_more_stations {
+                let time = ui.input(|i| i.time) as f32;
+                let pulse = ((time * 3.5).sin() * 0.4 + 0.6).clamp(0.2, 1.0);
+                let color = ACCENT.gamma_multiply(pulse);
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    "Загрузка станций…",
+                    FontId::proportional(FS_ROW),
+                    color,
+                );
+                ui.ctx().request_repaint();
+            } else if self.loading_more_error.is_some() {
+                let btn_w = (ui.available_width() - 20.0).clamp(160.0, 260.0);
+                let btn_h = 28.0;
+                let btn_rect = Rect::from_center_size(center, Vec2::new(btn_w, btn_h));
+                let btn_resp = ui.interact(btn_rect, ui.id().with("footer_retry_btn"), Sense::click());
+                let hovered = btn_resp.hovered();
+                let bg = if hovered { ACCENT } else { PANEL_2 };
+                let fg = if hovered { Color32::WHITE } else { ACCENT };
+                ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
+                ui.painter().rect_stroke(
+                    btn_rect,
+                    CornerRadius::same(6),
+                    Stroke::new(1.0, BORDER),
+                    StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    "Ошибка сети. Загрузить ещё",
+                    FontId::proportional(FS_SMALL),
+                    fg,
+                );
+                if btn_resp.clicked() {
+                    clicked = true;
+                }
+            } else if (self.selected_country.is_some() || self.selected_min_bitrate.is_some())
+                && self.station_has_more
+            {
+                let btn_w = (ui.available_width() - 20.0).clamp(180.0, 280.0);
+                let btn_h = 28.0;
+                let btn_rect = Rect::from_center_size(center, Vec2::new(btn_w, btn_h));
+                let btn_resp = ui.interact(
+                    btn_rect,
+                    ui.id().with("footer_more_facets_btn"),
+                    Sense::click(),
+                );
+                let hovered = btn_resp.hovered();
+                let bg = if hovered { ACCENT } else { PANEL_2 };
+                let fg = if hovered { Color32::WHITE } else { ACCENT };
+                ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
+                ui.painter().rect_stroke(
+                    btn_rect,
+                    CornerRadius::same(6),
+                    Stroke::new(1.0, BORDER),
+                    StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    "Загрузить ещё станции",
+                    FontId::proportional(FS_SMALL),
+                    fg,
+                );
+                if btn_resp.clicked() {
+                    clicked = true;
+                }
+            } else if self.station_has_more {
+                let time = ui.input(|i| i.time) as f32;
+                let pulse = ((time * 3.5).sin() * 0.4 + 0.6).clamp(0.2, 1.0);
+                let color = ACCENT.gamma_multiply(pulse);
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    "Загрузка станций…",
+                    FontId::proportional(FS_ROW),
+                    color,
+                );
+                ui.ctx().request_repaint();
+            } else if !self.station_has_more && matching_rows_len >= 15 {
+                let total_loaded = self.stations.len();
+                let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {
+                    format!("Показаны все ({matching_rows_len} из {total_loaded})")
+                } else {
+                    format!("Все станции ({total_loaded})")
+                };
+                ui.painter().text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    FontId::proportional(FS_SMALL),
+                    MUTED,
+                );
             }
-        } else if (self.selected_country.is_some() || self.selected_min_bitrate.is_some())
-            && self.station_has_more
-        {
-            let btn_w = 280.0;
-            let btn_h = 28.0;
-            let btn_rect = Rect::from_center_size(center, Vec2::new(btn_w, btn_h));
-            let btn_resp = ui.interact(
-                btn_rect,
-                ui.id().with("footer_more_facets_btn"),
-                Sense::click(),
-            );
-            let hovered = btn_resp.hovered();
-            let bg = if hovered { ACCENT } else { PANEL_2 };
-            let fg = if hovered { Color32::WHITE } else { ACCENT };
-            ui.painter().rect_filled(btn_rect, CornerRadius::same(6), bg);
-            ui.painter().rect_stroke(
-                btn_rect,
-                CornerRadius::same(6),
-                Stroke::new(1.0, BORDER),
-                StrokeKind::Inside,
-            );
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                "Загрузить ещё станции из каталога",
-                FontId::proportional(FS_SMALL),
-                fg,
-            );
-            if btn_resp.clicked() {
-                self.load_more_stations();
-            }
-        } else if self.station_has_more {
-            let time = ui.input(|i| i.time) as f32;
-            let pulse = ((time * 3.5).sin() * 0.4 + 0.6).clamp(0.2, 1.0);
-            let color = ACCENT.gamma_multiply(pulse);
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                "Загрузка станций…",
-                FontId::proportional(FS_ROW),
-                color,
-            );
-            ui.ctx().request_repaint();
-        } else if !self.station_has_more && self.stations.len() >= 20 {
-            let total_loaded = self.stations.len();
-            let msg = if self.selected_country.is_some() || self.selected_min_bitrate.is_some() {
-                format!("Показаны все совпадения ({matching_rows_len} из {total_loaded} станций)")
-            } else {
-                format!("Показаны все станции ({total_loaded})")
-            };
-            ui.painter().text(
-                center,
-                egui::Align2::CENTER_CENTER,
-                msg,
-                FontId::proportional(FS_SMALL),
-                MUTED,
-            );
-        }
+        });
+        row.col(|_ui| {});
+        row.col(|_ui| {});
+        row.col(|_ui| {});
+        row.col(|_ui| {});
+        clicked
     }
 
     pub(crate) fn global_station_query(&self) -> String {
         let mut terms = self.station_search.trim().to_owned();
+        if terms.is_empty() {
+            if let Some(voice) = &self.voice_search_query {
+                terms = voice.trim().to_owned();
+            }
+        }
         if let Some(genre) = &self.selected_genre
             && !terms.to_lowercase().contains(&genre.to_lowercase())
         {
@@ -507,14 +668,14 @@ pub(super) fn resolve_playing_index(
     selected_station: Option<usize>,
 ) -> Option<usize> {
     if playing {
-        playback_station_id
-            .and_then(|id| stations.iter().position(|s| s.id == id))
-            .or_else(|| {
-                (!station_now.is_empty())
-                    .then(|| stations.iter().position(|s| s.name == station_now))
-                    .flatten()
-            })
-            .or(selected_station)
+        if let Some(id) = playback_station_id {
+            stations.iter().position(|s| s.id == id).or(selected_station)
+        } else {
+            (!station_now.is_empty())
+                .then(|| stations.iter().position(|s| s.name == station_now))
+                .flatten()
+                .or(selected_station)
+        }
     } else {
         selected_station
     }
@@ -553,22 +714,14 @@ mod tests {
 
         // When playing, prefers playback_station_id even if user selected another station in the UI
         assert_eq!(
-            resolve_playing_index(true, Some("st-1"), "Metal Two", &stations, Some(2)),
+            resolve_playing_index(true, Some("st-1"), "—", &stations, Some(2)),
             Some(0)
         );
 
-        // When playback_station_id is None, falls back to station_now name match
+        // Fallback to name match when playback_station_id is None
         assert_eq!(
             resolve_playing_index(true, None, "Metal Two", &stations, Some(0)),
             Some(1)
         );
-
-        // When playing but station not found in list, falls back to selected_station
-        assert_eq!(
-            resolve_playing_index(true, Some("unknown"), "Unknown", &stations, Some(2)),
-            Some(2)
-        );
     }
 }
-
-

@@ -175,7 +175,7 @@ fn fetch_bytes(source: &str) -> Result<Vec<u8>, String> {
 fn decode_icon(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|_| "icon format is unsupported".to_owned())?;
+        .map_err(|e| format!("icon format is unsupported: {e}"))?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_DECODE_SIDE);
     limits.max_image_height = Some(MAX_DECODE_SIDE);
@@ -183,7 +183,7 @@ fn decode_icon(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
     reader.limits(limits);
     let decoded = reader
         .decode()
-        .map_err(|_| "icon image is invalid".to_owned())?;
+        .map_err(|e| format!("icon image is invalid: {e}"))?;
     let image = decoded.thumbnail(MAX_ICON_SIDE, MAX_ICON_SIDE).to_rgba8();
     let width = usize::try_from(image.width()).map_err(|_| "icon dimensions overflow")?;
     let height = usize::try_from(image.height()).map_err(|_| "icon dimensions overflow")?;
@@ -421,5 +421,17 @@ mod tests {
             .unwrap();
         assert_eq!((image.width, image.height, image.rgba), (2, 1, rgba));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn decodes_webp_icon() {
+        // Valid 1x1 lossless WebP
+        let webp_1x1 = [
+            82, 73, 70, 70, 28, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 15, 0, 0, 0, 47, 0, 0,
+            0, 0, 7, 16, 253, 143, 254, 7, 34, 162, 255, 1, 0,
+        ];
+        let (w, h, rgba) = decode_icon(&webp_1x1).expect("webp decode failed");
+        assert_eq!((w, h), (64, 64));
+        assert_eq!(rgba.len(), 64 * 64 * 4);
     }
 }

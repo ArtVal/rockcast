@@ -21,7 +21,7 @@ Desktop **internet radio** app (Windows + Linux): egui UI, local cpal playback (
 | Cast TLS/framing | `src/cast/channel/` | Blocking reads without cancel/timeout |
 | Cast discovery / VPN | `src/cast/discovery/` | Assuming mDNS alone is enough |
 | Protobuf wire format | `src/cast/proto.rs` | Treating `proto/*.proto` as codegen input |
-| Station list | `src/stations/`, `stations.txt` | Blocking UI on Radio Browser |
+| Station list | `src/stations/`, `stations.v1.json` | Blocking UI on Radio Browser |
 | Settings / log path | `src/settings.rs`, `src/main.rs` | |
 | Cast LAN relay (VPN→JBL) | `src/relay/`, `src/app/actions/playback.rs` | Advertising a VPN interface IP to Cast |
 | Spectrum / ICY for Cast | `src/observers/{icy,spectrum}.rs` | |

@@ -59,6 +59,21 @@ fn remove_favourite_works_without_a_catalog_station() {
 }
 
 #[test]
+fn toggle_favourite_by_id_works_without_catalog_station() {
+    let (mut p, path) = store(vec![]);
+    assert!(p.toggle_favourite_by_id("non-catalog-st", "Non Catalog Station").unwrap());
+    assert!(p.is_favourite("non-catalog-st"));
+    assert_eq!(
+        p.favourites()[0].metadata.last_known_name.as_deref(),
+        Some("Non Catalog Station")
+    );
+    assert!(!p.toggle_favourite_by_id("non-catalog-st", "Non Catalog Station").unwrap());
+    assert!(!p.is_favourite("non-catalog-st"));
+    assert!(p.favourites().is_empty());
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn missing_stable_id_is_safe_and_does_not_select_another_station() {
     let stations = vec![station("available", "https://available")];
     assert_eq!(station_index_by_id(&stations, "missing"), None);

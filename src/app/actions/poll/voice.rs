@@ -41,11 +41,14 @@ impl RockCastApp {
                 self.selected_country = None;
                 self.selected_min_bitrate = None;
                 let clean_query = crate::voice::clean_voice_query(&result.transcript);
-                if !clean_query.is_empty() {
-                    self.station_search = clean_query.clone();
+                self.voice_search_query = if !clean_query.is_empty() {
+                    Some(clean_query.clone())
+                } else if !result.transcript.trim().is_empty() {
+                    Some(result.transcript.trim().to_string())
                 } else {
-                    self.station_search.clear();
-                }
+                    None
+                };
+                self.station_search.clear();
                 self.queue_station_icons(&self.stations.clone());
                 self.source = format!("RockServer · голос · {}", self.stations.len());
                 self.selected_station = Some(0);

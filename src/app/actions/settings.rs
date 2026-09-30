@@ -41,6 +41,8 @@ impl RockCastApp {
         self.settings.eq_enabled = self.eq_enabled;
         self.settings.cast_relay = self.cast_relay;
         self.settings.language = self.lang;
+        self.settings.station_name_col_w = self.station_name_col_w;
+        self.settings.station_meta_col_w = self.station_meta_col_w;
         if let Some(url) = self
             .selected_station
             .and_then(|i| self.stations.get(i).map(|s| s.url.clone()))

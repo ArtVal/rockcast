@@ -4,8 +4,8 @@ mod catalog;
 
 use crate::i18n::{self, Lang};
 
-pub(crate) use catalog::{catalog_resolver, catalog_stations};
-pub use catalog::{infer_codec, parse_stations_txt};
+pub(crate) use catalog::{catalog_resolver, catalog_stations, sha256_hex};
+pub use catalog::infer_codec;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Station {
