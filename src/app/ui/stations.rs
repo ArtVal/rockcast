@@ -79,16 +79,19 @@ impl RockCastApp {
                 .max_height(layout.scroll_h)
                 .min_scrolled_height(layout.scroll_h);
 
-            let target_row_pos = self.scroll_to_station.and_then(|target_st_idx| {
-                rows.iter().position(|r| match r {
+            if self.scroll_to_top {
+                self.scroll_to_top = false;
+                scroll_area = scroll_area.vertical_scroll_offset(0.0);
+            } else if let Some(target_st_idx) = self.scroll_to_station.take() {
+                let target_row_pos = rows.iter().position(|r| match r {
                     StationRow::Loaded(idx) => *idx == target_st_idx,
                     _ => false,
-                })
-            });
-            if let Some(row_pos) = target_row_pos {
-                let target_y = row_pos as f32 * ROW_H;
-                let centered_y = (target_y - layout.scroll_h * 0.5 + ROW_H * 0.5).max(0.0);
-                scroll_area = scroll_area.vertical_scroll_offset(centered_y);
+                });
+                if let Some(row_pos) = target_row_pos {
+                    let target_y = row_pos as f32 * ROW_H;
+                    let centered_y = (target_y - layout.scroll_h * 0.5 + ROW_H * 0.5).max(0.0);
+                    scroll_area = scroll_area.vertical_scroll_offset(centered_y);
+                }
             }
 
             let mut visible_row_range: Option<std::ops::Range<usize>> = None;
@@ -181,10 +184,8 @@ impl RockCastApp {
                 self.load_more_stations();
             }
 
-            let to_top_visible = scroll_output.state.offset.y > 400.0;
-            let playing_st_idx = self.selected_station.or_else(|| {
-                self.stations.iter().position(|s| s.name == self.station_now)
-            });
+            let to_top_visible = scroll_output.state.offset.y > 120.0;
+            let playing_st_idx = self.resolve_playing_station_index();
             let playing_row_pos = playing_st_idx.and_then(|target_idx| {
                 rows.iter().position(|r| match r {
                     StationRow::Loaded(i) => *i == target_idx,
@@ -196,109 +197,149 @@ impl RockCastApp {
                 _ => false,
             };
 
-            let base_right = scroll_output.inner_rect.right() - 20.0;
+            let max_right = ui.min_rect().left() + layout.full_w - 24.0;
+            let base_right = (scroll_output.inner_rect.right() - 20.0).min(max_right);
             let btn_y = scroll_output.inner_rect.bottom() - 30.0 - 14.0;
-            let mut next_right = base_right;
+            let mut top_clicked = false;
+            let mut locate_clicked = false;
 
-            if to_top_visible {
-                let top_w = 92.0;
-                let btn_rect = Rect::from_min_size(
-                    Pos2::new(next_right - top_w, btn_y),
-                    Vec2::new(top_w, 30.0),
-                );
-                next_right -= top_w + 8.0;
-                let btn_resp = ui.interact(btn_rect, ui.id().with("to_top_btn"), Sense::click());
-                let hovered = btn_resp.hovered();
-                let bg = if hovered {
-                    ACCENT
-                } else {
-                    Color32::from_rgba_premultiplied(32, 28, 25, 235)
-                };
-                let border = if hovered { Color32::WHITE } else { BORDER };
-                let tint = if hovered { Color32::WHITE } else { ACCENT };
-
-                ui.painter().rect_filled(btn_rect, CornerRadius::same(15), bg);
-                ui.painter().rect_stroke(
-                    btn_rect,
-                    CornerRadius::same(15),
-                    Stroke::new(1.0, border),
-                    StrokeKind::Inside,
-                );
-
-                let icon_size = 14.0;
-                let icon_rect = Rect::from_min_size(
-                    Pos2::new(btn_rect.min.x + 12.0, btn_rect.center().y - icon_size * 0.5),
-                    Vec2::splat(icon_size),
-                );
-                ui.painter().image(
-                    self.app_icons.arrow_up.id(),
-                    icon_rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    tint,
-                );
-                ui.painter().text(
-                    Pos2::new(btn_rect.min.x + 32.0, btn_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    "Наверх",
-                    FontId::proportional(FS_SMALL),
-                    tint,
-                );
-
-                if btn_resp.clicked() {
-                    self.scroll_to_station = Some(0);
-                    ui.ctx().request_repaint();
+            if to_top_visible || (locate_visible && playing_st_idx.is_some()) {
+                let top_w = 90.0;
+                let loc_w = 114.0;
+                let gap = 8.0;
+                let mut total_w = 0.0;
+                if locate_visible && playing_st_idx.is_some() {
+                    total_w += loc_w;
                 }
+                if to_top_visible {
+                    if total_w > 0.0 {
+                        total_w += gap;
+                    }
+                    total_w += top_w;
+                }
+                let area_x = base_right - total_w;
+
+                egui::Area::new(ui.id().with("stations_floating_bar"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(Pos2::new(area_x, btn_y))
+                    .interactable(true)
+                    .show(ui.ctx(), |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(gap, 0.0);
+                        ui.horizontal(|ui| {
+                            if locate_visible && let Some(_target_idx) = playing_st_idx {
+                                let (btn_rect, btn_resp) =
+                                    ui.allocate_exact_size(Vec2::new(loc_w, 30.0), Sense::click());
+                                let btn_resp = btn_resp.on_hover_text(if self.playing {
+                                    "Перейти к играющей станции в списке"
+                                } else {
+                                    "Перейти к выбранной станции в списке"
+                                });
+                                let hovered = btn_resp.hovered();
+                                let bg = if hovered {
+                                    ACCENT
+                                } else {
+                                    Color32::from_rgba_premultiplied(32, 28, 25, 235)
+                                };
+                                let border = if hovered { Color32::WHITE } else { BORDER };
+                                let tint = if hovered { Color32::WHITE } else { ACCENT };
+
+                                ui.painter().rect_filled(btn_rect, CornerRadius::same(15), bg);
+                                ui.painter().rect_stroke(
+                                    btn_rect,
+                                    CornerRadius::same(15),
+                                    Stroke::new(1.0, border),
+                                    StrokeKind::Inside,
+                                );
+
+                                let icon_size = 14.0;
+                                let icon_rect = Rect::from_min_size(
+                                    Pos2::new(
+                                        btn_rect.min.x + 10.0,
+                                        btn_rect.center().y - icon_size * 0.5,
+                                    ),
+                                    Vec2::splat(icon_size),
+                                );
+                                ui.painter().image(
+                                    self.app_icons.locate.id(),
+                                    icon_rect,
+                                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                    tint,
+                                );
+                                let label = if self.playing {
+                                    "К играющей"
+                                } else {
+                                    "К выбранной"
+                                };
+                                ui.painter().text(
+                                    Pos2::new(btn_rect.min.x + 28.0, btn_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    label,
+                                    FontId::proportional(FS_SMALL),
+                                    tint,
+                                );
+
+                                if btn_resp.clicked() {
+                                    locate_clicked = true;
+                                }
+                            }
+
+                            if to_top_visible {
+                                let (btn_rect, btn_resp) =
+                                    ui.allocate_exact_size(Vec2::new(top_w, 30.0), Sense::click());
+                                let hovered = btn_resp.hovered();
+                                let bg = if hovered {
+                                    ACCENT
+                                } else {
+                                    Color32::from_rgba_premultiplied(32, 28, 25, 235)
+                                };
+                                let border = if hovered { Color32::WHITE } else { BORDER };
+                                let tint = if hovered { Color32::WHITE } else { ACCENT };
+
+                                ui.painter().rect_filled(btn_rect, CornerRadius::same(15), bg);
+                                ui.painter().rect_stroke(
+                                    btn_rect,
+                                    CornerRadius::same(15),
+                                    Stroke::new(1.0, border),
+                                    StrokeKind::Inside,
+                                );
+
+                                let icon_size = 14.0;
+                                let icon_rect = Rect::from_min_size(
+                                    Pos2::new(
+                                        btn_rect.min.x + 12.0,
+                                        btn_rect.center().y - icon_size * 0.5,
+                                    ),
+                                    Vec2::splat(icon_size),
+                                );
+                                ui.painter().image(
+                                    self.app_icons.arrow_up.id(),
+                                    icon_rect,
+                                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                    tint,
+                                );
+                                ui.painter().text(
+                                    Pos2::new(btn_rect.min.x + 32.0, btn_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "Наверх",
+                                    FontId::proportional(FS_SMALL),
+                                    tint,
+                                );
+
+                                if btn_resp.clicked() {
+                                    top_clicked = true;
+                                }
+                            }
+                        });
+                    });
             }
 
-            if locate_visible && let Some(target_idx) = playing_st_idx {
-                let loc_w = 120.0;
-                let btn_rect = Rect::from_min_size(
-                    Pos2::new(next_right - loc_w, btn_y),
-                    Vec2::new(loc_w, 30.0),
-                );
-                let btn_resp = ui
-                    .interact(btn_rect, ui.id().with("to_playing_btn"), Sense::click())
-                    .on_hover_text("Перейти к играющей станции в списке");
-                let hovered = btn_resp.hovered();
-                let bg = if hovered {
-                    ACCENT
-                } else {
-                    Color32::from_rgba_premultiplied(32, 28, 25, 235)
-                };
-                let border = if hovered { Color32::WHITE } else { BORDER };
-                let tint = if hovered { Color32::WHITE } else { ACCENT };
-
-                ui.painter().rect_filled(btn_rect, CornerRadius::same(15), bg);
-                ui.painter().rect_stroke(
-                    btn_rect,
-                    CornerRadius::same(15),
-                    Stroke::new(1.0, border),
-                    StrokeKind::Inside,
-                );
-
-                let icon_size = 14.0;
-                let icon_rect = Rect::from_min_size(
-                    Pos2::new(btn_rect.min.x + 10.0, btn_rect.center().y - icon_size * 0.5),
-                    Vec2::splat(icon_size),
-                );
-                ui.painter().image(
-                    self.app_icons.locate.id(),
-                    icon_rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    tint,
-                );
-                ui.painter().text(
-                    Pos2::new(btn_rect.min.x + 28.0, btn_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    "К играющей",
-                    FontId::proportional(FS_SMALL),
-                    tint,
-                );
-
-                if btn_resp.clicked() {
-                    self.scroll_to_station = Some(target_idx);
-                    ui.ctx().request_repaint();
-                }
+            if top_clicked {
+                self.scroll_to_top = true;
+                ui.ctx().request_repaint();
+            }
+            if locate_clicked && let Some(target_idx) = playing_st_idx {
+                self.scroll_to_station = Some(target_idx);
+                ui.ctx().request_repaint();
             }
 
             self.draw_column_guides(ui, &layout);
@@ -317,7 +358,6 @@ impl RockCastApp {
         if let Some(i) = clicked_station {
             let prev = self.selected_station;
             self.selected_station = Some(i);
-            self.scroll_to_station = Some(i);
             if let Some(s) = self.stations.get(i) {
                 log::info!(
                     "station selected: idx={i} (was {prev:?}) name='{}' url={} auto_play={should_play}",
@@ -327,7 +367,6 @@ impl RockCastApp {
             }
             self.mark_settings_dirty();
         }
-        self.scroll_to_station = None;
         if should_play {
             log::info!("station double-click → play()");
             self.play();
@@ -448,4 +487,88 @@ impl RockCastApp {
         }
         terms
     }
+
+    pub(in crate::app) fn resolve_playing_station_index(&self) -> Option<usize> {
+        resolve_playing_index(
+            self.playing,
+            self.playback_station_id.as_deref(),
+            &self.station_now,
+            &self.stations,
+            self.selected_station,
+        )
+    }
 }
+
+pub(super) fn resolve_playing_index(
+    playing: bool,
+    playback_station_id: Option<&str>,
+    station_now: &str,
+    stations: &[crate::stations::Station],
+    selected_station: Option<usize>,
+) -> Option<usize> {
+    if playing {
+        playback_station_id
+            .and_then(|id| stations.iter().position(|s| s.id == id))
+            .or_else(|| {
+                (!station_now.is_empty())
+                    .then(|| stations.iter().position(|s| s.name == station_now))
+                    .flatten()
+            })
+            .or(selected_station)
+    } else {
+        selected_station
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stations::Station;
+
+    fn make_test_station(id: &str, name: &str) -> Station {
+        Station::from_primary(
+            id.to_string(),
+            name.to_string(),
+            format!("http://example.com/{id}.mp3"),
+            "rock".to_string(),
+            "US".to_string(),
+            128,
+            "MP3".to_string(),
+        )
+    }
+
+    #[test]
+    fn test_resolve_playing_station_index() {
+        let stations = vec![
+            make_test_station("st-1", "Rock One"),
+            make_test_station("st-2", "Metal Two"),
+            make_test_station("st-3", "Jazz Three"),
+        ];
+
+        // When not playing, returns selected_station
+        assert_eq!(
+            resolve_playing_index(false, None, "—", &stations, Some(2)),
+            Some(2)
+        );
+
+        // When playing, prefers playback_station_id even if user selected another station in the UI
+        assert_eq!(
+            resolve_playing_index(true, Some("st-1"), "Metal Two", &stations, Some(2)),
+            Some(0)
+        );
+
+        // When playback_station_id is None, falls back to station_now name match
+        assert_eq!(
+            resolve_playing_index(true, None, "Metal Two", &stations, Some(0)),
+            Some(1)
+        );
+
+        // When playing but station not found in list, falls back to selected_station
+        assert_eq!(
+            resolve_playing_index(true, Some("unknown"), "Unknown", &stations, Some(2)),
+            Some(2)
+        );
+    }
+}
+
+

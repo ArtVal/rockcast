@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix station table horizontal overflow: strict column geometry clamping to viewport bounds
+  (`compute_table_geometry`), responsive column layout, and two-row chip filter layout.
+- Fix scroll controls: floating «Наверх» (top) and «К играющей» (locate playing) buttons now render
+  in a dedicated foreground area without event drop-through; playing station resolution prioritizes
+  active `playback_station_id`. New PNG asset `icon_locate.png`.
+- Fix voice search pagination: voice search queries now automatically trigger catalog search with
+  infinite scroll support, preserve the playing station at the top of the search results, and
+  display full total matching counts instead of locking to 10 candidates.
 - RC-7 UI polish: unified type scale and 16 px margins; 44 px station rows with always-visible
   play buttons and an animated now-playing row; redesigned player deck (transport on the panel
   axis, full-height clickable spectrum, volume moved into the status footer); card-style

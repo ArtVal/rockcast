@@ -21,37 +21,42 @@ impl RockCastApp {
     pub(super) fn draw_filter_chips(&mut self, ui: &mut Ui) -> bool {
         let mut search_requested = false;
 
+        let max_w = (ui.ctx().viewport_rect().width() - 32.0).max(300.0);
+        ui.set_max_width(max_w);
+
+        let fav_count = self.personal_data.as_ref().map_or(0, |store| {
+            store.favourites().len()
+                + store
+                    .profile()
+                    .unresolved_references
+                    .iter()
+                    .filter(|entry| entry.source_kind == "favourite")
+                    .count()
+        });
+        let hist_count = self.personal_data.as_ref().map_or(0, |store| {
+            store.history().len()
+                + store
+                    .profile()
+                    .unresolved_references
+                    .iter()
+                    .filter(|entry| entry.source_kind == "history")
+                    .count()
+        });
+
+        let total_stations = self.stations.len();
+        let matching_count = (0..total_stations)
+            .filter(|&i| self.station_matches_facets(i))
+            .count();
+        let has_facets = self.selected_country.is_some() || self.selected_min_bitrate.is_some();
+
+        // Row 1: Primary views (All, Favourites, History) + Genre chips
         ui.horizontal_wrapped(|ui| {
-            let fav_count = self.personal_data.as_ref().map_or(0, |store| {
-                store.favourites().len()
-                    + store
-                        .profile()
-                        .unresolved_references
-                        .iter()
-                        .filter(|entry| entry.source_kind == "favourite")
-                        .count()
-            });
-            let hist_count = self.personal_data.as_ref().map_or(0, |store| {
-                store.history().len()
-                    + store
-                        .profile()
-                        .unresolved_references
-                        .iter()
-                        .filter(|entry| entry.source_kind == "history")
-                        .count()
-            });
-
-            let total_stations = self.stations.len();
-            let matching_count = (0..total_stations)
-                .filter(|&i| self.station_matches_facets(i))
-                .count();
-            let has_facets = self.selected_country.is_some() || self.selected_min_bitrate.is_some();
-
-            // Filter chips: All, Favourites, History, Genres
             let all_selected = self.filter_mode == StationFilterMode::All
                 && self.selected_genre.is_none();
             let all_label = if has_facets {
                 format!("Все ({matching_count})")
+            } else if self.loading_stations && self.station_search_total.is_none() {
+                "Все (…)".to_string()
             } else {
                 match self.station_search_total {
                     Some(total) if total > total_stations => {
@@ -166,10 +171,12 @@ impl RockCastApp {
                     search_requested = true;
                 }
             }
+        });
 
-            ui.add_space(4.0);
-            ui.label(RichText::new("|").color(BORDER));
-            ui.add_space(4.0);
+        ui.add_space(3.0);
+
+        // Row 2: Secondary facets (Country, Bitrate) + Reset + Matching count
+        ui.horizontal_wrapped(|ui| {
 
             // Country facet ComboBox
             let country_text = match &self.selected_country {

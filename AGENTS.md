@@ -25,3 +25,8 @@ Static icons are drawn in near-white `(243, 238, 233)` on transparency, like the
 icons: the UI tints textures at draw time (ACCENT when idle, WHITE on hover), so colored
 assets multiply with the tint into an unreadable blob.
 
+## Git commits and repository changes
+
+Never run `git commit`, `git push`, or modify remote repository state autonomously.
+Always prepare and verify the code changes, show the status/diff summary to the user, and wait for explicit permission or instructions from the user before executing `git commit` or `git push`.
+

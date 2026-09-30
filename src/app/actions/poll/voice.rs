@@ -42,7 +42,9 @@ impl RockCastApp {
                 self.selected_min_bitrate = None;
                 let clean_query = crate::voice::clean_voice_query(&result.transcript);
                 if !clean_query.is_empty() {
-                    self.station_search = clean_query;
+                    self.station_search = clean_query.clone();
+                } else {
+                    self.station_search.clear();
                 }
                 self.queue_station_icons(&self.stations.clone());
                 self.source = format!("RockServer · голос · {}", self.stations.len());
@@ -73,6 +75,10 @@ impl RockCastApp {
                         "Найдено станций: {}. Список отсортирован по похожести.",
                         self.stations.len()
                     );
+                }
+
+                if !clean_query.is_empty() {
+                    self.search_stations(clean_query);
                 }
             }
             Err(error) => {

@@ -95,7 +95,9 @@ impl RockCastApp {
         self.station_search_offset = 0;
         self.station_catalog_cursor = None;
         self.station_has_more = false;
-        self.status = self.lang.t().loading_stations_status.into();
+        if !self.playing && !self.playing_op && !self.pending_voice_play {
+            self.status = self.lang.t().loading_stations_status.into();
+        }
         let tx = self.ui_tx.clone();
         let lang = self.lang;
         let rockserver = self.rockserver.clone();

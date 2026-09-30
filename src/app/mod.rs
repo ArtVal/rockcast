@@ -129,6 +129,7 @@ pub struct RockCastApp {
     pub(super) source: String,
     pub(super) selected_station: Option<usize>,
     pub(super) scroll_to_station: Option<usize>,
+    pub(super) scroll_to_top: bool,
     pub(super) station_name_col_w: Option<f32>,
     pub(super) station_tags_col_w: Option<f32>,
     pub(super) selected_device: Option<usize>,
@@ -274,6 +275,7 @@ impl RockCastApp {
             source: String::new(),
             selected_station: None,
             scroll_to_station: None,
+            scroll_to_top: false,
             station_name_col_w: None,
             station_tags_col_w: None,
             selected_device: None,
@@ -363,8 +365,14 @@ impl eframe::App for RockCastApp {
                     if let egui::Event::Screenshot { image, .. } = event {
                         let w = image.size[0] as u32;
                         let h = image.size[1] as u32;
-                        if let Some(buf) = image::RgbaImage::from_raw(w, h, image.as_raw().to_vec())
-                        {
+                        let mut pixels = Vec::with_capacity(image.pixels.len() * 4);
+                        for p in &image.pixels {
+                            pixels.push(p.r());
+                            pixels.push(p.g());
+                            pixels.push(p.b());
+                            pixels.push(255);
+                        }
+                        if let Some(buf) = image::RgbaImage::from_raw(w, h, pixels) {
                             let _ = buf.save(&shot_path);
                             captured = true;
                         }
@@ -374,7 +382,7 @@ impl eframe::App for RockCastApp {
             if captured {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
-            } else if self.frame_count >= 60 && !self.stations.is_empty() {
+            } else if self.frame_count >= 100 && !self.stations.is_empty() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
                 ctx.request_repaint();
             } else {

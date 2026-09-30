@@ -112,16 +112,19 @@ def create_arrow_up():
     im.save("assets/icon_arrow_up.png")
 
 def create_locate():
+    # Crisp crosshair target reticle: universal symbol for "Locate / Center on track".
     im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     color = (243, 238, 233, 230)
-    # Playing track indicator (play triangle) + playlist row
-    d.polygon([(40, 60), (84, 84), (40, 108)], fill=color)
-    d.rounded_rectangle([104, 72, 220, 96], radius=10, fill=color)
-    # Second playlist row
-    d.rounded_rectangle([40, 126, 220, 150], radius=10, fill=color)
-    # Third playlist row
-    d.rounded_rectangle([40, 180, 180, 204], radius=10, fill=color)
+    # Center bullseye dot
+    d.ellipse([110, 110, 146, 146], fill=color)
+    # Target outer ring (radius 72, stroke 18)
+    d.ellipse([56, 56, 200, 200], outline=color, width=18)
+    # 4 crosshair tick marks protruding outward through the ring
+    d.line([(128, 24), (128, 66)], fill=color, width=18, joint="curve")
+    d.line([(128, 190), (128, 232)], fill=color, width=18, joint="curve")
+    d.line([(24, 128), (66, 128)], fill=color, width=18, joint="curve")
+    d.line([(190, 128), (232, 128)], fill=color, width=18, joint="curve")
     im = im.resize((64, 64), Image.Resampling.LANCZOS)
     im.save("assets/icon_locate.png")
 

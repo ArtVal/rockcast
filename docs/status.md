@@ -1,5 +1,22 @@
 # RockCast status
 
+## Voice search pagination, table geometry fit, and scroll controls (2026-09-30)
+
+- **Voice search pagination & infinite scroll**: `handle_voice_result` now automatically initiates a catalog
+  search for `clean_query` via `search_stations` while immediately starting playback of the top candidate.
+  The station table receives full paginated results with infinite scroll enabled, displaying `Все (20 из 448)`
+  instead of freezing at `Все (10)` with disabled pagination.
+- **Playing station preservation**: In `handle_stations_loaded`, if the currently playing station is absent from
+  the new search page, it is prepended to the top of the loaded stations list (`preserve_playing_station`),
+  maintaining active playback indicators and selection. Selection restoration prioritizes `playback_station_id`.
+- **Table width overflow fix**: Column widths are strictly clamped to the viewport content bounds
+  (`(viewport_rect().width() - 56.0)`). Filter chips are split into two clean rows (Row 1: views and genres;
+  Row 2: facets, reset, counts), completely eliminating horizontal table overflow.
+- **Scroll controls**: Floating «Наверх» and «К играющей» buttons are rendered in `egui::Area` (`Order::Foreground`)
+  preventing click drop-through to underlying station rows. `resolve_playing_station_index` prioritizes
+  `playback_station_id`, and `icon_locate.png` provides a crisp reticle asset.
+- Checks: `cargo check --all-targets` (0 warnings), `cargo test --lib` (193 tests passed).
+
 ## Favourite display names recovered from history (2026-09-28, follow-up)
 
 Favourites applied by server sync arrive without display names (the RM-012-A contract carries no

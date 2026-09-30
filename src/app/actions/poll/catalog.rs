@@ -11,16 +11,25 @@ use crate::{
 impl RockCastApp {
     pub(super) fn handle_stations_loaded(
         &mut self,
-        list: Vec<Station>,
+        mut list: Vec<Station>,
         source: String,
         request_id: u64,
         finished: bool,
-        total: Option<usize>,
+        mut total: Option<usize>,
         has_more: bool,
     ) {
         if request_id != self.station_request_id {
             return;
         }
+        let playing_id = self.playback_station_id.as_deref();
+        let playing_url = self.settings.station_url.as_deref();
+        preserve_playing_station(
+            playing_id,
+            playing_url,
+            &self.stations,
+            &mut list,
+            &mut total,
+        );
         self.stations = list;
         self.station_search_total = total;
         self.station_search_offset = self.stations.len();
@@ -43,16 +52,18 @@ impl RockCastApp {
         self.source = source;
         self.restore_station_selection();
         self.loading_stations = !finished;
-        self.status = match self.station_search_total {
-            Some(tot) if tot > self.stations.len() => {
-                format!(
-                    "{}: {} из {tot}",
-                    self.lang.t().stations_count,
-                    self.stations.len()
-                )
-            }
-            _ => i18n::fmt1(self.lang.t().stations_count, self.stations.len()),
-        };
+        if !self.playing && !self.playing_op && !self.pending_voice_play {
+            self.status = match self.station_search_total {
+                Some(tot) if tot > self.stations.len() => {
+                    format!(
+                        "{}: {} из {tot}",
+                        self.lang.t().stations_count,
+                        self.stations.len()
+                    )
+                }
+                _ => i18n::fmt1(self.lang.t().stations_count, self.stations.len()),
+            };
+        }
     }
 
     pub(super) fn handle_more_stations_loaded(
@@ -175,3 +186,104 @@ impl RockCastApp {
         }
     }
 }
+
+pub(crate) fn preserve_playing_station(
+    playing_id: Option<&str>,
+    playing_url: Option<&str>,
+    current_stations: &[Station],
+    list: &mut Vec<Station>,
+    total: &mut Option<usize>,
+) {
+    if playing_id.is_none() && playing_url.is_none() {
+        return;
+    }
+    let already_in_list = list.iter().any(|s| {
+        (playing_id.is_some() && Some(s.id.as_str()) == playing_id)
+            || (playing_url.is_some() && !s.url.is_empty() && Some(s.url.as_str()) == playing_url)
+    });
+    if !already_in_list {
+        if let Some(playing_st) = current_stations.iter().find(|s| {
+            (playing_id.is_some() && Some(s.id.as_str()) == playing_id)
+                || (playing_url.is_some() && !s.url.is_empty() && Some(s.url.as_str()) == playing_url)
+        }).cloned() {
+            list.insert(0, playing_st);
+            if let Some(tot) = total.as_mut() {
+                *tot += 1;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_station(id: &str, name: &str, url: &str) -> Station {
+        Station::from_primary(
+            id.to_string(),
+            name.to_string(),
+            url.to_string(),
+            "rock".to_string(),
+            "RU".to_string(),
+            128,
+            "mp3".to_string(),
+        )
+    }
+
+    #[test]
+    fn preserve_playing_station_prepends_missing_playing_station() {
+        let playing = test_station("st-1", "Playing Station", "http://stream.test/1");
+        let other = test_station("st-2", "Other Station", "http://stream.test/2");
+
+        let current = vec![playing.clone()];
+        let mut list = vec![other.clone()];
+        let mut total = Some(10);
+
+        preserve_playing_station(
+            Some("st-1"),
+            Some("http://stream.test/1"),
+            &current,
+            &mut list,
+            &mut total,
+        );
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, "st-1");
+        assert_eq!(list[1].id, "st-2");
+        assert_eq!(total, Some(11));
+    }
+
+    #[test]
+    fn preserve_playing_station_does_not_duplicate_existing_station() {
+        let playing = test_station("st-1", "Playing Station", "http://stream.test/1");
+
+        let current = vec![playing.clone()];
+        let mut list = vec![playing.clone()];
+        let mut total = Some(10);
+
+        preserve_playing_station(
+            Some("st-1"),
+            Some("http://stream.test/1"),
+            &current,
+            &mut list,
+            &mut total,
+        );
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(total, Some(10));
+    }
+
+    #[test]
+    fn preserve_playing_station_noop_when_not_playing() {
+        let other = test_station("st-2", "Other Station", "http://stream.test/2");
+        let current = vec![];
+        let mut list = vec![other.clone()];
+        let mut total = Some(10);
+
+        preserve_playing_station(None, None, &current, &mut list, &mut total);
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(total, Some(10));
+    }
+}
+

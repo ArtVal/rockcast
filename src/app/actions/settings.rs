@@ -8,15 +8,12 @@ use super::super::RockCastApp;
 
 impl RockCastApp {
     pub(in crate::app) fn restore_station_selection(&mut self) {
-        if let Some(url) = self.settings.station_url.as_ref()
-            && let Some(i) = self.stations.iter().position(|s| &s.url == url)
-        {
-            self.selected_station = Some(i);
-            return;
-        }
-        if self.selected_station.is_none() && !self.stations.is_empty() {
-            self.selected_station = Some(0);
-        }
+        self.selected_station = resolve_station_selection(
+            self.playback_station_id.as_deref(),
+            self.settings.station_url.as_deref(),
+            self.selected_station,
+            &self.stations,
+        );
     }
 
     pub(in crate::app) fn restore_device_selection(&mut self) {
@@ -133,3 +130,101 @@ impl RockCastApp {
         }
     }
 }
+
+pub(crate) fn resolve_station_selection(
+    playback_station_id: Option<&str>,
+    settings_station_url: Option<&str>,
+    current_selected: Option<usize>,
+    stations: &[crate::stations::Station],
+) -> Option<usize> {
+    if let Some(play_id) = playback_station_id
+        && let Some(i) = stations.iter().position(|s| s.id == play_id)
+    {
+        return Some(i);
+    }
+    if let Some(url) = settings_station_url
+        && let Some(i) = stations.iter().position(|s| s.url == url)
+    {
+        return Some(i);
+    }
+    if let Some(i) = current_selected {
+        if i >= stations.len() {
+            if stations.is_empty() { None } else { Some(0) }
+        } else {
+            Some(i)
+        }
+    } else if !stations.is_empty() {
+        Some(0)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stations::Station;
+
+    fn test_station(id: &str, url: &str) -> Station {
+        Station::from_primary(
+            id.to_string(),
+            id.to_string(),
+            url.to_string(),
+            "rock".to_string(),
+            "RU".to_string(),
+            128,
+            "mp3".to_string(),
+        )
+    }
+
+    #[test]
+    fn resolve_station_selection_prioritizes_playback_station_id() {
+        let stations = vec![
+            test_station("st-1", "http://stream.test/1"),
+            test_station("st-2", "http://stream.test/2"),
+        ];
+
+        // playback_station_id matches st-2 even if settings.station_url matches st-1
+        let result = resolve_station_selection(
+            Some("st-2"),
+            Some("http://stream.test/1"),
+            Some(0),
+            &stations,
+        );
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn resolve_station_selection_falls_back_to_settings_url() {
+        let stations = vec![
+            test_station("st-1", "http://stream.test/1"),
+            test_station("st-2", "http://stream.test/2"),
+        ];
+
+        // playback_station_id not in list, matches by url
+        let result = resolve_station_selection(
+            Some("unknown"),
+            Some("http://stream.test/2"),
+            Some(0),
+            &stations,
+        );
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn resolve_station_selection_clamps_out_of_bounds() {
+        let stations = vec![test_station("st-1", "http://stream.test/1")];
+
+        let result = resolve_station_selection(None, None, Some(99), &stations);
+        assert_eq!(result, Some(0));
+    }
+
+    #[test]
+    fn resolve_station_selection_empty_list() {
+        let stations = vec![];
+
+        let result = resolve_station_selection(None, None, Some(0), &stations);
+        assert_eq!(result, None);
+    }
+}
+

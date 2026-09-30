@@ -397,6 +397,7 @@ pub(crate) fn order_stations(stations: Vec<Station>) -> Vec<Station> {
     metal.extend(others);
     metal
 }
+#[cfg(test)]
 pub(crate) fn dedupe(stations: Vec<Station>) -> Vec<Station> {
     let mut seen = HashSet::new();
     stations
