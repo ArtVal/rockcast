@@ -1,11 +1,12 @@
 use std::{
-    fs,
     io::{Read, Write},
     net::TcpListener,
     sync::Mutex,
     thread,
     time::Duration,
 };
+#[cfg(windows)]
+use std::fs;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::rockserver::RuntimeConfig;
@@ -71,7 +72,7 @@ fn secrets_do_not_format_or_serialize() {
 
 #[test]
 fn unavailable_secure_store_fails_closed() {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     assert_eq!(
         OsCredentialStore.load().unwrap_err(),
         SessionError::SecureStorageUnavailable
@@ -175,7 +176,7 @@ fn create_pairing_uses_g1_contract_without_authorization() {
     let request_lower = request.to_ascii_lowercase();
     assert!(request_lower.starts_with("post /api/v1/pairing-requests"));
     assert!(request.contains(r#""device_display_name":"RockCast — test""#));
-    assert!(request.contains(r#""device_type":"windows""#));
+    assert!(request.contains(&format!(r#""device_type":"{}""#, std::env::consts::OS)));
     assert!(!request_lower.contains("\"device_name\""));
     assert!(!request_lower.contains("\"platform\""));
     assert!(!request_lower.contains("authorization:"));

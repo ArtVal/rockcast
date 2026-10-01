@@ -8,7 +8,7 @@
 | `playback/`, `runtime.rs` | playback lifecycle, bounded background work, cancellation |
 | `local/`, `cast/`, `relay/`, `audio/` | output adapters and stream transport/decoding |
 | `stations/`, `personal_data.rs`, `settings.rs` | catalog and durable local user data |
-| `session.rs`, `rockserver.rs`, `voice/` | paired identity and RockServer HTTP/WSS clients |
+| `session.rs`, `rockserver.rs`, `voice/` | paired identity and RockServer HTTP/WSS clients; Windows credentials use DPAPI (`session.dpapi`), Linux uses Secret Service in `session/secret_service.rs` |
 | `device_control.rs` | DC-012 registration plus DC-013/DC-014 bounded command lifecycle; `protocol.rs` owns v1 JSON, `output.rs` owns opaque TTL Chromecast handles, `transport.rs` owns tungstenite, and `tests.rs` holds wire/lifecycle regression coverage |
 
 ## Dependency direction

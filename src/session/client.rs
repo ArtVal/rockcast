@@ -177,7 +177,7 @@ impl<S: CredentialStore> AccountClient<S> {
                 .as_deref()
                 == Some("device_credential_invalid");
             if invalid_credential {
-                log::warn!("RockCast device credential was revoked; clearing local session.dpapi");
+                log::warn!("RockCast device credential was revoked; clearing local secure session");
                 let _ = self.store.clear();
                 return Err(SessionError::Unauthorized);
             } else {

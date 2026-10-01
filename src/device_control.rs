@@ -101,7 +101,7 @@ impl CommandBook {
 }
 
 /// One bounded, process-local connection loop. It neither creates nor stores
-/// identity: pairing credentials remain exclusively in `session.dpapi`.
+/// identity: pairing credentials remain exclusively in the OS secure store.
 pub(crate) struct DeviceControlClient {
     inner: Arc<ClientInner>,
 }

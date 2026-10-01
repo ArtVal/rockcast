@@ -1,7 +1,12 @@
 //! Secure credential storage abstraction and OS-specific implementations.
+//!
+//! Windows uses DPAPI-protected `session.dpapi`. Linux uses Secret Service
+//! (`session/secret_service.rs`). Other platforms fail closed.
 
+#[cfg(windows)]
 use std::{fs, io, path::PathBuf};
 
+#[cfg(windows)]
 use crate::settings;
 use super::types::{LegacyStoredCredentials, NativeCredentials, SessionError, StoredCredentials};
 
@@ -14,6 +19,7 @@ pub trait CredentialStore: Send + Sync {
 
 pub struct OsCredentialStore;
 
+#[cfg(windows)]
 impl OsCredentialStore {
     pub(super) fn path() -> Result<PathBuf, SessionError> {
         settings::app_dir()
@@ -41,6 +47,23 @@ pub(super) fn decode_credentials(plain: &[u8]) -> Result<Option<NativeCredential
     }
 }
 
+fn encode_credentials(credentials: &NativeCredentials) -> Result<Vec<u8>, SessionError> {
+    serde_json::to_vec(&StoredCredentials {
+        device_id: credentials.device_id.clone(),
+        device_secret: credentials.device_secret.clone(),
+        access_token: credentials.access_token.clone(),
+        access_expires_at: credentials.access_expires_at.clone(),
+    })
+    .map_err(|_| SessionError::SecureStorageUnavailable)
+}
+
+fn credentials_match(left: &NativeCredentials, right: &NativeCredentials) -> bool {
+    left.device_secret() == right.device_secret()
+        && left.device_id() == right.device_id()
+        && left.access_token() == right.access_token()
+        && left.access_expires_at() == right.access_expires_at()
+}
+
 #[cfg(windows)]
 pub(super) fn read_credentials(path: &PathBuf) -> Result<Option<NativeCredentials>, SessionError> {
     let encrypted = match fs::read(path) {
@@ -57,13 +80,7 @@ pub(super) fn write_credentials(
     path: &PathBuf,
     credentials: &NativeCredentials,
 ) -> Result<(), SessionError> {
-    let plain = serde_json::to_vec(&StoredCredentials {
-        device_id: credentials.device_id.clone(),
-        device_secret: credentials.device_secret.clone(),
-        access_token: credentials.access_token.clone(),
-        access_expires_at: credentials.access_expires_at.clone(),
-    })
-    .map_err(|_| SessionError::SecureStorageUnavailable)?;
+    let plain = encode_credentials(credentials)?;
     let encrypted = dpapi(true, &plain)?;
     let parent = path
         .parent()
@@ -104,11 +121,7 @@ impl CredentialStore for OsCredentialStore {
         write_credentials(&path, credentials)?;
         let _ = fs::remove_file(&recovery);
         let persisted = read_credentials(&path)?.ok_or(SessionError::SecureStorageUnavailable)?;
-        if persisted.device_secret() != credentials.device_secret()
-            || persisted.device_id() != credentials.device_id()
-            || persisted.access_token() != credentials.access_token()
-            || persisted.access_expires_at() != credentials.access_expires_at()
-        {
+        if !credentials_match(&persisted, credentials) {
             return Err(SessionError::SecureStorageUnavailable);
         }
         Ok(())
@@ -183,7 +196,31 @@ pub(super) fn dpapi(protect: bool, input: &[u8]) -> Result<Vec<u8>, SessionError
     Ok(result)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+impl CredentialStore for OsCredentialStore {
+    fn load(&self) -> Result<Option<NativeCredentials>, SessionError> {
+        match super::secret_service::load_bytes()? {
+            Some(bytes) => decode_credentials(&bytes),
+            None => Ok(None),
+        }
+    }
+
+    fn save(&self, credentials: &NativeCredentials) -> Result<(), SessionError> {
+        let plain = encode_credentials(credentials)?;
+        super::secret_service::save_bytes(&plain)?;
+        let persisted = self.load()?.ok_or(SessionError::SecureStorageUnavailable)?;
+        if !credentials_match(&persisted, credentials) {
+            return Err(SessionError::SecureStorageUnavailable);
+        }
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), SessionError> {
+        super::secret_service::clear()
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 impl CredentialStore for OsCredentialStore {
     fn load(&self) -> Result<Option<NativeCredentials>, SessionError> {
         Err(SessionError::SecureStorageUnavailable)

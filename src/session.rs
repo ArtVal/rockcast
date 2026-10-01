@@ -1,6 +1,8 @@
 //! Native account session client. Tokens never implement `Debug` or persistence formats.
 
 mod client;
+#[cfg(target_os = "linux")]
+mod secret_service;
 mod storage;
 #[cfg(test)]
 mod tests;
