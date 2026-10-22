@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::i18n::{self, Lang};
+use crate::i18n::Lang;
 
 use super::super::RockCastApp;
 
@@ -102,12 +102,6 @@ impl RockCastApp {
         }
         if !self.loading_devices {
             self.refresh_devices();
-        }
-        // Refresh the catalog source label on language switch.
-        let n = self.stations.len();
-        if n > 0 && (self.source.contains("локаль") || self.source.contains("local catalog"))
-        {
-            self.source = i18n::fmt1(lang.t().local_catalog, n);
         }
     }
 }

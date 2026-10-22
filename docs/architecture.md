@@ -112,18 +112,18 @@ Exit → cancel token + non-blocking local/relay shutdown → process::exit(0)
 
 The shared relay is stopped on station change / stop / error. No extra download of the original station is opened. The app forwards observed ICY/relay titles into its optional device-control `track_title` runtime field and publishes the changed state. Station ID remains the playback identity; a title is never inferred from the station name.
 
-## Station icon flow (MVP)
+## Station icon flow
 
 ```text
-Station metadata
-  → explicit favicon_url, or homepage_url + /favicon.ico
+Station metadata (RockServer)
+  → server-provided favicon_url (/api/v1/stations/{id}/icon)
   → bounded BackgroundRuntime job
   → HTTP(S) response limit + image dimension limit
   → versioned app-data cache
   → UiMsg::StationIcon (decoded RGBA)
-  → egui TextureHandle in station list
+  → egui TextureHandle in station list (or monogram placeholder)
 ```
 
-The UI keeps request identities for the session, so a missing or failed icon
-does not trigger a new download on every redraw. The future RockServer-hosted
-icon endpoint will replace the direct source without changing the UI contract.
+Station icons load strictly from RockServer WebP endpoints when favicon_url is
+present. When absent, no HTTP request is made and a monogram is rendered.
+The UI keeps request identities for the session, avoiding repeated requests on redraw.

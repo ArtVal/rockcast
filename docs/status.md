@@ -1,5 +1,14 @@
 # RockCast status
 
+## Server-driven catalog and RockServer-only WebP icons (2026-10-22)
+
+- Catalog loading transitioned to direct RockServer fetch (`rockserver::load_catalogue`), matching the architecture of `rock-esp32` and `rockmobile`.
+- Bounded catalog pagination: initial load fetches up to 100 stations (<300 ms startup) with `order_stations` prioritizing rock and metal genres; full catalog (16,000+ stations) is searched via `POST /api/v1/search` with infinite scroll pagination.
+- Built-in schema fallback assets (`assets/catalog/stations.v1.json`, `assets/catalog/manifest.json`, `assets/catalog/stations.v1.schema.json`) and local catalog parser were deleted; the client is 100% server-driven.
+- Station icons now load exclusively from RockServer (`/api/v1/stations/{id}/icon`, WebP) based on server-provided `favicon_url`. Blind 404 network requests when `favicon_url` is null and third-party homepage `/favicon.ico` scraping were completely removed; stations without an icon render clean letter monograms.
+- Checks: `cargo check` (0 warnings), `cargo test --lib` (197 tests passed), `cargo build` succeeded.
+
+
 ## Mandatory RockServer audio proxy and PC Cast relay (2026-10-16)
 
 - Both local output and Cast use the authenticated `/api/v1/stations/{id}/stream` RockServer route. Cast always receives a PC LAN relay URL; direct upstream LOAD and its checkbox/configuration are removed.

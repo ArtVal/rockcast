@@ -20,14 +20,14 @@ RockCast is part of the RockCast internet radio suite:
 - **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
 - **Via PC relay** — always enabled for Cast: PC receives the authenticated RockServer proxy stream and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
-- **Station catalog** — pinned schema-v1 JSON snapshot, instant offline startup, and server-backed search via RockServer
-- **Station icons (MVP)** — direct, bounded favicon/logo loading from station metadata with a local cache; RockServer-hosted icons are planned
+- **Station catalog** — server-driven catalog loaded directly from RockServer (<300 ms) with rock station priority; search and infinite scroll across the entire database of 16,000+ stations
+- **Station icons** — loaded strictly from RockServer (`/api/v1/stations/{id}/icon`, WebP) when `faviconUrl` is provided by the server (matching rock-esp32 and RockMobile); third-party homepages are not scraped, no blind 404 requests, fallback to monogram placeholders
 - **Now playing** — ICY / Shoutcast `StreamTitle` when the station provides metadata, shown with a green live dot and an animated equalizer on the playing row; the observed title is also published to the account-owned RockServer device directory for RockMobile
 - **Rock-styled UI** — 44 px station rows with always-visible round play buttons, filter/genre chips, a unified player deck (station art, transport button on the panel axis, full-height clickable spectrum, volume in the status footer) and a card-style «Account & devices» window; design references live in `design/mockups/`
 - **Spectrum visualizer** — optional FFT bars (uses the same local decode path or a stream tap for Cast)
 - **Bilingual UI** — Russian and English
 - **Persistent settings** — volume, last station, device, language, spectrum toggle
-- **RockServer-assisted search and voice** — official releases use the public production service automatically, while local catalog browsing remains available offline; audio requires an account session and RockServer connectivity
+- **RockServer integration** — official releases use the public production service automatically for catalog loading, search, voice recognition, and stream proxying; audio requires an account session and RockServer connectivity
 
 ## Requirements
 
@@ -93,7 +93,7 @@ Useful levels: `rockcast=debug`, `rockcast::cast::discovery=debug`.
 
 Detailed Russian-language instructions, including voice commands: **[docs/user-manual.html](docs/user-manual.html)**. Open the file in a browser.
 
-1. **Wait for stations** — the local catalog loads immediately on startup; search and voice find more stations via RockServer.
+1. **Wait for stations** — the catalog loads directly from RockServer on startup; search and voice find more stations across the catalog.
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
 4. Cast always uses RockServer → PC → speaker over Wi-Fi. Local playback also reads the RockServer proxy. Sign in to your Rock account before starting radio.
@@ -124,42 +124,23 @@ Pair this RockCast with the same [RockServer](https://github.com/morozov11/rocks
 
 ## Station catalog
 
-### Bundled schema-v1 release
+RockCast uses a 100% server-driven station catalog loaded directly from [RockServer](https://github.com/morozov11/rockserver)
+([rockplatform.win](https://rockplatform.win)), following the same architecture as [rock-esp32](https://github.com/morozov11/rock-esp32)
+and [RockMobile](https://github.com/morozov11/rockmobile).
 
-RockCast ships the approved offline snapshot in
-`assets/catalog/stations.v1.json`: catalogVersion **2026.08.2**,
-SHA-256 **3fa20dca94fc059bd433a47b9fba9bb6d5e5e1aa2957a5ffb58b2a7b20b1d74d**.
-Its embedded manifest, version, and canonical (UTF-8/LF) checksum are verified before parsing.
-The selected playback URL is each station's exactly-one primary stream; additional streams remain
-available in metadata. No catalog download occurs at build or startup.
+On startup, RockCast fetches initial station pages (<300 ms response time) prioritized for rock and metal
+stations. The user can browse with infinite scroll pagination or search across the entire database of
+16,000+ stations via text search and voice commands. There is no bundled local JSON catalog or offline fallback list.
 
-### Overrides
+### Station icons
 
-Use the same schema-v1 JSON document for custom overrides. Overrides are explicitly user-owned,
-un-pinned full-catalog authority: before replacing one, keep a local backup; remove or rename it to
-return immediately to the checksum-verified bundled baseline. Search precedence remains:
+Station icons load strictly from RockServer (`/api/v1/stations/{id}/icon`, WebP) when `faviconUrl` is
+provided in station metadata from the server. Third-party station homepages are not scraped, conventional
+`/favicon.ico` guesses are eliminated, and blind 404 network requests are avoided. When `faviconUrl` is
+null or empty, RockCast renders a clean letter monogram placeholder.
 
-1. `ROCKCAST_STATIONS` environment variable (full path to JSON override)
-2. `stations.v1.json` next to the executable
-3. `stations.v1.json` in the current working directory
-4. `stations.v1.json` in app data
-
-If no override exists, RockCast creates an editable `stations.v1.json` app-data copy from the
-vendored snapshot. JSON overrides accept forward-compatible unknown optional fields but require
-schemaVersion 1, unique stable IDs, valid HTTP(S) streams, and exactly one primary stream.
-App-data locations are Windows `%LOCALAPPDATA%\RockCast` and Linux `$XDG_CONFIG_HOME/rockcast` (or `~/.config/rockcast`).
-
-### Station icons (MVP)
-
-When a station has a valid `faviconUrl`, RockCast downloads and decodes that
-image in a background worker. If it has no explicit favicon URL but does have a
-valid official `homepageUrl`, RockCast tries only that site's conventional
-`/favicon.ico` path; it does not fetch or parse homepage HTML. Network
-responses are bounded and invalid images are ignored. Successful thumbnails are
-cached under the RockCast app-data directory, and a failed request is not
-repeated on every UI redraw. The embedded catalog currently leaves these
-metadata fields empty, so icons appear as metadata is supplied by a catalog or
-RockServer response.
+Downloaded WebP icons are decoded and cached in the platform app-data directory under `station-icons`
+so subsequent launches display station artwork without network round-trips.
 
 
 ## Settings
@@ -175,7 +156,7 @@ Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq
 
 ## RockServer and voice control
 
-Official RockCast releases use the production [RockServer](https://github.com/morozov11/rockserver) at [rockplatform.win](https://rockplatform.win) automatically. Public station search calls `POST /api/v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast publishes its embedded local catalog first; if the public API is unavailable, the local catalog remains available for browsing. Both local and Cast audio require an authenticated RockServer stream; there is no direct-upstream fallback.
+Official RockCast releases use the production [RockServer](https://github.com/morozov11/rockserver) at [rockplatform.win](https://rockplatform.win) automatically. Public station search calls `POST /api/v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast loads its catalog directly from the public RockServer API. Both local and Cast audio require an authenticated RockServer stream; there is no direct-upstream fallback.
 
 The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit and connects to public `wss://rockplatform.win/api/v1/voice/stream` ([rockplatform.win](https://rockplatform.win)) without Bearer authorization. HTTPS is always upgraded to WSS, preserving TLS. The official runtime uses the compatible buffered SpeechKit v1 request. Input-device selection/testing and cancellation after upload begins are not implemented yet.
 
@@ -200,7 +181,6 @@ At the beginning or end of a list, **Previous** or **Next** does not wrap around
 rockcast/
 ├── Cargo.toml
 ├── assets/               # app icon + embedded UI icon PNGs (see scripts/generate_icons.py)
-├── assets/catalog/       # checksum-pinned schema-v1 baseline release
 ├── design/mockups/       # approved UI redesign mockups (HTML)
 ├── run.bat               # Windows release launcher
 ├── run.sh                # Linux release launcher
@@ -215,7 +195,7 @@ rockcast/
     ├── playback/         # PlaybackController + phase/volume
     ├── local/            # PC playback (cpal + decode)
     ├── observers/        # ICY + spectrum taps for Cast
-    ├── stations/         # local catalog loader
+    ├── stations/         # station models and sorting
     ├── relay/            # LAN HTTP relay PC → Cast
     ├── voice/            # RockServer voice search
     ├── i18n.rs           # EN / RU strings
@@ -275,7 +255,7 @@ Prints every Cast receiver found via mDNS and/or subnet scan (about 8 seconds).
 | No Cast devices | Click **Find** again; ensure PC and speaker are on the same LAN; allow LAN in VPN; run `cargo run --example cast_probe` |
 | Cast found, play fails | Confirm the station URL plays on PC first; check firewall for outbound HTTPS to the stream and TCP 8009 to the device |
 | Silent on JBL | Check RockServer sign-in and availability; allow inbound LAN (Windows Firewall / firewalld); PC and JBL on same Wi‑Fi |
-| Empty station list | Check `stations.v1.json` path or `ROCKCAST_STATIONS` environment variable |
+| Empty station list | Check internet connectivity and RockServer status |
 | No track title | Many stations do not send ICY metadata |
 | Wrong PC audio device | Pick another entry under **Device** after **Find** |
 | Spectrum silent on Cast | Enable spectrum; Cast mode uses a separate stream tap after the receiver starts |

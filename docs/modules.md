@@ -41,11 +41,11 @@ src/
     device.rs          DeviceTrait, LocalDeviceInfo
     cpal_util.rs       cpal stream helpers
     error.rs           LocalError
-  stations/            stations.v1.json schema-v1 catalog
-    mod.rs             Station type + load API
-    catalog.rs         Parse bundled stations.v1.json and overrides
+  stations/            Station models, sorting and codec inference
+    mod.rs             Station type definition
+    catalog.rs         order_stations and infer_codec helpers
     radio_browser.rs   Optional HTTPS enrichment
-  station_icons.rs     server-resolved icon path or favicon fetch, decode, and cache
+  station_icons.rs     RockServer WebP icon fetch, decode, and disk cache
   settings.rs          app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
   i18n.rs              Lang::Ru | En string tables
   relay/               StreamRelay — LAN HTTP proxy (RockServer→PC→Cast)
@@ -172,8 +172,6 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 
 | Path | Purpose |
 |------|---------|
-| `stations.v1.json` | Bundled catalog schema-v1 snapshot and override |
-| `ROCKCAST_STATIONS` | Optional override path for catalog |
 | `proto/cast_channel.proto` | Reference schema (runtime uses hand-rolled codec) |
 | `%LOCALAPPDATA%\RockCast\settings.json` | User prefs (Windows) |
 | `~/.config/rockcast/settings.json` | User prefs (Linux) |

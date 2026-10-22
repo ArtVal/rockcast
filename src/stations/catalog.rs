@@ -1,324 +1,9 @@
-//! Versioned station catalog loader.
+//! Station catalog sorting and audio codec inference.
 
-use super::{Station, StationStream};
-use serde::Deserialize;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use super::Station;
+#[cfg(test)]
+use std::collections::HashSet;
 
-pub const PINNED_CATALOG_VERSION: &str = "2026.08.2";
-pub const PINNED_CATALOG_SHA256: &str =
-    "3fa20dca94fc059bd433a47b9fba9bb6d5e5e1aa2957a5ffb58b2a7b20b1d74d";
-const EMBEDDED_CATALOG: &str = include_str!("../../assets/catalog/stations.v1.json");
-const EMBEDDED_MANIFEST: &str = include_str!("../../assets/catalog/manifest.json");
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum CatalogError {
-    #[error("invalid JSON: {0}")]
-    Json(String),
-    #[error("unsupported schema version {0}")]
-    SchemaVersion(u32),
-    #[error("catalog checksum mismatch")]
-    Checksum,
-    #[error("invalid catalog: {0}")]
-    Invalid(String),
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Document {
-    schema_version: u32,
-    catalog_version: String,
-    stations: Vec<CatalogStation>,
-    #[serde(default)]
-    tombstones: Vec<CatalogTombstone>,
-}
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CatalogTombstone {
-    id: String,
-    reason: String,
-    replacement_ids: Vec<String>,
-}
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CatalogStation {
-    id: String,
-    name: String,
-    #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
-    legacy_ids: Vec<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    country_code: Option<String>,
-    language: Option<String>,
-    homepage_url: Option<String>,
-    favicon_url: Option<String>,
-    streams: Vec<CatalogStream>,
-}
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CatalogStream {
-    id: String,
-    url: String,
-    codec: Option<String>,
-    bitrate_kbps: Option<u32>,
-    primary: bool,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Manifest {
-    algorithm: String,
-    catalog_version: String,
-    file: String,
-    sha256: String,
-}
-
-pub(crate) fn catalog_stations() -> Vec<Station> {
-    catalog_snapshot().0
-}
-
-/// Resolver input comes only from the accepted local catalog snapshot.  TXT has
-/// no lifecycle data, so it deliberately supplies active IDs only.
-pub(crate) fn catalog_resolver() -> crate::personal_data::CatalogResolver {
-    catalog_snapshot().1
-}
-
-fn catalog_snapshot() -> (Vec<Station>, crate::personal_data::CatalogResolver) {
-    for path in stations_search_paths() {
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        match parse_override_with_resolver(&path, &raw) {
-            Ok((stations, resolver)) => {
-                log::info!("station catalog override: {}", path.display());
-                return (stations, resolver);
-            }
-            Err(error) => log::warn!(
-                "station catalog override {} rejected: {error}",
-                path.display()
-            ),
-        }
-    }
-    if let Some(path) = appdata_catalog_path() {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if std::fs::write(&path, EMBEDDED_CATALOG).is_ok() {
-            log::info!("station catalog created: {}", path.display());
-        }
-    }
-    let stations = parse_embedded_catalog().expect("vendored RM-004 catalog must be valid");
-    let document = parse_document(EMBEDDED_CATALOG).expect("vendored RM-004 catalog must be valid");
-    let resolver = resolver_from_document(&stations, document);
-    (stations, resolver)
-}
-
-fn resolver_from_document(
-    stations: &[Station],
-    document: Document,
-) -> crate::personal_data::CatalogResolver {
-    let tombstones = document
-        .tombstones
-        .into_iter()
-        .filter_map(|t| {
-            let reason = match t.reason.as_str() {
-                "removed" => crate::personal_data::TombstoneReason::Removed,
-                "merged" => crate::personal_data::TombstoneReason::Merged,
-                "split" => crate::personal_data::TombstoneReason::Split,
-                _ => return None,
-            };
-            Some(crate::personal_data::Tombstone {
-                id: t.id,
-                reason,
-                replacement_ids: t.replacement_ids,
-            })
-        })
-        .collect();
-    crate::personal_data::CatalogResolver::from_stations(stations, Some(document.catalog_version))
-        .with_tombstones(tombstones)
-}
-
-fn parse_override_with_resolver(
-    _path: &Path,
-    raw: &str,
-) -> Result<(Vec<Station>, crate::personal_data::CatalogResolver), CatalogError> {
-    let document = parse_document(raw)?;
-    // Keep the public schema parser as the single station-validation path;
-    // the second parsed document carries only lifecycle metadata for profiles.
-    let stations = parse_stations_json(raw)?;
-    let resolver = resolver_from_document(&stations, document);
-    Ok((stations, resolver))
-}
-
-fn parse_embedded_catalog() -> Result<Vec<Station>, CatalogError> {
-    let manifest: Manifest =
-        serde_json::from_str(EMBEDDED_MANIFEST).map_err(|e| CatalogError::Json(e.to_string()))?;
-    if manifest.algorithm != "sha256"
-        || manifest.file != "stations.v1.json"
-        || manifest.catalog_version != PINNED_CATALOG_VERSION
-        || manifest.sha256 != PINNED_CATALOG_SHA256
-        || sha256_hex(&canonical_catalog_bytes(EMBEDDED_CATALOG)) != PINNED_CATALOG_SHA256
-    {
-        return Err(CatalogError::Checksum);
-    }
-    let doc = parse_document(EMBEDDED_CATALOG)?;
-    if doc.catalog_version != PINNED_CATALOG_VERSION {
-        return Err(CatalogError::Invalid(
-            "pinned catalogVersion mismatch".into(),
-        ));
-    }
-    stations_from_document(doc)
-}
-
-/// Parses a forward-compatible schema-v1 JSON override; unknown fields are ignored.
-pub fn parse_stations_json(raw: &str) -> Result<Vec<Station>, CatalogError> {
-    stations_from_document(parse_document(raw)?)
-}
-fn parse_document(raw: &str) -> Result<Document, CatalogError> {
-    let doc: Document = serde_json::from_str(raw).map_err(|e| CatalogError::Json(e.to_string()))?;
-    if doc.schema_version != 1 {
-        return Err(CatalogError::SchemaVersion(doc.schema_version));
-    }
-    if doc.catalog_version.trim().is_empty() {
-        return Err(CatalogError::Invalid("catalogVersion is empty".into()));
-    }
-    Ok(doc)
-}
-fn stations_from_document(doc: Document) -> Result<Vec<Station>, CatalogError> {
-    if doc.stations.is_empty() {
-        return Err(CatalogError::Invalid("stations is empty".into()));
-    }
-    let mut ids = HashSet::new();
-    doc.stations
-        .into_iter()
-        .map(|station| {
-            if !is_stable_id(&station.id) || !ids.insert(station.id.clone()) {
-                return Err(CatalogError::Invalid(format!(
-                    "invalid or duplicate station id {}",
-                    station.id
-                )));
-            }
-            if station.name.trim().is_empty() || station.name != station.name.trim() {
-                return Err(CatalogError::Invalid(format!(
-                    "invalid station name for {}",
-                    station.id
-                )));
-            }
-            if station
-                .streams
-                .iter()
-                .filter(|stream| stream.primary)
-                .count()
-                != 1
-            {
-                return Err(CatalogError::Invalid(format!(
-                    "{} must have exactly one primary stream",
-                    station.id
-                )));
-            }
-            let mut stream_ids = HashSet::new();
-            let mut streams = Vec::with_capacity(station.streams.len());
-            for stream in station.streams {
-                if !is_stable_id(&stream.id)
-                    || !stream_ids.insert(stream.id.clone())
-                    || !is_http_url(&stream.url)
-                {
-                    return Err(CatalogError::Invalid(format!(
-                        "invalid stream in {}",
-                        station.id
-                    )));
-                }
-                streams.push(StationStream {
-                    id: stream.id,
-                    url: stream.url,
-                    codec: stream.codec.unwrap_or_default(),
-                    bitrate: stream.bitrate_kbps.unwrap_or(0),
-                    primary: stream.primary,
-                });
-            }
-            let primary = streams
-                .iter()
-                .find(|stream| stream.primary)
-                .expect("checked")
-                .clone();
-            Ok(Station {
-                id: station.id,
-                name: station.name,
-                url: primary.url,
-                tags: station.tags.join(", "),
-                country: station.country_code.unwrap_or_default(),
-                language: station.language,
-                homepage_url: station.homepage_url,
-                favicon_url: station.favicon_url,
-                aliases: station.aliases,
-                legacy_ids: station.legacy_ids,
-                bitrate: primary.bitrate,
-                codec: primary.codec,
-                streams,
-            })
-        })
-        .collect()
-}
-fn is_stable_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 96
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        && !id.starts_with('-')
-        && !id.ends_with('-')
-        && !id.contains("--")
-}
-fn is_http_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
-}
-fn stations_search_paths() -> Vec<PathBuf> {
-    let environment = std::env::var("ROCKCAST_STATIONS").ok().map(PathBuf::from);
-    let executable = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-    let working_directory = std::env::current_dir().ok();
-    override_paths(
-        environment,
-        executable,
-        working_directory,
-        crate::settings::app_dir(),
-    )
-}
-
-fn override_paths(
-    environment: Option<PathBuf>,
-    executable: Option<PathBuf>,
-    working_directory: Option<PathBuf>,
-    app_data: Option<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut paths = environment.into_iter().collect::<Vec<_>>();
-    for directory in [executable, working_directory, app_data]
-        .into_iter()
-        .flatten()
-    {
-        paths.extend(source_paths(&directory));
-    }
-    paths
-}
-fn source_paths(dir: &Path) -> [PathBuf; 1] {
-    [dir.join("stations.v1.json")]
-}
-fn appdata_catalog_path() -> Option<PathBuf> {
-    crate::settings::app_dir().map(|dir| dir.join("stations.v1.json"))
-}
-
-/// The catalog release tool hashes canonical UTF-8/LF JSON. Git may materialize
-/// text assets with CRLF on Windows, so verification uses that same canonical form.
-fn canonical_catalog_bytes(raw: &str) -> Vec<u8> {
-    let mut canonical = raw.replace("\r\n", "\n");
-    canonical.truncate(canonical.trim_end_matches('\n').len());
-    canonical.push('\n');
-    canonical.into_bytes()
-}
 pub(crate) fn order_stations(stations: Vec<Station>) -> Vec<Station> {
     let tags = [
         "metal",
@@ -344,6 +29,7 @@ pub(crate) fn order_stations(stations: Vec<Station>) -> Vec<Station> {
     metal.extend(others);
     metal
 }
+
 #[cfg(test)]
 pub(crate) fn dedupe(stations: Vec<Station>) -> Vec<Station> {
     let mut seen = HashSet::new();
@@ -352,6 +38,7 @@ pub(crate) fn dedupe(stations: Vec<Station>) -> Vec<Station> {
         .filter(|station| seen.insert(station.url.trim_end_matches('/').to_lowercase()))
         .collect()
 }
+
 pub fn infer_codec(codec: &str, url: &str) -> String {
     let normalized = codec.trim().to_lowercase();
     let url = url.to_lowercase();
@@ -380,6 +67,7 @@ pub fn infer_codec(codec: &str, url: &str) -> String {
     }
     normalized
 }
+
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -449,43 +137,11 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     }
     state.iter().map(|word| format!("{word:08x}")).collect()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn embedded_catalog_is_pinned_and_offline() {
-        let stations = parse_embedded_catalog().unwrap();
-        assert_eq!(stations.len(), 41);
-        assert_eq!(stations[0].id, "somafm-metal-detector");
-    }
-    #[test]
-    fn json_uses_primary_without_discarding_other_streams() {
-        let raw = r#"{"schemaVersion":1,"catalogVersion":"2026.08.9","stations":[{"id":"stable-id","name":"Station","tags":[],"countryCode":null,"language":null,"homepageUrl":null,"faviconUrl":null,"streams":[{"id":"backup","url":"http://example.test/backup","codec":"aac","bitrateKbps":64,"primary":false},{"id":"main","url":"https://example.test/main","codec":"mp3","bitrateKbps":128,"primary":true}]}]}"#;
-        let stations = parse_stations_json(raw).unwrap();
-        assert_eq!(stations[0].id, "stable-id");
-        assert_eq!(stations[0].url, "https://example.test/main");
-        assert_eq!(stations[0].streams.len(), 2);
-    }
-    #[test]
-    fn schema_and_primary_failures_are_rejected() {
-        assert!(matches!(
-            parse_stations_json(r#"{"schemaVersion":2,"catalogVersion":"x","stations":[]}"#),
-            Err(CatalogError::SchemaVersion(2))
-        ));
-        assert!(parse_stations_json(r#"{"schemaVersion":1,"catalogVersion":"x","stations":[{"id":"a","name":"A","streams":[{"id":"x","url":"https://x.test","primary":false}]}]}"#).is_err());
-    }
-    #[test]
-    fn checksum_failure_is_detected() {
-        assert_ne!(sha256_hex(b"changed"), PINNED_CATALOG_SHA256);
-    }
 
-    #[test]
-    fn canonical_checksum_is_independent_of_windows_line_endings() {
-        assert_eq!(
-            sha256_hex(&canonical_catalog_bytes(EMBEDDED_CATALOG)),
-            PINNED_CATALOG_SHA256
-        );
-    }
     #[test]
     fn dedupe_and_order_keep_the_selected_playback_url() {
         let stations = vec![
@@ -514,27 +170,10 @@ mod tests {
     }
 
     #[test]
-    fn json_is_the_override_source_within_each_source() {
-        let paths = source_paths(Path::new("override"));
-        assert_eq!(paths, [PathBuf::from("override/stations.v1.json")]);
-    }
-
-    #[test]
-    fn environment_executable_cwd_and_appdata_keep_their_precedence() {
-        let paths = override_paths(
-            Some(PathBuf::from("env.json")),
-            Some(PathBuf::from("exe")),
-            Some(PathBuf::from("cwd")),
-            Some(PathBuf::from("appdata")),
-        );
+    fn sha256_hex_hashes_correctly() {
         assert_eq!(
-            paths,
-            vec![
-                PathBuf::from("env.json"),
-                PathBuf::from("exe/stations.v1.json"),
-                PathBuf::from("cwd/stations.v1.json"),
-                PathBuf::from("appdata/stations.v1.json"),
-            ]
+            sha256_hex(b"hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
     }
 }

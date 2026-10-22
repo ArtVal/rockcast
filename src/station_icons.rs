@@ -1,4 +1,4 @@
-//! Station icon loading for server-owned icons and the offline-catalog fallback.
+//! Station icon loading for server-owned WebP icons.
 //!
 //! The UI only receives decoded, bounded pixels. Network I/O, image decoding,
 //! and cache I/O all run on the existing [`BackgroundRuntime`]. The cache is a
@@ -9,9 +9,9 @@
 //! RockServer stations carry a nullable `favicon_url` that is a same-origin
 //! path (for example `/api/v1/stations/{id}/icon`); it is resolved against the
 //! configured RockServer base URL, so those icons are fetched from RockServer
-//! only and never from the station itself. Direct homepage `/favicon.ico`
-//! fetching remains only the fallback for stations without a server icon URL
-//! (the bundled offline catalog); no homepage HTML is fetched or scraped.
+//! only and never from the station itself. When `favicon_url` is null, RockServer
+//! has no ready icon for the station, so no network request is issued and a
+//! monogram placeholder is rendered. Third-party homepages are never accessed.
 
 use std::{
     fs,
@@ -54,36 +54,22 @@ pub fn cache_dir() -> PathBuf {
 ///
 /// A server-owned relative path wins when a RockServer base URL is supplied:
 /// it is joined onto that base, so the icon comes from RockServer. An explicit
-/// absolute favicon/logo URL (offline-catalog stations) is used as-is. When
-/// neither exists, the fallback is the conventional `/favicon.ico` on the
-/// explicitly supplied official homepage; no homepage HTML is fetched or
-/// scraped.
+/// absolute favicon/logo URL is used as-is. When neither exists, returns None;
+/// third-party homepages are never accessed and no 404s are issued.
 pub fn source_url(station: &Station, server_base: Option<&str>) -> Option<String> {
-    if let Some(explicit) = station.favicon_url.as_deref() {
-        if let Some(url) = valid_http_url(explicit) {
-            return Some(url.to_string());
-        }
-        if let Some(base) = server_base.and_then(|base| {
-            let trimmed = base.trim().trim_end_matches('/');
-            valid_http_url(trimmed)
-        }) {
-            let path = explicit.trim();
-            if path.starts_with('/')
-                && !path.starts_with("//")
-                && let Ok(url) = base.join(path)
-            {
-                return Some(url.to_string());
-            }
-        }
+    let favicon = station.favicon_url.as_deref()?.trim();
+    if favicon.is_empty() {
         return None;
     }
-
-    let homepage = station.homepage_url.as_deref().and_then(valid_http_url)?;
-    homepage.join("/favicon.ico").ok().map(|mut url| {
-        url.set_query(None);
-        url.set_fragment(None);
-        url.to_string()
-    })
+    if let Some(url) = valid_http_url(favicon) {
+        return Some(url.to_string());
+    }
+    let base = server_base?.trim().trim_end_matches('/');
+    if valid_http_url(base).is_some() && favicon.starts_with('/') && !favicon.starts_with("//") {
+        let candidate = format!("{base}{favicon}");
+        return valid_http_url(&candidate).map(|url| url.to_string());
+    }
+    None
 }
 
 /// Stable in-memory identity for one station/source pair.
@@ -141,7 +127,7 @@ fn fetch_bytes(source: &str) -> Result<Vec<u8>, String> {
         .get(source)
         .header(reqwest::header::ACCEPT, "image/*")
         .send()
-        .map_err(|_| "icon download failed".to_owned())?;
+        .map_err(|e| format!("icon download failed: {e}"))?;
     if !response.status().is_success() {
         return Err(format!(
             "icon server returned HTTP {}",
@@ -379,13 +365,11 @@ mod tests {
     }
 
     #[test]
-    fn homepage_fallback_is_a_conventional_path_without_scraping() {
+    fn missing_favicon_does_not_fall_back_to_homepage() {
         let mut station = station();
         station.homepage_url = Some("https://radio.example.test/home?utm=ignored".into());
-        assert_eq!(
-            source_url(&station, None).as_deref(),
-            Some("https://radio.example.test/favicon.ico")
-        );
+        assert!(source_url(&station, Some("https://rockplatform.win")).is_none());
+        assert!(source_url(&station, None).is_none());
     }
 
     #[test]

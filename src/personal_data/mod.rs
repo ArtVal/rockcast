@@ -55,6 +55,11 @@ impl PersonalDataStore {
         store.migrate_and_retain()?;
         Ok(store)
     }
+    pub fn update_resolver(&mut self, resolver: CatalogResolver) {
+        self.resolver = resolver;
+        self.remap_legacy_station_ids();
+        let _ = self.save();
+    }
     pub fn created_fresh(&self) -> bool {
         self.created_fresh
     }

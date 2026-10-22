@@ -6,7 +6,7 @@ use crate::{
     i18n::Lang,
     output::scan_streaming,
     rockserver::RuntimeConfig,
-    stations::{Station, load_catalog},
+    stations::Station,
 };
 
 use super::super::{RockCastApp, messages::UiMsg};
@@ -30,24 +30,26 @@ fn match_station_candidate(candidates: &[Station], name: &str, station_id: &str)
         return Some(s.clone());
     }
     // 2. Legacy radio-browser hash match
-    if let Some(hash_str) = station_id.strip_prefix("radio-browser-") {
-        if let Ok(expected_hash) = hash_str.parse::<u64>() {
-            if let Some(s) = candidates.iter().find(|s| {
-                rb_url_hash(&s.url) == expected_hash
-                    || s.streams.iter().any(|st| rb_url_hash(&st.url) == expected_hash)
-            }) {
-                return Some(s.clone());
-            }
+    if let Some(expected_hash) = station_id
+        .strip_prefix("radio-browser-")
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        if let Some(s) = candidates.iter().find(|s| {
+            rb_url_hash(&s.url) == expected_hash
+                || s.streams.iter().any(|st| rb_url_hash(&st.url) == expected_hash)
+        }) {
+            return Some(s.clone());
         }
     }
     // 3. Legacy txt sha256 prefix match
     if let Some(expected_hex) = station_id.strip_prefix("legacy-") {
-        if let Some(s) = candidates.iter().find(|s| {
+        let matched = candidates.iter().find(|s| {
             crate::stations::sha256_hex(s.url.as_bytes()).starts_with(expected_hex)
                 || s.streams.iter().any(|st| {
                     crate::stations::sha256_hex(st.url.as_bytes()).starts_with(expected_hex)
                 })
-        }) {
+        });
+        if let Some(s) = matched {
             return Some(s.clone());
         }
     }
@@ -73,36 +75,19 @@ fn match_station_candidate(candidates: &[Station], name: &str, station_id: &str)
 }
 
 /// Resolves one favourite known only from its profile record:
-/// 1. Checks local catalog snapshot first by ID, legacy IDs, or name.
-/// 2. Queries RockServer strictly by ID.
-/// 3. Falls back to querying RockServer search by sanitized name, matching by URL hash or name.
+/// 1. Queries RockServer strictly by ID (`GET /api/v1/catalog/stations/{id}`).
+/// 2. Falls back to querying RockServer search by sanitized name, matching by URL hash or name.
 fn resolve_missing_station(
     config: &RuntimeConfig,
     station_id: &str,
     name: &str,
 ) -> Result<Station, String> {
-    // 1. Local catalog snapshot check
-    let local = crate::stations::catalog_stations();
-    if let Some(station) = match_station_candidate(&local, name, station_id) {
-        return Ok(station);
-    }
-    if let Some(station) = local.into_iter().find(|s| {
-        s.id == station_id
-            || s.legacy_ids.iter().any(|lid| {
-                lid == station_id
-                    || lid.strip_prefix("rockmobile:rockcast-")
-                        .is_some_and(|hash| station_id == format!("legacy-{hash}"))
-            })
-    }) {
-        return Ok(station);
-    }
-
-    // 2. Direct ID lookup on RockServer
+    // 1. Direct ID lookup on RockServer
     if let Ok(station) = crate::rockserver::get_station(config, station_id) {
         return Ok(station);
     }
 
-    // 3. Fallback: search RockServer by sanitized station name
+    // 2. Fallback: search RockServer by sanitized station name
     let clean_query: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
@@ -111,7 +96,8 @@ fn resolve_missing_station(
     if !clean_query.is_empty() {
         for locale in ["ru", "en"] {
             if let Ok(batch) = crate::rockserver::search(config, &clean_query, locale, 20, 0) {
-                if let Some(station) = match_station_candidate(&batch.stations, name, station_id) {
+                let matched = match_station_candidate(&batch.stations, name, station_id);
+                if let Some(station) = matched {
                     return Ok(station);
                 }
             }
@@ -230,40 +216,62 @@ impl RockCastApp {
                                 finished: true,
                                 total: Some(total),
                                 has_more,
+                                catalog_cursor: None,
                             });
                             return;
                         }
-                        Err(e) => log::warn!("RockServer search failed: {e}; falling back"),
+                        Err(e) => {
+                            log::warn!("RockServer search failed: {e}");
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            let _ = tx.send(UiMsg::Stations {
+                                list: Vec::new(),
+                                source: format!("RockServer · {e}"),
+                                request_id,
+                                finished: true,
+                                total: Some(0),
+                                has_more: false,
+                                catalog_cursor: None,
+                            });
+                            return;
+                        }
                     }
-                    let (catalog, source) = load_catalog(lang);
-                    let list: Vec<Station> = catalog
-                        .into_iter()
-                        .filter(|station| station_matches(station, &query))
-                        .collect();
-                    let n = list.len();
-                    let _ = tx.send(UiMsg::Stations {
-                        list,
-                        source: format!("{source} · offline results"),
-                        request_id,
-                        finished: true,
-                        total: Some(n),
-                        has_more: false,
-                    });
-                    return;
                 }
 
-                let (catalog, source) = load_catalog(lang);
-                if cancel.is_cancelled() {
-                    return;
+                match crate::rockserver::load_catalogue(&rockserver) {
+                    Ok((catalog, next_cursor)) => {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let n = catalog.len();
+                        let has_more = next_cursor.is_some() && n > 0;
+                        let _ = tx.send(UiMsg::Stations {
+                            list: catalog,
+                            source: format!("RockServer · {n}"),
+                            request_id,
+                            finished: true,
+                            total: None,
+                            has_more,
+                            catalog_cursor: next_cursor,
+                        });
+                    }
+                    Err(e) => {
+                        log::warn!("RockServer catalogue load failed: {e}");
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let _ = tx.send(UiMsg::Stations {
+                            list: Vec::new(),
+                            source: format!("RockServer · {e}"),
+                            request_id,
+                            finished: true,
+                            total: Some(0),
+                            has_more: false,
+                            catalog_cursor: None,
+                        });
+                    }
                 }
-                let _ = tx.send(UiMsg::Stations {
-                    list: catalog,
-                    source,
-                    request_id,
-                    finished: true,
-                    total: None,
-                    has_more: true,
-                });
             })
             .is_err()
         {
@@ -292,7 +300,7 @@ impl RockCastApp {
                     return;
                 }
                 if query.trim().is_empty() {
-                    match crate::rockserver::list_catalog(&rockserver, cursor.as_deref(), 20) {
+                    match crate::rockserver::list_catalog(&rockserver, cursor.as_deref(), 50) {
                         Ok(batch) => {
                             if cancel.is_cancelled() {
                                 return;
@@ -393,21 +401,6 @@ impl RockCastApp {
             self.status = self.lang.t().scan_panic.into();
         }
     }
-}
-
-fn station_matches(station: &crate::stations::Station, query: &str) -> bool {
-    let haystack = format!(
-        "{} {} {} {}",
-        station.name,
-        station.tags,
-        station.country,
-        station.aliases.join(" ")
-    )
-    .to_lowercase();
-    query
-        .to_lowercase()
-        .split_whitespace()
-        .all(|term| haystack.contains(term))
 }
 
 #[cfg(test)]

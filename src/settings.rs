@@ -216,7 +216,7 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::rename(source, destination)
 }
 
-/// Settings, log, and the editable `stations.v1.json` copy.
+/// Settings and logs directory.
 ///
 /// - Windows: `%LOCALAPPDATA%\RockCast`
 /// - Unix: `$XDG_CONFIG_HOME/rockcast`, else `~/.config/rockcast`

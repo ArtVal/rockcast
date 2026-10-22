@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Switch to server-driven catalog and RockServer-only WebP icons: removed bundled
+  `assets/catalog/*` files and local catalog loading. Initial catalog loads directly
+  from RockServer (<300 ms) with rock station priority, with pagination and search across
+  all 16,000+ stations. Station icons load strictly from RockServer WebP endpoints when
+  `favicon_url` is provided, removing third-party homepage favicon scraping and blind 404s.
+
+
 - Fix station table horizontal overflow: strict column geometry clamping to viewport bounds
   (`compute_table_geometry`), responsive column layout, and two-row chip filter layout.
 - Fix scroll controls: floating «Наверх» (top) and «К играющей» (locate playing) buttons now render

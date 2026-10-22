@@ -9,6 +9,7 @@ use crate::{
 };
 
 impl RockCastApp {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_stations_loaded(
         &mut self,
         mut list: Vec<Station>,
@@ -17,6 +18,7 @@ impl RockCastApp {
         finished: bool,
         mut total: Option<usize>,
         has_more: bool,
+        catalog_cursor: Option<String>,
     ) {
         if request_id != self.station_request_id {
             return;
@@ -34,13 +36,16 @@ impl RockCastApp {
         self.stations = list;
         self.station_search_total = total;
         self.station_search_offset = batch_count;
-        self.station_catalog_cursor = None;
+        self.station_catalog_cursor = catalog_cursor;
         self.station_has_more = has_more;
         self.loading_more_stations = false;
         self.loading_more_error = None;
         self.queue_station_icons(&self.stations.clone());
-        if self.personal_data.is_none() {
-            let resolver = crate::stations::catalog_resolver();
+        let resolver =
+            crate::personal_data::CatalogResolver::from_stations(&self.stations, None);
+        if let Some(store) = self.personal_data.as_mut() {
+            store.update_resolver(resolver);
+        } else {
             match crate::personal_data::PersonalDataStore::open(
                 crate::personal_data::PersonalDataStore::default_path(),
                 resolver,

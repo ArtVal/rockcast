@@ -1,10 +1,8 @@
-//! Rock / metal radio stations: local catalog.
+//! Rock / metal radio stations.
 
 mod catalog;
 
-use crate::i18n::{self, Lang};
-
-pub(crate) use catalog::{catalog_resolver, catalog_stations, sha256_hex};
+pub(crate) use catalog::{order_stations, sha256_hex};
 pub use catalog::infer_codec;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -95,13 +93,6 @@ impl Station {
     fn effective_codec(&self) -> String {
         infer_codec(&self.codec, &self.url)
     }
-}
-
-/// Instant local list (no network).
-pub fn load_catalog(lang: Lang) -> (Vec<Station>, String) {
-    let ordered = catalog::order_stations(catalog::catalog_stations());
-    let n = ordered.len();
-    (ordered, i18n::fmt1(lang.t().local_catalog, n))
 }
 
 #[cfg(test)]

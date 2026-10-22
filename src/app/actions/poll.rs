@@ -53,7 +53,16 @@ impl RockCastApp {
                 finished,
                 total,
                 has_more,
-            } => self.handle_stations_loaded(list, source, request_id, finished, total, has_more),
+                catalog_cursor,
+            } => self.handle_stations_loaded(
+                list,
+                source,
+                request_id,
+                finished,
+                total,
+                has_more,
+                catalog_cursor,
+            ),
             UiMsg::MoreStationsLoaded {
                 list,
                 request_id,

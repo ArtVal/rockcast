@@ -151,7 +151,7 @@ pub(crate) fn search(
     }
     let response = request
         .send()
-        .map_err(|_| "RockServer is unavailable; using local catalog".to_owned())?;
+        .map_err(|e| format!("RockServer is unavailable: {e}"))?;
     if !response.status().is_success() {
         return Err(format!(
             "RockServer returned HTTP {}",
@@ -211,7 +211,7 @@ pub(crate) fn get_station(config: &RuntimeConfig, station_id: &str) -> Result<St
     }
     let response = request
         .send()
-        .map_err(|_| "RockServer is unavailable; using local catalog".to_owned())?;
+        .map_err(|e| format!("RockServer is unavailable: {e}"))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(format!("Station '{station_id}' was not found on server"));
     }
@@ -282,7 +282,7 @@ pub(crate) fn list_catalog(
     }
     let response = request
         .send()
-        .map_err(|_| "RockServer is unavailable; using local catalog".to_owned())?;
+        .map_err(|e| format!("RockServer is unavailable: {e}"))?;
     if !response.status().is_success() {
         return Err(format!(
             "RockServer returned HTTP {}",
@@ -316,6 +316,39 @@ pub(crate) fn list_catalog(
         stations,
         next_cursor: body.next_cursor,
     })
+}
+
+const MAX_CATALOG_PAGES: usize = 2;
+const CATALOG_PAGE_LIMIT: usize = 50;
+
+/// Loads the starter catalog from RockServer online (matching rockmobile/rock-esp32).
+/// Fetches up to 2 pages of 50 stations (100 total) and orders them with rock priority.
+pub(crate) fn load_catalogue(
+    config: &RuntimeConfig,
+) -> Result<(Vec<Station>, Option<String>), String> {
+    let mut stations = Vec::new();
+    let mut seen_cursors = std::collections::HashSet::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        let batch = list_catalog(config, cursor.as_deref(), CATALOG_PAGE_LIMIT)?;
+        stations.extend(batch.stations);
+        cursor = batch.next_cursor;
+        pages += 1;
+        if cursor
+            .as_ref()
+            .is_some_and(|c| !seen_cursors.insert(c.clone()))
+        {
+            return Err("RockServer catalogue cursor repeated".into());
+        }
+        if cursor.is_none() || pages >= MAX_CATALOG_PAGES {
+            break;
+        }
+    }
+    let mut seen_ids = std::collections::HashSet::new();
+    stations.retain(|s| seen_ids.insert(s.id.clone()));
+    let ordered = crate::stations::order_stations(stations);
+    Ok((ordered, cursor))
 }
 
 #[derive(Serialize)]
@@ -515,6 +548,19 @@ mod tests {
                 "get /api/v1/catalog/stations?limit=10&cursor=cursor-prev http/1.1\r\n"
             )
         );
+    }
+
+    #[test]
+    fn load_catalogue_fetches_and_orders_stations() {
+        let body = r#"{"stations":[{"id":"st-pop","name":"Pop Hits","stream_url":"https://stream/pop","tags":["pop"]},{"id":"st-metal","name":"Metal Rock","stream_url":"https://stream/metal","tags":["metal"]}],"next_cursor":null}"#;
+        let (base_url, server) = serve_one(body);
+        let config = RuntimeConfig::for_test(base_url, None);
+        let (stations, next_cursor) = load_catalogue(&config).unwrap();
+        assert_eq!(stations.len(), 2);
+        assert_eq!(stations[0].id, "st-metal");
+        assert_eq!(stations[1].id, "st-pop");
+        assert!(next_cursor.is_none());
+        let _ = server.join();
     }
 
     #[test]

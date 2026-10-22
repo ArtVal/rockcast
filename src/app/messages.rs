@@ -7,10 +7,10 @@ pub(crate) enum UiMsg {
         list: Vec<Station>,
         source: String,
         request_id: u64,
-        /// false = local catalog (enrich still running), true = final.
         finished: bool,
         total: Option<usize>,
         has_more: bool,
+        catalog_cursor: Option<String>,
     },
     MoreStationsLoaded {
         list: Vec<Station>,
