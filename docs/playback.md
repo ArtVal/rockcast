@@ -104,6 +104,12 @@ Every Cast output uses the PC relay; no UI or persisted switch can disable it:
 
 The worker waits for relay format/audio before LOAD and stops the relay on cancellation/error. Legacy `cast_relay` settings are ignored and no longer saved. `chromecast.connect` publishes output mode `relay`; `relay.start` / `relay.set_mode(via_pc)` are idempotent for an active relay, and `relay.stop` stops playback rather than switching to a direct station URL.
 
+The controller manages one selected Cast receiver and one active playback session; it does not
+implement simultaneous playback on multiple receivers. The relay accepts at most two HTTP clients
+in total (receiver stream plus optional spectrum tap). This is a resource cap, not multi-receiver
+support; additional clients receive HTTP 503. The listener binds all IPv4 interfaces and does not
+authenticate LAN clients, so the relay is intended for a trusted local network.
+
 ## Stop and error handling
 
 | Event | UI state | Engines |

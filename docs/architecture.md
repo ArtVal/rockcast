@@ -35,6 +35,12 @@ Windows release builds set `#![windows_subsystem = "windows"]` (no console). Log
         rockcast-settings (latest-value slot): atomic settings persistence
 ```
 
+RockCast manages one selected Cast receiver per playback session; it does not implement
+simultaneous playback/control for multiple receivers. The LAN relay accepts at most two
+simultaneous HTTP clients total, intended for that receiver's stream and the optional spectrum
+tap. This is a connection/resource limit, not multi-receiver support. Extra connections receive
+HTTP 503; there is no waiting queue.
+
 | Thread / context | Responsibilities | Must not |
 |------------------|------------------|----------|
 | UI (`eframe`) | Draw, handle clicks, adapt controller events | Block on HTTP, Cast handshake, `cpal` stream drop |

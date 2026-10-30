@@ -1,5 +1,18 @@
 # RockCast status
 
+> The newest section describes current behavior. Older dated sections are historical status records.
+
+## Current Cast relay behavior (2026-10-31)
+
+- RockCast controls one selected Cast receiver per playback session; discovery of several
+  receivers does not imply simultaneous playback support.
+- The temporary LAN relay accepts at most two concurrent HTTP clients total, intended for the
+  receiver stream and optional spectrum tap. Extra clients receive HTTP 503; there is no queue.
+- The relay binds all IPv4 interfaces and does not authenticate LAN clients. Use it only on a
+  trusted local network.
+- Regression coverage verifies that `/stream` and `/tap` can connect together and a third client
+  is rejected.
+
 ## Server-driven catalog and RockServer-only WebP icons (2026-10-22)
 
 - Catalog loading transitioned to direct RockServer fetch (`rockserver::load_catalogue`), matching the architecture of `rock-esp32` and `rockmobile`.

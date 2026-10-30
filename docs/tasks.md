@@ -1,5 +1,9 @@
 # RockCast tasks
 
+> Entries below are dated implementation records, not a live task list. File paths and behavior
+> describe the state at the time of each entry and may have changed; see [status](status.md),
+> [architecture](architecture.md), [playback](playback.md), and [Cast](cast.md) for current behavior.
+
 ## Mandatory RockServer audio proxy and PC Cast relay (2026-10-16)
 
 - Both local output and Cast use the authenticated `/api/v1/stations/{id}/stream` RockServer route. Cast always receives a PC LAN relay URL; direct upstream LOAD and its checkbox/configuration are removed.

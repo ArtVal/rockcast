@@ -16,13 +16,16 @@ src/
       settings.rs      Persist prefs, language, EQ settings
       playback.rs      play/stop/shutdown, observer wiring
       poll.rs          PlaybackEvent + UiMsg dispatch
+      poll/            Account/catalog/device/playback/voice event handlers
       catalog.rs       Station/device refresh, bootstrap
       icons.rs         Schedule direct station icon jobs
       voice.rs         RockServer mic capture
       eq.rs            Spectrum bar animation
     ui/                egui panel draw impls
+      account.rs       Account and paired-device card
       devices.rs       Output device list
       stations.rs      Station catalog table
+      stations/        Filters, search bar, rows, missing favourites
       controls.rs      Transport + volume + spectrum toggles
       eq.rs            EQ / spectrum visualizer
   playback/            PlaybackController, state machine, orchestration
@@ -30,10 +33,10 @@ src/
     phase.rs           PlaybackPhase + PlaybackEvent
     volume.rs          Local/Cast volume scaling
   runtime.rs           Bounded blocking-job runtime and shared shutdown token
-  observers/           ICY/spectrum lifecycle and delayed stream tap
+  observers/           ICY/spectrum lifecycle and stream tap
     mod.rs             StreamObservers
     icy.rs             IcyWatcher — StreamTitle for Cast mode
-    spectrum.rs        SpectrumAnalyzer — FFT tap for Cast (+ BANDS/FFT consts)
+    spectrum.rs        SpectrumAnalyzer — FFT tap for Cast
   net.rs               Shared HTTP stream policy and ICY header helpers
   output.rs            OutputDevice = Local | Cast; scan_all()
   local/               LocalPlayer — HTTP decode + cpal
@@ -44,7 +47,6 @@ src/
   stations/            Station models, sorting and codec inference
     mod.rs             Station type definition
     catalog.rs         order_stations and infer_codec helpers
-    radio_browser.rs   Optional HTTPS enrichment
   station_icons.rs     RockServer WebP icon fetch, decode, and disk cache
   settings.rs          app dir settings.json + log_path (LOCALAPPDATA or ~/.config/rockcast)
   i18n.rs              Lang::Ru | En string tables
@@ -65,7 +67,12 @@ src/
         local.rs       f32 decode for LocalPlayer
         relay.rs       16-bit PCM transcode for Cast relay
         symphonia.rs   MP3/OGG fallback via symphonia
-      aac.rs, opus.rs, pcm.rs, icy.rs
+      adts.rs          AAC/ADTS framing helpers
+      codecs.rs        Codec selection and stream helpers
+      icy.rs           ICY metadata parsing and stream opening
+      opus.rs          Opus stream decode
+      pcm.rs           PCM helpers
+      probe.rs         Stream format probing
   cast/
     mod.rs             Re-exports CastService, CastDeviceInfo
     discovery/         mDNS + /24 TCP:8009 + eureka_info
@@ -91,6 +98,18 @@ src/
     dto.rs             JSON message types
     record.rs          Microphone capture
     rank.rs            Station reranking
+    resample.rs        Mono PCM16 sample-rate conversion
+  device_control.rs    Device-control lifecycle, auth, and command orchestration
+  device_control/      RockServer remote commands (private crate module)
+    protocol.rs        Versioned wire DTOs and capability validation
+    output.rs          Opaque, expiring Cast receiver handles
+    transport.rs       WebSocket connection and bounded command delivery
+    tests.rs           Wire and lifecycle regression tests
+  personal_data/       Local favourites and playback history
+  personal_sync/       RM-012-B server sync contract and merge engine
+  session.rs           Account-session module entry point
+  session/             Paired identity, token renewal, OS credential storage
+  profile.rs           User profile helpers
   voice_prompts.rs     Embedded beep / prompt playback
   rockserver.rs        Public RockServer runtime config + HTTP search client
   playback_diag/       Playback diagnostics (`ROCKCAST_PROFILE=1`)
@@ -149,8 +168,9 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 |--------|-------|---------|
 | `VOLUME_CAST_SCALE` | `playback::volume` | `0.5` — Cast volume scale |
 | `OPEN_TIMEOUT` | `local` | HTTP open / probe wait (~12s) |
-| `RING_MAX` | `local` | PCM ring capacity |
-| `BANDS` / `FFT_SIZE` / `HOP` | `observers::spectrum` | Visualizer FFT |
+| `RING_MAX` | `local` | Local PCM ring capacity |
+| `RING_MAX` | `relay::fanout` | Relay fanout ring capacity (distinct from the local PCM ring) |
+| `BANDS` / `FFT_SIZE` / `HOP` | `audio::spectrum` | Visualizer FFT |
 | Default Media Receiver | `cast::channel` | App id `CC1AD845` |
 | Cast ports | discovery | TCP **8009** (CASTV2), HTTP **8008** (`eureka_info`) |
 
@@ -161,8 +181,8 @@ Do not introduce `app` imports into `cast` or `local`. Keep protocol code free o
 | `eframe` / `egui` | GUI |
 | `cpal` | Audio output (WASAPI on Windows, ALSA on Linux) |
 | `symphonia` | Stream decode |
-| `reqwest` (blocking) | HTTP(S) radio + taps |
-| `rustls` | Cast TLS + Radio Browser custom HTTPS |
+| `reqwest` (blocking) | RockServer API/stream, station icons, and stream analysis |
+| `rustls` | Cast TLS and HTTPS clients |
 | `mdns-sd` | Cast mDNS |
 | `rustfft` | Spectrum |
 | `parking_lot` | Mutexes in hot paths |

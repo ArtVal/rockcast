@@ -158,13 +158,7 @@ fn run_cycle(
     eq: bool,
     config: &Config,
 ) -> Result<(), String> {
-    let generation = controller.play(
-        station.clone(),
-        device.clone(),
-        config.volume,
-        config.mode == Mode::CastViaPc,
-        eq,
-    );
+    let generation = controller.play(station.clone(), device.clone(), config.volume, eq);
     wait_for_play(controller, generation, Duration::from_secs(20))?;
 
     if config.mode == Mode::CastViaPc {
@@ -310,8 +304,10 @@ fn stations() -> Vec<Station> {
 }
 
 fn station(name: &str, url: String, codec: &str) -> Station {
+    let station_id = env::var(format!("ROCKCAST_SOAK_{}_ID", codec.to_ascii_uppercase()))
+        .unwrap_or_else(|_| format!("soak-{codec}"));
     Station::from_primary(
-        format!("soak-{}", codec),
+        station_id,
         name.into(),
         url,
         "soak".into(),

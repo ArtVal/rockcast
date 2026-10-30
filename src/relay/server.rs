@@ -1,9 +1,9 @@
 use std::{
     io::{Read, Write},
-    net::{Shutdown, TcpListener, TcpStream},
+    net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -22,6 +22,40 @@ use super::{
 
 const ACCEPT_POLL: Duration = Duration::from_millis(200);
 const BUF: usize = 16 * 1024;
+const MAX_ACTIVE_CLIENTS: usize = 2;
+
+#[derive(Default)]
+struct ClientSlots {
+    active: AtomicUsize,
+}
+
+impl ClientSlots {
+    fn try_acquire(self: &Arc<Self>) -> Option<ClientPermit> {
+        let mut active = self.active.load(Ordering::Acquire);
+        loop {
+            if active >= MAX_ACTIVE_CLIENTS {
+                return None;
+            }
+            match self.active.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ClientPermit(Arc::clone(self))),
+                Err(current) => active = current,
+            }
+        }
+    }
+}
+
+struct ClientPermit(Arc<ClientSlots>);
+
+impl Drop for ClientPermit {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::Release);
+    }
+}
 
 pub fn accept_loop(
     listener: TcpListener,
@@ -29,6 +63,7 @@ pub fn accept_loop(
     transport: RelayTransport,
     stop: Arc<AtomicBool>,
 ) {
+    let client_slots = Arc::new(ClientSlots::default());
     while !stop.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, peer)) => {
@@ -36,23 +71,33 @@ pub fn accept_loop(
                     let _ = stream.shutdown(Shutdown::Both);
                     break;
                 }
+                let Some(permit) = client_slots.try_acquire() else {
+                    reject_client(stream, peer);
+                    continue;
+                };
                 if let Err(e) = stream.set_nonblocking(false) {
                     log::warn!("StreamRelay: set_nonblocking(false) failed for {peer}: {e}");
                 }
                 let _ = stream.set_nodelay(true);
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
                 let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
-                log::info!("StreamRelay: client {peer}");
                 let fan = Arc::clone(&fanout);
                 let transport = transport.clone();
-                let stop_c = Arc::clone(&stop);
-                thread::spawn(move || {
-                    if let Err(e) = handle_client(stream, &fan, &transport, &stop_c) {
-                        log::warn!("StreamRelay client {peer} end: {e}");
-                    } else {
-                        log::info!("StreamRelay client {peer} closed cleanly");
-                    }
-                });
+                let stop = Arc::clone(&stop);
+                if let Err(error) = thread::Builder::new()
+                    .name(format!("rockcast-relay-client-{}", peer.port()))
+                    .spawn(move || {
+                        let _permit = permit;
+                        log::info!("StreamRelay: client {peer}");
+                        if let Err(error) = handle_client(stream, &fan, &transport, &stop) {
+                            log::warn!("StreamRelay client {peer} end: {error}");
+                        } else {
+                            log::info!("StreamRelay client {peer} closed cleanly");
+                        }
+                    })
+                {
+                    log::error!("StreamRelay: failed to spawn client worker for {peer}: {error}");
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(ACCEPT_POLL);
@@ -64,6 +109,20 @@ pub fn accept_loop(
         }
     }
     log::info!("StreamRelay accept loop exit");
+}
+
+fn reject_client(mut stream: TcpStream, peer: SocketAddr) {
+    if let Err(error) = stream.set_write_timeout(Some(Duration::from_millis(200))) {
+        log::warn!("StreamRelay: could not set rejection timeout for {peer}: {error}");
+        return;
+    }
+    if let Err(error) = stream.write_all(
+        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    ) {
+        log::warn!("StreamRelay: failed to reject excess client {peer}: {error}");
+    } else {
+        log::warn!("StreamRelay: active client limit reached; rejected {peer}");
+    }
 }
 
 fn handle_client(
@@ -230,3 +289,69 @@ fn write_all_retry(
 
 #[allow(dead_code)]
 const _: () = assert!(RING_MAX > 0);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_allows_stream_and_tap_but_rejects_an_extra_client() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let fanout = Fanout::new(Arc::clone(&stop));
+        let server_stop = Arc::clone(&stop);
+        let server = thread::spawn(move || {
+            accept_loop(
+                listener,
+                fanout,
+                RelayTransport::Passthrough {
+                    content_type: "audio/aac".into(),
+                },
+                server_stop,
+            );
+        });
+
+        let mut stream = connect_request(address, "/stream");
+        let mut tap = connect_request(address, "/tap");
+        let stream_headers = read_headers(&mut stream);
+        let tap_headers = read_headers(&mut tap);
+        let mut extra = connect_request(address, "/stream");
+        let extra_headers = read_headers(&mut extra);
+
+        stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(address);
+        server.join().unwrap();
+
+        assert!(
+            stream_headers.starts_with("HTTP/1.1 200"),
+            "{stream_headers}"
+        );
+        assert!(tap_headers.starts_with("HTTP/1.1 200"), "{tap_headers}");
+        assert!(
+            extra_headers.starts_with("HTTP/1.1 503 Service Unavailable"),
+            "{extra_headers}"
+        );
+    }
+
+    fn connect_request(address: SocketAddr, path: &str) -> TcpStream {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        stream
+    }
+
+    fn read_headers(stream: &mut TcpStream) -> String {
+        let mut response = Vec::new();
+        let mut chunk = [0; 512];
+        while !response.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut chunk).unwrap();
+            assert_ne!(count, 0, "server closed before sending response headers");
+            response.extend_from_slice(&chunk[..count]);
+        }
+        String::from_utf8(response).unwrap()
+    }
+}

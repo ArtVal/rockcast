@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bound the Cast LAN relay to two simultaneous HTTP clients; excess clients receive HTTP 503
+  without a waiting queue. This is a resource cap for one receiver plus the optional spectrum tap,
+  not multi-receiver playback support.
+- Allow the playback soak example to use real RockServer station IDs through
+  `ROCKCAST_SOAK_<CODEC>_ID`.
 - Switch to server-driven catalog and RockServer-only WebP icons: removed bundled
   `assets/catalog/*` files and local catalog loading. Initial catalog loads directly
   from RockServer (<300 ms) with rock station priority, with pagination and search across
@@ -22,6 +27,11 @@
   axis, full-height clickable spectrum, volume moved into the status footer); card-style
   «Account & devices» window; UI icons are PNG assets only; fixed ICY track titles being
   overwritten by the placeholder hint right after start.
+
+## Superseded catalog implementation notes
+
+The following RM-004 entries describe the earlier local-first catalog implementation. RockCast
+later transitioned to the server-driven catalog described above and in [status](docs/status.md).
 
 - RM-004-F: RockCast vendors the approved schema-v1 baseline catalog release
   2026.08.2 (sha256: 3fa20dca94fc059bd433a47b9fba9bb6d5e5e1aa2957a5ffb58b2a7b20b1d74d).

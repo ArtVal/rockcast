@@ -73,9 +73,11 @@ Station → RockServer /api/v1/stations/{id}/stream
 - Listener binds `0.0.0.0:ephemeral`; advertise IP is the LAN interface nearest the Cast device (VPN/virtual NICs skipped).
 - Accepted TCP sockets are forced **blocking** (Windows inherits non-blocking from the listener — that caused WSAEWOULDBLOCK / silent Cast IDLE).
 - One shared authenticated RockServer feeder + ring. Before LOAD, the worker waits for PCM format when needed and for the initial audio buffer. Spectrum/title data come from the relay, without a second station download.
+- RockCast controls one selected Cast receiver per playback session; discovering multiple receivers does not mean they can play simultaneously. The relay accepts at most two HTTP clients total (the receiver stream and optional spectrum tap). This limit does not provide multi-receiver playback; additional connections receive HTTP 503.
 - Native credentials are resolved before opening the stream and again on feeder reconnects; they are never included in the LAN URL or sent to the speaker.
 - ICY titles come from the feeder; UI polls `StreamRelay::latest_title()`.
 - Windows Firewall / firewalld may prompt once for inbound LAN access — allow it or Cast cannot pull the relay.
+- The relay listens on all IPv4 interfaces and has no client authentication. Only use it on a trusted LAN.
 
 ## Failure modes
 

@@ -47,7 +47,7 @@ Desktop **internet radio** app (Windows + Linux): egui UI, local cpal playback (
 | Shared local `stop` AtomicBool cleared by next play → zombie decode lives | Per-session Arc |
 | Dropping cpal/`join` on UI thread → freeze | Background drop in `LocalPlayer::stop` |
 | reqwest `timeout(None)` + dead host → forever | Timed open + `StopAwareBody` |
-| Cast Via PC silent while EQ moves | Spectrum used a 2nd station download; relay write was non-blocking (10035). Fixed: blocking + shared feeder; EQ taps relay URL |
+| Cast stream silent while EQ moves | Spectrum used a second station download and relay writes were non-blocking (10035). Fixed with blocking clients and one shared feeder; the spectrum tap reads the same relay |
 
 ## Logging
 

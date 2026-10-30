@@ -17,7 +17,7 @@ RockCast is part of the RockCast internet radio suite:
 ## Features
 
 - **Local playback** — decode and play HTTP(S) radio streams on your PC (cpal + symphonia)
-- **Google Cast** — discover receivers and stream live radio via CASTV2 (TLS + protobuf)
+- **Google Cast** — discover receivers and stream live radio to one selected receiver per playback session via CASTV2 (TLS + protobuf)
 - **Via PC relay** — always enabled for Cast: PC receives the authenticated RockServer proxy stream and serves it to the speaker on LAN
 - **VPN-friendly discovery** — mDNS plus a LAN `/24` TCP scan with Cast `eureka_info` (works when Amnezia / WireGuard breaks multicast)
 - **Station catalog** — server-driven catalog loaded directly from RockServer (<300 ms) with rock station priority; search and infinite scroll across the entire database of 16,000+ stations
@@ -96,7 +96,7 @@ Detailed Russian-language instructions, including voice commands: **[docs/user-m
 1. **Wait for stations** — the catalog loads directly from RockServer on startup; search and voice find more stations across the catalog.
 2. **Find devices** — click **Find** to scan PC audio outputs and Cast receivers on the LAN.
 3. **Select output** — choose **This PC** (speakers) or a Cast device (e.g. a JBL speaker).
-4. Cast always uses RockServer → PC → speaker over Wi-Fi. Local playback also reads the RockServer proxy. Sign in to your Rock account before starting radio.
+4. Cast always uses RockServer → PC → one selected speaker over Wi-Fi. Local playback also reads the RockServer proxy. Sign in to your Rock account before starting radio.
 5. **Select a station** — click a row; the round ▶ button on the row (or a double-click) starts playback immediately. The playing row is highlighted with an accent bar and an animated equalizer next to the name.
 6. **Play / Stop** — the large accent button in the player deck starts the selected station and stops the live stream; every row has its own play/pause control too.
 7. **Volume** — thin slider in the deck footer (speaker icon = mute/unmute); Cast volume is scaled so the UI “100%” maps to a comfortable speaker level.
@@ -111,6 +111,7 @@ Detailed Russian-language instructions, including voice commands: **[docs/user-m
 - Split-tunnel VPN exclusions often fix unicast but **not** multicast; the subnet scan is what finds devices like JBL when mDNS returns nothing.
 - Playback on Cast uses CASTV2: connect → launch Default Media Receiver → `LOAD` the live stream URL.
 - `LOAD` always points at `http://<PC-LAN-IP>:<port>/stream`; the PC reads `/api/v1/stations/{id}/stream` from RockServer with its native-session bearer token. Allow inbound LAN (Windows Firewall / firewalld) if prompted.
+- RockCast controls one selected receiver per playback session; discovering multiple receivers does not enable simultaneous playback. The temporary LAN relay accepts at most two clients total (the Cast stream and optional spectrum tap), rejects additional clients with HTTP 503, and has no client authentication. Use it only on a trusted LAN.
 
 ### Local playback notes
 
@@ -158,7 +159,7 @@ Typical fields: `volume`, `station_url`, `last_played_station`, `device_id`, `eq
 
 Official RockCast releases use the production [RockServer](https://github.com/morozov11/rockserver) at [rockplatform.win](https://rockplatform.win) automatically. Public station search calls `POST /api/v1/search` without an Authorization header. The window has no RockServer URL or token controls, and these values are not saved in ordinary user settings. RockCast loads its catalog directly from the public RockServer API. Both local and Cast audio require an authenticated RockServer stream; there is no direct-upstream fallback.
 
-The **Voice** button records PCM16 mono from the default Windows microphone until release or the 60-second limit and connects to public `wss://rockplatform.win/api/v1/voice/stream` ([rockplatform.win](https://rockplatform.win)) without Bearer authorization. HTTPS is always upgraded to WSS, preserving TLS. The official runtime uses the compatible buffered SpeechKit v1 request. Input-device selection/testing and cancellation after upload begins are not implemented yet.
+The **Voice** button records PCM16 mono from the default microphone until release, detected silence, or the 45-second recording limit, then connects to `wss://rockplatform.win/api/v1/voice/stream` ([rockplatform.win](https://rockplatform.win)) over TLS. The official runtime uses the compatible buffered SpeechKit v1 request. Input-device selection/testing and cancellation after upload begins are not implemented yet.
 
 For local development and tests, debug builds alone accept `ROCKCAST_DEV_ROCKSERVER_URL`. A Bearer-protected development server can additionally use `ROCKCAST_DEV_ROCKSERVER_BEARER_TOKEN`, and `ROCKCAST_DEV_ROCKSERVER_VOICE_MODE=streaming_v3` selects streaming capture. These runtime-only overrides are ignored by release builds, never written to settings, never shown in the UI, and their values are not logged.
 
@@ -193,13 +194,25 @@ rockcast/
     ├── lib.rs
     ├── app/              # egui UI (theme, actions, ui panels)
     ├── playback/         # PlaybackController + phase/volume
+    ├── runtime.rs        # bounded background job executors
     ├── local/            # PC playback (cpal + decode)
     ├── observers/        # ICY + spectrum taps for Cast
     ├── stations/         # station models and sorting
+    ├── audio/            # stream decoding, format detection, spectrum math
     ├── relay/            # LAN HTTP relay PC → Cast
     ├── voice/            # RockServer voice search
+    ├── rockserver.rs     # RockServer API and stream configuration
+    ├── station_icons.rs  # RockServer icon fetch and cache
+    ├── session.rs        # paired account session and credentials
+    ├── session/          # token, pairing, OS credential storage
+    ├── device_control.rs # RockServer device-control lifecycle
+    ├── device_control/   # protocol, transport, receiver handles, tests
+    ├── personal_data/    # local favourites and playback history
+    ├── personal_sync/    # favourites/history sync with RockServer
+    ├── playback_diag/    # optional playback diagnostics
     ├── i18n.rs           # EN / RU strings
     ├── output.rs         # local + Cast device list
+    ├── telemetry.rs      # UI telemetry snapshots
     ├── settings.rs
     └── cast/
         ├── discovery/    # mDNS + subnet scan
@@ -228,7 +241,7 @@ Binary: `target/release/rockcast.exe` (Windows) or `target/release/rockcast` (Li
 cargo test --lib
 ```
 
-Discovery tests include VPN interface name filters and a live LAN probe (skipped automatically if `192.168.31.109:8009` is not open on your network — adjust or ignore as needed).
+Discovery tests include VPN interface name filters and a live probe of `192.168.31.109:8009`; the probe returns early when that address is unavailable. It is specific to the developer's LAN and is not a general discovery test.
 
 ### Cast discovery probe
 
